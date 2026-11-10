@@ -68,7 +68,12 @@
 ;   the name (not found: typed again, SearchTries) -> click the result tiles
 ;   in turn (the first ScanTiles from aura_tile_rect, TileRect) until the
 ;   selected aura's name above [ Information ] (NameBox, plain text, read
-;   at NameScale) is the aura (NameIs) -> the button around
+;   at each NameScales scale) is exactly the aura (NameVerdict: folded
+;   names equal; "Sailor" and "Sailor: Admiral" never match each other, a
+;   stale or unsettled read is read again). No tile reads as it ->
+;   _LogPick equips the results whose names did not read, in turn, until
+;   the Roblox log names it, and stops there (a result whose name read as
+;   another aura is never equipped) -> the button around
 ;   aura_equip must read "Equip" (or "Unequip" to unequip) and nothing like
 ;   delete / lock / sell (NeverRe) -> click it -> it must flip to the other
 ;   word within AuraWaitMs (else the log must already show the change) ->
@@ -106,7 +111,6 @@ class ObbyTask {
     static ClickTries := 3         ; Equip / Unequip clicks while the button keeps its old word
     static HoverMs := 300          ; the mouse rests on Equip this long before the click
     static ClickHoverMs := 150     ; ... and on tabs / the search box / tiles (_Click)
-    static LogPickTiles := 6       ; results tried by _LogPick
     static LogPickMs := 3000       ; the log has this long to name the aura after Equip
     static LogLagMs := 150000      ; the log's "Equipped" line can lag an unequip this long
     static SearchTries := 4
@@ -125,7 +129,12 @@ class ObbyTask {
     static TileStep := {dx: 108, dy: 110}
     static NameBox := {dx: -180, dy: -388, w: 350, h: 80}
     static NameScale := 2
+    ; the panel is read at each of these (NameVerdict): real frames read
+    ; plain Sailor at all of them, Sailor: Flying Dutchman whole only at 3
+    ; ("Sailor: tchman" at 2, "Sailor:" at 4)
+    static NameScales := [2, 3, 1]
     static PickMs := 400           ; after clicking a tile, before its name is read
+    static LogPickEquips := 6      ; _LogPick: at most this many unread results equipped
     static ButtonBox := {dx: -150, dy: -35, w: 300, h: 70}
     ; "[ Information ]" lines under the name (2560x1440, live 2026-11-01:
     ; Equip 840,843, "Rolled at" ~670..900 x 650..700)
@@ -168,6 +177,8 @@ class ObbyTask {
         this._btn := ""              ; the button's last OCR read
         this._tab := 1               ; storage tab of the current search try (Tabs index)
         this._abort := false         ; a click was refused (no blind clicks): the swap stops
+        if IsObject(this._env.cfg)
+            ObbyTask.LoadKnown(this._env.cfg)
     }
 
     CanRun(state) {
@@ -349,14 +360,116 @@ class ObbyTask {
         return (best != "") ? best : String(name)
     }
 
-    static NameIs(text, aura) {
+    static NameIs(text, aura) => ObbyTask.NameRead(text, aura) = "same"
+
+    ; One read of the name panel against `aura` (exact name after folding:
+    ; case, _ / : / spaces, the game font's o = a and l = i).
+    ; -> "same" | "other" (a different aura: letters `aura` does not have,
+    ; or "Sailor:" for Sailor, a name that goes on past it) | "unread"
+    ; (nothing, or a partial / garbled read that could still be `aura`).
+    ; "Sailor" and "Sailor: Admiral" never match each other either way.
+    static NameRead(text, aura) {
         want := GameLists.Fold(aura)
+        p := ObbyTask._NameParts(text)
+        f := p.f
+        if (f = "" || want = "")
+            return "unread"
+        if p.cont                                       ; "Sailor:" + a name the read lost
+            return (StrLen(f) < StrLen(want) && SubStr(want, 1, StrLen(f)) == f) ? "unread" : "other"
+        if ((f == want) || (StrLen(want) >= 8 && GameLists.Distance(f, want) <= 1))
+            return "same"
+        v := ObbyTask._Extra(f, want) > Max(1, StrLen(f) // 5) ? "other" : "unread"
+        ; a read that is no real aura name is noise (logo fonts: Luminosity
+        ; read 'LVIßTOSITY' / 'xvnmrosrrr', live 2026-11-10), not "another
+        ; aura": it stays unread so the log check may try that tile. A real
+        ; lookalike (Sailor: Admiral) is a known name and stays "other".
+        if (v = "other" && !ObbyTask._IsKnown(f))
+            v := "unread"
+        return v
+    }
+
+    ; Folded names of every aura in data\auras.json (set by __New from the
+    ; config; "" = no list, then every read counts as a real name).
+    static Known := ""
+
+    static _IsKnown(f) {
+        if !(IsObject(ObbyTask.Known) && ObbyTask.Known.Count)
+            return true
+        if ObbyTask.Known.Has(f)
+            return true
+        for k in ObbyTask.Known
+            if (Abs(StrLen(k) - StrLen(f)) <= 1 && GameLists.Distance(f, k) <= 1)
+                return true
+        return false
+    }
+
+    static LoadKnown(cfg) {
+        m := Map()
+        try {
+            for e in Auras.List(cfg) {
+                n := GameLists.Fold(e["name"])
+                if (n != "")
+                    m[n] := true
+            }
+        }
+        if m.Count
+            ObbyTask.Known := m
+    }
+
+    ; Reads of the same panel at several scales (NameScales) -> one verdict.
+    ; "same" only when no read contradicts it: a read with letters the same
+    ; read lacks, or one that reads the same name and then a colon
+    ; ("Sailor:" next to "Sailor" is Sailor: Admiral cut short), makes it
+    ; "unread". Else
+    ; "other" when any read is another aura, else "unread".
+    static NameVerdict(texts, aura) {
+        same := "", other := false
+        for t in texts {
+            v := ObbyTask.NameRead(t, aura)
+            if (v = "same" && same = "")
+                same := ObbyTask._NameParts(t).f
+            other := other || (v = "other")
+        }
+        if (same = "")
+            return other ? "other" : "unread"
+        for t in texts {
+            p := ObbyTask._NameParts(t)
+            if (p.f = "")
+                continue
+            if ((p.cont && p.f == same) || ObbyTask._Extra(p.f, same) > Max(1, StrLen(p.f) // 5))
+                return "unread"
+        }
+        return "same"
+    }
+
+    ; The panel text's name lines (the rarity line left out: any line with a
+    ; digit, or "i in" as 3x reads "1 in 80,000,000") -> {f: folded, cont:
+    ; ends with a colon (the name goes on)}.
+    static _NameParts(text) {
         s := ""
         for line in StrSplit(String(text), "`n", "`r")
-            if !RegExMatch(line, "\d")
+            if !RegExMatch(line, "\d|^\W*\S{0,2}\s+in(\s|$)")
                 s .= line " "
-        f := GameLists.Fold(s)
-        return f != "" && ((f == want) || (StrLen(want) >= 8 && GameLists.Distance(f, want) <= 1))
+        return {f: GameLists.Fold(s), cont: RegExMatch(s, ":[^A-Za-z]*$") > 0}
+    }
+
+    ; Letters of a not matched in b (in order: a - the longest common
+    ; subsequence). OCR drops letters; letters b lacks mean another name.
+    static _Extra(a, b) {
+        la := StrLen(a), lb := StrLen(b)
+        if (la = 0 || lb = 0)
+            return la
+        prev := []
+        Loop lb + 1
+            prev.Push(0)
+        Loop la {
+            ch := SubStr(a, A_Index, 1)
+            cur := [0]
+            Loop lb
+                cur.Push((ch == SubStr(b, A_Index, 1)) ? prev[A_Index] + 1 : Max(prev[A_Index + 1], cur[A_Index]))
+            prev := cur
+        }
+        return la - prev[lb + 1]
     }
 
     ; Pure: px (Array of w*h 0xRRGGBB, a tile's name rect) shows a result
@@ -410,32 +523,63 @@ class ObbyTask {
         return {known: a.known ? true : false, name: String(a.name)}
     }
 
+    ; The selected aura's name panel read at every NameScales scale.
+    ; -> {v: NameVerdict, text: the NameScale read, all: the reads joined}
+    _ReadName(c, aura) {
+        n := ObbyTask.NameBox, texts := [], all := ""
+        for s in ObbyTask.NameScales {
+            t := String((this._env.ocrFn)(c.aura_equip.x + n.dx, c.aura_equip.y + n.dy, n.w, n.h, s))
+            texts.Push(t)
+            all .= t "|"
+        }
+        return {v: ObbyTask.NameVerdict(texts, aura), text: texts[1], all: all}
+    }
+
     ; Clicks the result tiles in turn until the selected aura's name is
     ; `aura` (it stays selected). -> its tile number | 0 none of the first
     ; ScanTiles | -1 stopped. first = the first tile's name (for the log).
+    ; Every tile's verdict lands in this._tileReads (k -> "other" | "unread")
+    ; for _LogPick, which never equips a tile that read as another aura.
+    ; A read that did not settle (nothing, or the same text as the tile
+    ; before: the panel still showing the last aura) is read once more
+    ; after PickMs, so a stale name never marks the wanted tile "other".
     _FindTile(c, aura, ctx, &first) {
         env := this._env
-        n := ObbyTask.NameBox
         first := ""
+        this._tileReads := Map()
+        seen := "", last := ""
+        tabName := (this._tab = 2 ? "Special" : "Regular")
         Loop ObbyTask.ScanTiles {
             if ctx.ShouldStop()
                 return -1
-            r := ObbyTask.TileRect(c.aura_tile_rect, A_Index)
+            k := A_Index
+            r := ObbyTask.TileRect(c.aura_tile_rect, k)
             if !this._TileHere(r) {
                 ; an empty slot: no more results on this tab (and never a
                 ; click there: it goes through into the world)
-                env.Log("obby: result tile " A_Index " on the " (this._tab = 2 ? "Special" : "Regular") " tab is empty: no more results there")
-                return 0
+                env.Log("obby: result tile " k " on the " tabName " tab is empty: no more results there")
+                break
             }
             if !this._Click({x: r.x + r.w // 2, y: r.y + r.h // 2}, ctx, c)
                 return -1
             if !env.Wait(ObbyTask.PickMs, ctx)
                 return -1
-            text := String((env.ocrFn)(c.aura_equip.x + n.dx, c.aura_equip.y + n.dy, n.w, n.h, ObbyTask.NameScale))
-            if (A_Index = 1)
+            rd := this._ReadName(c, aura)
+            if (rd.v != "same" && (rd.v = "unread" || rd.all == last)) {
+                if !env.Wait(ObbyTask.PickMs, ctx)
+                    return -1
+                rd := this._ReadName(c, aura)
+            }
+            last := rd.all
+            text := rd.text
+            if (k = 1)
                 first := text
-            if ObbyTask.NameIs(text, aura)
-                return A_Index
+            this._tileReads[k] := rd.v
+            seen .= (seen = "" ? "" : ", ") k " '" SubStr(Trim(RegExReplace(text, "\s+", " ")), 1, 24) "'"
+            if (rd.v = "same") {
+                env.Log("obby: " aura " is result " k " on the " tabName " tab (its name read)")
+                return k
+            }
             ; logoOk: some auras' names show as a logo there that OCR cannot
             ; read (Eden, live 2026-10-31). Then the first result is taken
             ; when its panel reads nothing but its button reads Equip /
@@ -446,9 +590,11 @@ class ObbyTask {
             ; Special tab only: Luminosity's name is a logo too, and a search
             ; that did not take listed every Regular aura (2026-11-01: it
             ; equipped Luminosity for Eden)
-            if (A_Index = 1 && this.logoOk && this._tab = 2 && Trim(text) = "" && this._Selected(c) && RegExMatch(this._Button(c), "^(on|off)$"))
+            if (k = 1 && this.logoOk && this._tab = 2 && RegExReplace(rd.all, "[\s|]") = "" && this._Selected(c) && RegExMatch(this._Button(c), "^(on|off)$"))
                 return 1
         }
+        if (seen != "")
+            env.Log("obby: no result on the " tabName " tab reads as " aura ": " SubStr(seen, 1, 300))
         return 0
     }
 
@@ -1067,14 +1213,22 @@ class ObbyTask {
         return (IsObject(a) && a.known) ? String(a.name) : "?"
     }
 
-    ; Equip the current results one by one until the Roblox log names aura.
+    ; Equip the current results one by one until the Roblox log names aura,
+    ; and stop there. A result whose name read as another aura (_FindTile's
+    ; this._tileReads "other") is never equipped; at most LogPickEquips are.
     ; -> 1 on | 0 not among them (or no log) | -1 stopped
     _LogPick(c, aura, ctx) {
         env := this._env
         io := env.io
         if (this._LogAura() == "?")
             return 0
-        Loop ObbyTask.LogPickTiles {
+        reads := (this.HasOwnProp("_tileReads") && this._tileReads is Map) ? this._tileReads : Map()
+        equips := 0
+        Loop ObbyTask.ScanTiles {
+            if (equips >= ObbyTask.LogPickEquips)
+                return 0
+            if (reads.Has(A_Index) && reads[A_Index] = "other")
+                continue                                ; its name read: another aura
             r := ObbyTask.TileRect(c.aura_tile_rect, A_Index)
             if !this._TileHere(r)
                 return 0                                ; an empty slot: past the last result (never clicked)
@@ -1092,12 +1246,15 @@ class ObbyTask {
             }
             if (st != "off")
                 continue
+            if (this._ReadName(c, aura).v = "other")
+                continue                                ; its name reads now: another aura
             io.MoveTo(c.aura_equip.x, c.aura_equip.y)
             if !env.Wait(ObbyTask.HoverMs, ctx)
                 return -1
             if this._Refused(c)
                 return -1
             Auras.Quiet(Auras.QuietMs)
+            equips++
             io.ClickHere()
             waited := 0
             Loop {

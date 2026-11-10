@@ -214,3 +214,20 @@ Test_Ui_TitleCase() {
     AssertEq(UiLogic.TitleCase("speed potion xl"), "Speed Potion XL", "size XL")
     AssertEq(UiLogic.TitleCase("mix"), "Mix", "a word that only starts like a numeral")
 }
+; privacy audit 2026-11-10: "screen saved to C:\Users\<name>\..." put the
+; Windows user name in the log (and the Copy log button)
+Test_Ui_Scrub_HidesTheWindowsUserName() {
+    s := UiLogic.Scrub("fishing: screen saved to C:\Users\SomeName\AppData\Local\Temp\vesper_shot_1.png")
+    AssertTrue(!InStr(s, "SomeName"), "name hidden: " s)
+    AssertTrue(InStr(s, "C:\Users\<user>\AppData") > 0, "path still useful")
+    AssertTrue(!InStr(UiLogic.Scrub("d:/users/Other/x.txt"), "Other"), "forward slashes, other drive")
+}
+
+; the private server link is opt-in on biome cards
+Test_Config_JoinButtonOffByDefault() {
+    dir := UiDashTmp()
+    try {
+        cfg := Config.Load(dir)
+        AssertEq(cfg.Get("General.joinButton", 1), 0, "off by default")
+    } finally CfgTmpClean(dir)
+}

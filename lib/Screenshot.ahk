@@ -37,6 +37,11 @@ class Screenshot {
             return ""
         if DllCall("IsIconic", "Ptr", hwnd, "Int")
             return ""
+        ; the copy comes from the SCREEN: with another window in front it
+        ; would land in the picture (and in a Discord post). Only Roblox in
+        ; front is captured (privacy audit 2026-11-10).
+        if !WinActive("ahk_id " hwnd)
+            return ""
         ; the CLIENT rect (no title bar / borders; the same as the window
         ; rect for fullscreen Roblox), at its physical size (DPI aware)
         rc := Buffer(16, 0)

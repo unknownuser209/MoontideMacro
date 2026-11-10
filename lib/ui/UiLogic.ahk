@@ -56,6 +56,8 @@ class UiLogic {
         s := RegExReplace(s, "i)(?:https?://)?ro\.blox\.com/\S*", "[link]")
         s := RegExReplace(s, "i)\broblox(?:-player)?:(?://|(?=\S))\S*", "[link]")
         s := RegExReplace(s, "i)(privateServerLinkCode|linkCode|share\?code)=\S*", "$1=[hidden]")
+        ; the Windows user name in paths ("screen saved to C:\Users\<name>\...")
+        s := RegExReplace(s, "i)\b([A-Z]:[\\/]Users[\\/])[^\\/\s]+", "$1<user>")
         if IsObject(secrets) {
             for sec in secrets {
                 sec := Trim(String(sec))

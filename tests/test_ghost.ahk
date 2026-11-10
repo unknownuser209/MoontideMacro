@@ -133,7 +133,7 @@ Test_Ghost_ReportedOncePerGhost() {
 }
 
 Test_Ghost_RareAlertDoesNotPingIntoIt() {
-    r := WfRig(Map("General.privateServer", "https://www.roblox.com/share?code=abc&type=Server"))
+    r := WfRig(Map("General.privateServer", "https://www.roblox.com/share?code=abc&type=Server", "General.joinButton", 1))   ; opt-in
     try {
         p := r.Rare("GLITCHED")
         AssertTrue(InStr(r.wh.sent[r.wh.sent.Length].json, "Join Server"), "normal: Join button")

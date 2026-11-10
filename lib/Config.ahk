@@ -88,7 +88,7 @@ class Config {
         g["dryRun"] := "1"
         g["sound"] := "1"
         g["alertSound"] := "*48"      ; SoundPlay arg: *48 = Windows exclamation, or a .wav path
-        g["joinButton"] := "1"        ; 1 = biome / rare webhooks carry the private-server link (Join Server button)
+        g["joinButton"] := "0"        ; 1 = biome / rare webhooks carry the private-server link (Join Server button). Off by default: anyone who can read the channel gets the link
         g["everyonePing"] := "1"      ; 1 = live rare webhook for the biomes below also pings @everyone
         g["everyoneBiomes"] := "DREAMSPACE,GLITCHED,CYBERSPACE"
         d["General"] := g

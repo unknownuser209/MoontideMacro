@@ -143,6 +143,28 @@ Test_Screens_AuraNameOfTheSelectedTile() {
     AssertTrue(RegExMatch(ScrRead("aura_selected_sailor", {x: 840 + b.dx, y: 843 + b.dy, w: b.w, h: b.h}), "i)^\W*equip\W*$"), "the button reads Equip (not Remove / Unlock)")
 }
 
+; the panel at every scale the swap reads it (ObbyTask._ReadName)
+ScrAuraNames(name) {
+    n := ObbyTask.NameBox, out := []
+    for s in ObbyTask.NameScales
+        out.Push(ScrRead(name, {x: 840 + n.dx, y: 843 + n.dy, w: n.w, h: n.h}, s))
+    return out
+}
+
+; live 2026-11-10 12:34: "Sailor" equipped Sailor: Admiral first. Exact
+; names on the real frames: Sailor is Sailor, never Sailor: Admiral /
+; Flying Dutchman, and the log's "Sailor_Flying_Dutchman" is the 7th tile
+Test_Screens_AuraNameVerdictIsExact() {
+    sailor := ScrAuraNames("aura_selected_sailor"), dutch := ScrAuraNames("aura_selected_dutchman")
+    AssertEq(ObbyTask.NameVerdict(sailor, "Sailor"), "same", "plain Sailor selected")
+    AssertTrue(ObbyTask.NameVerdict(sailor, "Sailor_Admiral") != "same", "plain Sailor is not Sailor: Admiral")
+    AssertTrue(ObbyTask.NameVerdict(sailor, "Sailor_Flying_Dutchman") != "same", "plain Sailor is not Flying Dutchman")
+    AssertEq(ObbyTask.NameVerdict(dutch, "Sailor"), "other", "Flying Dutchman read as another aura than Sailor")
+    AssertEq(ObbyTask.NameVerdict(dutch, "Sailor_Admiral"), "other", "Flying Dutchman is not Admiral")
+    AssertEq(ObbyTask.NameVerdict(dutch, "Sailor_Flying_Dutchman"), "same", "the log's name of the 7th tile")
+    AssertEq(ObbyTask.NameVerdict(ScrAuraNames("aura_search_sailor"), "Sailor"), "unread", "nothing selected")
+}
+
 ; ---- Memory Match (clip 2026-10-27 18:50) ----------------------------------
 ; mm_prompt_ready / mm_prompt_cooldown: the notification before / after Start
 ; (mm_prompt_cooldown_title: clip 19:43, the title misreads);

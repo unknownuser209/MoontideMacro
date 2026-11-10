@@ -15,3 +15,7 @@ data/calibration.json.bad
 data/minions_routes.json
 data/auras_learnt.json
 dist/
+backup/
+update_tmp/
+data/*.bak
+clips_for_user/

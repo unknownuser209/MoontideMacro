@@ -41,7 +41,7 @@
       "close": [1890, 527],
       "gapMs": 200
     },
-    "camera": {"wheelUp": 80, "wheelDown": 35, "wheelGapMs": 25, "pauseMs": 500, "afterMs": 300},
+    "camera": {"wheelUp": 80, "wheelDown": 35, "wheelGapMs": 12, "pauseMs": 500, "afterMs": 300},
     "dialog": {
       "a": [1308, 1073],
       "aClicks": 2,

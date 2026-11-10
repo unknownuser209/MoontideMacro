@@ -780,7 +780,7 @@ Test_Embed_BiomeCardsStartedAndEnded() {
 
 Test_Embed_BiomeStartedHasJoinServerButton() {
     link := "https://www.roblox.com/share?code=ABC123&type=Server"
-    r := WfRig(Map("General.privateServer", link))            ; joinButton defaults to on
+    r := WfRig(Map("General.privateServer", link, "General.joinButton", 1))   ; opt-in (default off since the privacy audit)
     try {
         WfBiome(r, "WINDY")
         recs := WfRecs(r.wh, "", "biome")

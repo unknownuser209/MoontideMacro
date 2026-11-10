@@ -107,6 +107,7 @@ class SellTask {
         if !FishLogic.FocusOrWait(d, ctx, "sell")
             return
         d.log.Call("sell: starting")
+        tS := A_TickCount, tR := tS, tC := tS      ; per-trip timing line (speed work)
         opt := FishLogic.Settings(this.cfg, this._coords)
         variant := opt.vip ? "vip" : "nonvip"
         Loop SellTask.WalkTries {
@@ -123,10 +124,12 @@ class SellTask {
                 if !Input.ResetToSpawn(ctx, io, true)
                     return
             }
+            tR := A_TickCount
             if !this._DailyReward(ctx)
                 return
             if !this._Camera(ctx)
                 return
+            tC := A_TickCount
             if !Input.PlayRoute(this._Walk(variant, "toShop"), ctx, io)
                 return this._Cleanup(ctx)
             r := this._AtFisher(ctx)
@@ -153,6 +156,7 @@ class SellTask {
             }
             d.log.Call("sell: Captain Flarg's dialog did not open, the walk missed the shop (read: '" seen "')")
         }
+        tW := A_TickCount
         ; nothing caught since the last sell (the walk back after a hunt, the
         ; obby or a lost fishing spot): his shop has nothing to sell, so it is
         ; skipped - live 2026-11-10: 77 of 132 trips sold 0 fish, ~8 s each in
@@ -219,8 +223,11 @@ class SellTask {
         if (g = 0)
             d.log.Call("sell: Captain Flarg's dialog is still open"
                 . (IsObject(this._CalPoint("fisher_leave")) ? "" : " (record fisher_leave in Setup so it can be closed)"))
+        tL := A_TickCount
         if !Input.PlayRoute(this._Walk(variant, "back"), ctx, io)
             return
+        d.log.Call(Format("sell: trip {:.1f} s (respawn {:.1f}, camera {:.1f}, walk {:.1f}, fisher {:.1f}, back {:.1f})"
+            , (A_TickCount - tS) / 1000, (tR - tS) / 1000, (tC - tR) / 1000, (tW - tC) / 1000, (tL - tW) / 1000, (A_TickCount - tL) / 1000))
         this.state.fishLoops := 0
         this.state.needRepath := false
         FishLogic.Bump(this.state, "sells")

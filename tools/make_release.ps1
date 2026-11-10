@@ -36,7 +36,8 @@ New-Item -ItemType Directory -Force $src | Out-Null
 $tar = Join-Path $src 'head.tar'
 git archive --format=tar -o $tar HEAD
 if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
-tar -xf $tar -C $src
+& (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $tar -C $src   # Windows tar (Git Bash puts its own tar first)
+if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
 Remove-Item $tar
 
 $dist = Join-Path $root 'dist'

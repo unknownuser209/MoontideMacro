@@ -48,6 +48,9 @@ class ObStore {
         this.questDrop := 0          ; clicks on its Exit the game drops (the first n)
         this.questExit := "Exit"     ; what its Exit box reads
         this._px := Map()            ; "w,h,lit" -> pixel Array (Rect)
+        this.names := Map()          ; aura -> what its name panel reads (a misread; default its name)
+        this.lag := 0                ; name panel reads after each click that still show the aura selected before
+        this._lagAt := -1, this._lagN := 0
     }
     Results(search, tab := "regular") {
         out := []
@@ -75,6 +78,7 @@ class ObStore {
         coll := this.coll, prompt := this.prompt
         daily := this.daily, dailyCloses := 0, typed := false
         quest := this.quest, questCloses := 0
+        hist := [], before := ""
         for e in this.io.log {
             if (e = "down Esc")
                 prompt := prompt && this.promptStuck
@@ -91,6 +95,7 @@ class ObStore {
                 k := (xy.Length = 2) ? this.TileAt(xy[1] - 100, xy[2] - 25) : 0
                 if k {
                     r := this.Results(search, tab)
+                    before := selected
                     selected := (open && k <= r.Length) ? r[k] : ""
                     ; like live 2026-11-02: an empty slot lets the click
                     ; through into the world (a Donation board's prompt)
@@ -111,7 +116,7 @@ class ObStore {
                     case "567,-25": tab := "special"
                     case "300,300":
                         if (open && selected != "" && this.button = "" && dropped++ >= this.drop)
-                            eq := (eq == selected) ? "" : selected
+                            eq := (eq == selected) ? "" : selected, hist.Push(eq)
                     case "400,400":
                         if (open && closes++ >= this.closeDrop)
                             open := false, selected := ""
@@ -119,7 +124,7 @@ class ObStore {
                 }
             }
         }
-        return {search: search, selected: selected, eq: eq, open: open, expanded: expanded, coll: coll, tab: tab, prompt: prompt, daily: daily, quest: quest}
+        return {search: search, selected: selected, eq: eq, open: open, expanded: expanded, coll: coll, tab: tab, prompt: prompt, daily: daily, quest: quest, hist: hist, before: before}
     }
     ; pixels of a tile rect: an aura's bright name where the results have
     ; one, the dim world behind the panel elsewhere
@@ -166,7 +171,16 @@ class ObStore {
                 for lg in this.logo
                     if (lg == s.selected)
                         return ""
-            return (s.open && s.selected != "") ? s.selected "`n1 in 3,000" : ""
+            sel := s.selected
+            if this.lag {                            ; the panel still shows the aura selected before
+                if (this._lagAt != this.io.log.Length)
+                    this._lagAt := this.io.log.Length, this._lagN := 0
+                if (++this._lagN <= this.lag)
+                    sel := s.before
+            }
+            if (s.open && sel != "" && this.names.Has(sel))
+                return this.names[sel]
+            return (s.open && sel != "") ? sel "`n1 in 3,000" : ""
         }
         i := ObbyTask.InfoBox
         if (x = 300 + i.dx && y = 300 + i.dy)
@@ -414,6 +428,101 @@ Test_Obby_NameMatchesTheGameFont() {
     AssertTrue(!ObbyTask.NameIs("Sailor:`nFlying Dutchman", "Sailor"), "split over two lines it is still not Sailor")
     AssertTrue(!ObbyTask.NameIs("Sailor: tchman`ni 80.000 OOO", "Sailor"), "the live misread of Flying Dutchman")
     AssertTrue(!ObbyTask.NameIs("", "Sailor"), "empty")
+}
+
+; live 2026-11-10 12:34: "Sailor" equipped Sailor: Admiral first; the names
+; must match exactly after folding, a partial read is never a match
+Test_Obby_NameReadIsExactAfterNormalising() {
+    AssertEq(ObbyTask.NameRead("Sailor", "Sailor"), "same", "plain")
+    AssertEq(ObbyTask.NameRead("SAILOR`n1 in 12,000,000", "sailor"), "same", "case, rarity line")
+    AssertEq(ObbyTask.NameRead("Sailor : Admiral`n1 in 2,500,000", "Sailor_Admiral"), "same", "the log's _ form")
+    AssertEq(ObbyTask.NameRead("Sailor: Admiral", "Sailor"), "other", "Sailor: Admiral is not Sailor")
+    AssertEq(ObbyTask.NameRead("Sailor:", "Sailor"), "other", "'Sailor:' goes on past Sailor")
+    AssertEq(ObbyTask.NameRead("Sailor:", "Sailor_Admiral"), "unread", "'Sailor:' may be Admiral cut short")
+    AssertEq(ObbyTask.NameRead("Sailor", "Sailor_Admiral"), "unread", "Sailor is never Sailor: Admiral")
+    AssertEq(ObbyTask.NameRead("Saibr", "Sailor"), "unread", "a garbled read could still be Sailor")
+    AssertEq(ObbyTask.NameRead("Glock", "Sailor"), "other", "another name")
+    AssertEq(ObbyTask.NameRead("Sailor Flying Dutchman`ni in", "Sailor_Flying_Dutchman"), "same", "3x's 'i in' rarity line left out")
+    AssertEq(ObbyTask.NameRead("", "Sailor"), "unread", "nothing")
+}
+
+; live 2026-11-10: Luminosity's logo name read 'LVIßTOSITY' / 'xvnmrosrrr';
+; as "another aura" no tile was ever tried and the put-back scanned for
+; minutes. A read that is no known aura name is noise (unread); a real
+; lookalike stays "other".
+Test_Obby_NoiseReadIsNotAnotherAura() {
+    old := ObbyTask.Known
+    try {
+        m := Map()
+        for n in ["Sailor", "Sailor: Admiral", "Luminosity", "Pumpkinity", "Eden"]
+            m[GameLists.Fold(n)] := true
+        ObbyTask.Known := m
+        AssertEq(ObbyTask.NameRead("LVIßTOSITY", "Luminosity"), "unread", "garbled logo name")
+        AssertEq(ObbyTask.NameRead("xvnmrosrrr", "Luminosity"), "unread", "noise")
+        AssertEq(ObbyTask.NameRead("Sailor Admiral", "Sailor"), "other", "a real lookalike stays other")
+        AssertEq(ObbyTask.NameRead("Pumpkinity", "Luminosity"), "other", "another real aura")
+        AssertEq(ObbyTask.NameRead("Sailor", "Sailor"), "same", "exact")
+    } finally {
+        ObbyTask.Known := old
+    }
+}
+
+Test_Obby_NameVerdictAcrossScales() {
+    AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor", "Sailor`n'2.0O,OOO"], "Sailor"), "same", "every scale agrees")
+    AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor:", "Sailor"], "Sailor"), "unread", "one scale saw the colon: Admiral cut short")
+    AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor Admiral", ""], "Sailor"), "unread", "a longer name at one scale")
+    dutch := ["Sailor: tchman`ni 80.000 OOO", "Sailor Flying Dutchman`ni in", "Sa Flying Du tchma n"]
+    AssertEq(ObbyTask.NameVerdict(dutch, "Sailor_Flying_Dutchman"), "same", "partial reads agree with the whole one")
+    AssertEq(ObbyTask.NameVerdict(dutch, "Sailor"), "other", "Flying Dutchman is not Sailor")
+    AssertEq(ObbyTask.NameVerdict(["", "", ""], "Luminosity"), "unread", "a logo")
+}
+
+; put-back: the previous aura's tile is picked by its name, the lookalikes
+; in front of it never equipped
+Test_Obby_PutBackPicksTheRightTileFirst() {
+    owned := ["Sailor: Admiral", "Sailor: Admiral", "Sailor: Admiral", "Sailor: Flying Dutchman", "Sailor", "Eden"]
+    o := QmObbyTask("Sailor", , , , owned)
+    o.s.special := ["Eden"]
+    o.s.names["Sailor: Admiral"] := "Sailor:`n1 in 2,500,000"     ; read cut short
+    o.t.wear := "Eden"
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(sw.ok, "Eden on")
+    AssertEq(sw.prev, "Sailor", "Sailor before")
+    AssertTrue(o.t.PutBack(SchedCtx(), sw), "put back")
+    h := o.s.State().hist
+    AssertEq(h.Length, 2, "two equips: Eden, then Sailor")
+    AssertEq(h[2], "Sailor", "Sailor equipped again")
+    AssertTrue(QmObbyLogHas(o.logs, "Sailor is result 5"), "found by its name, result 5")
+    AssertTrue(!QmObbyLogHas(o.logs, "found by the log"), "no equip-and-check")
+}
+
+; no name reads for some results: only those are equipped in turn, never
+; one whose name read as another aura, and the first exact log match stops it
+Test_Obby_LogPickSkipsReadOthersAndStopsAtTheFirstMatch() {
+    owned := ["Sailor: Admiral", "Sailor: Flying Dutchman", "Sailor", "Sailor Moon", "Glock"]
+    o := QmObbyTask("Glock", , , , owned)
+    o.s.logo := ["Sailor: Flying Dutchman", "Sailor", "Sailor Moon"]
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+    h := o.s.State().hist
+    AssertEq(h.Length, 3, "Dutchman (unread), Sailor (the log said so), Glock back")
+    AssertEq(h[1], "Sailor: Flying Dutchman", "the unread tile tried")
+    AssertEq(h[2], "Sailor", "stopped at Sailor")
+    AssertEq(h[3], "Glock", "Glock back by its name")
+    for a in h
+        AssertTrue(a != "Sailor: Admiral" && a != "Sailor Moon", "never equipped: " a)
+    AssertEq(o.wh.Count("errors"), 0, "no error")
+}
+
+; the name panel still shows the tile before for a moment after a click: a
+; stale read is read again, so the wanted tile is not marked as another aura
+Test_Obby_StaleNameReadIsReadAgain() {
+    o := QmObbyTask("Glock", , , , ["Sailor: Flying Dutchman", "Sailor", "Glock"])
+    o.s.lag := ObbyTask.NameScales.Length
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+    h := o.s.State().hist
+    AssertEq(h.Length, 2, "Sailor, then Glock back")
+    AssertEq(h[1], "Sailor", "Sailor found by its name")
+    AssertTrue(!QmObbyLogHas(o.logs, "found by the log"), "no equip-and-check")
 }
 
 ; clip 2026-10-27 20:17: "Sailor" lists six Sailor: Admiral and a Sailor:
