@@ -1,5 +1,5 @@
 {
-  "_source": "FishSol-v2.1.ahk 1440p, DoMouseMove2. Each step is [key, action, ms] for Input.PlayRoute: a FishSol 'Send {k Down}' or 'Send {k Up}' followed by 'sleep N' becomes [k, down|up, N]. QWERTY keys only (FishSol azerty option ignored). vip.toShop = 'Vip Pathing' L4299-4333 (after reset + camera zoom), vip.back = L4391-4397. nonvip.toShop = 'Non Vip Pathing' L4197-4231, nonvip.back = L4289-4295. Dialog and sell clicks live in coords.json. CraftTask reuses vip/nonvip toShop+back for the fisher (same shop NPC as selling: FishSol RunForcedRespawnAction 1440p L1781-2120 walks the identical path; its S tap is 200 ms vs 300 here and it zooms with i/o keys, Vesper reuses the sell wheel zoom). cauldron is an empty placeholder to record in game (craft respawns after the cauldron; merchants use the Merchant Teleporter, no routes).",
+  "_source": "Moontide's own walks to Captain Flarg and back. vip.toShop (spawn -> Flarg, then E) and vip.back (Flarg -> the fishing spot) were recorded in game with the Sol's RNG VIP gamepass (Setup > Routes, 2026-11-10; vip.toShop ends with the E press that opens his dialog). nonvip = the same walks with every wait x1.25 (without VIP you walk about 20% slower): an estimate, record your own walks without VIP. Each step is [key, down|up, ms waited before it] for Input.PlayRoute. Dialog and sell clicks live in coords.json. CraftTask reuses vip/nonvip toShop+back for the fisher (the same shop NPC as selling). cauldron is a placeholder to record in game (craft respawns after the cauldron; merchants use the Merchant Teleporter, no routes).",
   "cauldron": {
     "_note": "Walk from spawn (after Input.ResetToSpawn) to a spot OUT of Stella's interaction range; CraftTask presses F only after this route ends. Empty = the cauldron step is skipped (movement is never invented).",
     "_recorded": "2026-10-26 13:46",
@@ -447,28 +447,6 @@
     ]
   },
   "nonvip": {
-    "back": [
-      [
-        "a",
-        "down",
-        1400
-      ],
-      [
-        "a",
-        "up",
-        75
-      ],
-      [
-        "w",
-        "down",
-        3300
-      ],
-      [
-        "w",
-        "up",
-        0
-      ]
-    ],
     "toShop": [
       [
         "w",
@@ -478,87 +456,159 @@
       [
         "a",
         "down",
-        5190
-      ],
-      [
-        "w",
-        "up",
-        800
+        5621
       ],
       [
         "a",
         "up",
-        200
-      ],
-      [
-        "w",
-        "down",
-        550
+        706
       ],
       [
         "w",
         "up",
-        300
-      ],
-      [
-        "d",
-        "down",
-        240
-      ],
-      [
-        "d",
-        "up",
-        150
-      ],
-      [
-        "w",
-        "down",
-        1450
-      ],
-      [
-        "w",
-        "up",
-        300
+        195
       ],
       [
         "s",
         "down",
-        300
+        154
       ],
       [
         "s",
         "up",
-        300
+        156
       ],
       [
-        "Space",
+        "d",
         "down",
-        25
+        314
       ],
       [
         "w",
         "down",
-        1100
+        0
       ],
       [
-        "Space",
+        "d",
         "up",
-        520
+        2094
+      ],
+      [
+        "a",
+        "down",
+        758
       ],
       [
         "w",
         "up",
-        300
+        40
+      ],
+      [
+        "a",
+        "up",
+        258
+      ],
+      [
+        "a",
+        "down",
+        646
+      ],
+      [
+        "a",
+        "up",
+        159
+      ],
+      [
+        "s",
+        "down",
+        149
+      ],
+      [
+        "s",
+        "up",
+        291
+      ],
+      [
+        "Space",
+        "down",
+        142
+      ],
+      [
+        "w",
+        "down",
+        0
+      ],
+      [
+        "Space",
+        "up",
+        370
+      ],
+      [
+        "w",
+        "up",
+        162
+      ],
+      [
+        "Space",
+        "down",
+        126
+      ],
+      [
+        "w",
+        "down",
+        0
+      ],
+      [
+        "Space",
+        "up",
+        440
+      ],
+      [
+        "Space",
+        "down",
+        148
+      ],
+      [
+        "Space",
+        "up",
+        668
+      ],
+      [
+        "w",
+        "up",
+        0
       ],
       [
         "e",
         "down",
-        300
+        375
       ],
       [
         "e",
         "up",
-        300
+        375
+      ]
+    ],
+    "back": [
+      [
+        "a",
+        "down",
+        1469
+      ],
+      [
+        "w",
+        "down",
+        16
+      ],
+      [
+        "a",
+        "up",
+        3224
+      ],
+      [
+        "w",
+        "up",
+        0
       ]
     ]
   },
@@ -713,28 +763,6 @@
     ]
   },
   "vip": {
-    "back": [
-      [
-        "a",
-        "down",
-        1400
-      ],
-      [
-        "a",
-        "up",
-        75
-      ],
-      [
-        "w",
-        "down",
-        2670
-      ],
-      [
-        "w",
-        "up",
-        0
-      ]
-    ],
     "toShop": [
       [
         "w",
@@ -744,77 +772,127 @@
       [
         "a",
         "down",
-        4150
-      ],
-      [
-        "w",
-        "up",
-        600
+        4497
       ],
       [
         "a",
         "up",
-        200
-      ],
-      [
-        "w",
-        "down",
-        400
+        565
       ],
       [
         "w",
         "up",
-        300
-      ],
-      [
-        "d",
-        "down",
-        180
-      ],
-      [
-        "d",
-        "up",
-        150
-      ],
-      [
-        "w",
-        "down",
-        1100
-      ],
-      [
-        "w",
-        "up",
-        300
+        156
       ],
       [
         "s",
         "down",
-        300
+        123
       ],
       [
         "s",
         "up",
-        300
+        125
       ],
       [
-        "Space",
+        "d",
         "down",
-        25
+        251
       ],
       [
         "w",
         "down",
-        1200
+        0
       ],
       [
-        "Space",
+        "d",
         "up",
-        200
+        1675
+      ],
+      [
+        "a",
+        "down",
+        606
       ],
       [
         "w",
         "up",
-        300
+        32
+      ],
+      [
+        "a",
+        "up",
+        206
+      ],
+      [
+        "a",
+        "down",
+        517
+      ],
+      [
+        "a",
+        "up",
+        127
+      ],
+      [
+        "s",
+        "down",
+        119
+      ],
+      [
+        "s",
+        "up",
+        233
+      ],
+      [
+        "Space",
+        "down",
+        114
+      ],
+      [
+        "w",
+        "down",
+        0
+      ],
+      [
+        "Space",
+        "up",
+        296
+      ],
+      [
+        "w",
+        "up",
+        130
+      ],
+      [
+        "Space",
+        "down",
+        101
+      ],
+      [
+        "w",
+        "down",
+        0
+      ],
+      [
+        "Space",
+        "up",
+        352
+      ],
+      [
+        "Space",
+        "down",
+        118
+      ],
+      [
+        "Space",
+        "up",
+        534
+      ],
+      [
+        "w",
+        "up",
+        0
       ],
       [
         "e",
@@ -825,6 +903,28 @@
         "e",
         "up",
         300
+      ]
+    ],
+    "back": [
+      [
+        "a",
+        "down",
+        1175
+      ],
+      [
+        "w",
+        "down",
+        13
+      ],
+      [
+        "a",
+        "up",
+        2579
+      ],
+      [
+        "w",
+        "up",
+        0
       ]
     ]
   },

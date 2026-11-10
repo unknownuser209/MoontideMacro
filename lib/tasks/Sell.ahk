@@ -15,7 +15,7 @@
 ;              run starts over (it begins with a reset to spawn, which also
 ;              fixes a half-finished walk).
 ;
-; Sequence (FishSol 1440p order):
+; Sequence:
 ;   Roblox focus -> Input.ResetToSpawn -> claim the daily reward if its green
 ;   button is up (max 3x) -> camera zoom (wheel) -> route "toShop" (VIP or
 ;   non-VIP, General.vip, default 1 = VIP) -> the route's E must open
@@ -114,7 +114,9 @@ class SellTask {
             last := (A_Index = SellTask.WalkTries)
             if (A_Index > 1)
                 d.log.Call("sell: walking again from spawn (try " A_Index "/" SellTask.WalkTries ")")
-            if !Input.ResetToSpawn(ctx, io) {
+            ; first try with the quick waits (the same screen checks, used by
+            ; every hunt); a retry uses the full ones
+            if !(A_Index = 1 ? Input.QuickReset(ctx, io) : Input.ResetToSpawn(ctx, io)) {
                 if ctx.ShouldStop()
                     return
                 d.log.Call("sell: reset failed: " Input.LastResetError)

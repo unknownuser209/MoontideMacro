@@ -27,7 +27,7 @@
 ; read ONLY through FishLogic.Settings / FishLogic.SellEvery)
 ;   sellEvery            15   fishing catches between sells (clamped to >= 1;
 ;                             not a whole number -> 15)
-;   vip                  1    1 = FishSol "Vip Pathing" route, 0 = "Non Vip Pathing"
+;   vip                  1    1 = the VIP sell walk, 0 = the slower non-VIP one
 ;   sellAll              1    1 = Sell All button (one round), 0 = sell selected
 ;   advancedFishing      0    1 = bar-width minigame detection (legacy only)
 ;   legacyReel           0    1 = FishSol's "click when the bar colour is

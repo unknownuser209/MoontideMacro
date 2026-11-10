@@ -216,14 +216,14 @@ Test_FishData_FilesParseAndComplete() {
     AssertEq(FsJoin(coords["sell"]["loop"]["loaded"]["pixel"], ","), "593,795", "shop loaded pixel")
     AssertEq(FsJoin(coords["sell"]["loop"]["sellAll"], ","), "904,1080", "sell all click")
     AssertEq(FsJoin(coords["sell"]["loop"]["sellSelected"], ","), "700,1078", "sell selected click")
-    ; every route parses and has the FishSol timings
+    ; every route parses and has the recorded walk timings (nonvip = vip x1.25)
     for variant in ["vip", "nonvip"]
         for leg in ["toShop", "back"]
             AssertTrue(Input.ParseRoute(routes[variant][leg]).Length > 0, variant "." leg " parses")
-    AssertEq(Input.RouteMs(routes["vip"]["toShop"]), 10305, "vip toShop ms")
-    AssertEq(Input.RouteMs(routes["vip"]["back"]), 4145, "vip back ms")
-    AssertEq(Input.RouteMs(routes["nonvip"]["toShop"]), 12325, "nonvip toShop ms")
-    AssertEq(Input.RouteMs(routes["nonvip"]["back"]), 4775, "nonvip back ms")
+    AssertEq(Input.RouteMs(routes["vip"]["toShop"]), 11477, "vip toShop ms")
+    AssertEq(Input.RouteMs(routes["vip"]["back"]), 3767, "vip back ms")
+    AssertEq(Input.RouteMs(routes["nonvip"]["toShop"]), 14347, "nonvip toShop ms")
+    AssertEq(Input.RouteMs(routes["nonvip"]["back"]), 4709, "nonvip back ms")
 }
 
 Test_FishData_MissingKeyDetected() {
@@ -830,8 +830,8 @@ Test_Sell_VipVsNonVipDuration() {
         io2 := FsIO()
         FsSellScreen(io2, 1)
         SellTask(t.cfg, FsCaught(), FsDeps(io2, [])).Run(SchedCtx())
-        ; non-VIP legs are longer by (12325-10305) + (4775-4145)
-        AssertEq(io2.clock - vipMs, (12325 - 10305) + (4775 - 4145), "non-VIP route timings used")
+        ; non-VIP legs are longer by (14347-11477) + (4709-3767)
+        AssertEq(io2.clock - vipMs, (14347 - 11477) + (4709 - 3767), "non-VIP route timings used")
         ; default (no key) is VIP
         t2 := FsMakeCfg()
         try {

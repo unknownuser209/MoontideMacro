@@ -60,7 +60,7 @@
 ;   RouteRecorder.WriteAtomic(path, text)   tmp file + FileMove; refuses
 ;       when path or path.tmp is a directory.
 ;   RouteRecorder.ValidName(name)  lower-case [a-z][a-z0-9_]*, not the
-;       FishSol sell routes (vip / nonvip) or "_source".
+;       shipped sell walks (vip / nonvip) or "_source".
 ; ---------------------------------------------------------------------------
 
 class RouteRecorder {
