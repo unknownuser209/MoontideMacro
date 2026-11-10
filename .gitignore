@@ -13,4 +13,5 @@ data/biome_items_state.json
 *.bad
 data/calibration.json.bad
 data/minions_routes.json
+data/auras_learnt.json
 dist/

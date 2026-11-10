@@ -35,7 +35,7 @@
 ;   app := App(deps)     deps Map; only cfg is required. Every other key is a
 ;                        test seam (default = the real module):
 ;     cfg, root (repo dir, absolute), now () -> ms, state (SchedState),
-;     ctx (SchedCtx), roblox (Hwnd/IsFullscreen1440/Focus), clip (Clip),
+;     ctx (SchedCtx), roblox (Hwnd/ClientOk/Focus), clip (Clip),
 ;     input (Input: ReleaseAll), calibrate (Calibrate), wh (Webhook),
 ;     logWatch (LogWatch), biomeEvents, chatWatch ("" = none),
 ;     tasks (Map name -> task; when given, ONLY these are used),
@@ -79,7 +79,9 @@
 ;   with a lower priority number -> ctx.RequestPreempt() (the task returns at
 ;   its next checkpoint).
 ; WINDOW (spec 7): Start / Resume with Roblox missing or not fullscreen
-;   2560x1440 -> paused with that status (F2 resumes after a re-check).
+;   (any resolution; windowed / minimized are not supported) -> paused with
+;   that status (F2 resumes after a re-check). A fullscreen size other than
+;   the verified 2560x1440 runs, with a status note and a "Display:" log line.
 ;   During any task except recovery (checked every tick): not fullscreen
 ;   -> pause; window gone -> preempt for recovery (recovery off -> pause
 ;   "Roblox not found"); Roblox not the active window (alt-tab) -> pause
@@ -184,8 +186,8 @@ class App {
     static KeyNames := ["start", "pause", "stop"]
     static KeyDefaults := Map("start", "F1", "pause", "F2", "stop", "F3")
     static Msg := Map(
-        "missing", ["Roblox not found", "Roblox not found. Open Roblox fullscreen at 2560x1440, then press F2."],
-        "notfs", ["Not fullscreen 2560x1440", "Roblox is not fullscreen 2560x1440. Make it fullscreen, then press F2."],
+        "missing", ["Roblox not found", "Roblox not found. Open Roblox fullscreen, then press F2."],
+        "notfs", ["Roblox not fullscreen", "Moontide needs Roblox fullscreen (any resolution; windowed and minimized are not supported). Make it fullscreen, then press F2."],
         "unfocused", ["Roblox lost focus", "Roblox is not the active window (alt-tab?). Input stopped. Click into Roblox, then press F2."])
 
     ; Absolute repo dir (lib\App.ahk -> repo).
@@ -240,6 +242,8 @@ class App {
         this._lastPoll := ""
         this._pauseReason := ""
         this._note := ""
+        this._display := ""          ; "Roblox 1920x1080 (x0.75): only 2560x1440 is verified so far"
+        this._displayLogged := ""
         this._holdUntil := 0
         this._polling := false
         this._rebuildPending := false
@@ -1008,14 +1012,32 @@ class App {
 
     _RecoveryOn() => IsObject(this.recovery) && this.cfg.Get("recovery.enabled", 1)
 
-    ; "ok" | "missing" | "notfs"
+    ; "ok" | "missing" | "notfs" (windowed / minimized). "ok" also refreshes
+    ; Screen's mapping to the client (Roblox.ClientOk) and logs the display
+    ; once per change.
     _Window() {
         try {
             if !this.roblox.Hwnd()
                 return "missing"
-            return this.roblox.IsFullscreen1440() ? "ok" : "notfs"
+            win := this.roblox.ClientOk()
+            if (win = "ok")
+                this._DisplayCheck()
+            return win
         }
         return "missing"
+    }
+
+    ; Self-check line (client size, DPI scale, mapping) when it changes, and
+    ; the status note when the size is not the verified 2560x1440.
+    _DisplayCheck() {
+        if !HasMethod(this.roblox, "Describe")
+            return
+        d := this.roblox.Describe()
+        if (d != this._displayLogged) {
+            this._displayLogged := d
+            this.Log("Display: " d)
+        }
+        this._display := this.roblox.Verified() ? "" : "Roblox " this.roblox.SizeText() ": only 2560x1440 is verified so far"
     }
 
     ; ---- log events -------------------------------------------------------------
@@ -1114,7 +1136,9 @@ class App {
             task := StrTitle(this._running.name)
         else
             task := this._started ? this._note : ""
-        up := this._started ? this.Now() - this._startedAt : this._uptime
+        if (this._display != "" && (task = "" || task = "Idle"))
+            task := (task = "" ? "" : task ". ") this._display
+        up :=this._started ? this.Now() - this._startedAt : this._uptime
         biome := this.state.biome
         rare := this.state.rareActive ? true : false
         stats := (this.state.HasProp("stats") && this.state.stats is Map) ? this.state.stats : Map()
@@ -1472,7 +1496,9 @@ class App {
                     this.Log("Route recorder: could not equip Sailor (" sw.why "): equip it yourself before pressing " RouteRecorder.Key)
             }
             if Input.NoRespawn.Has(name) {
-                this.Log("Route recorder: no respawn in THE LIMBO: stand where the Portable Crack puts you; re-aiming the camera (Aura Collections)")
+                this.Log(name = "fisher_to_fishing"
+                    ? "Route recorder: no respawn: stand at Captain Flarg (dialog closed); re-aiming the camera (Aura Collections)"
+                    : "Route recorder: no respawn in THE LIMBO: stand where the Portable Crack puts you; re-aiming the camera (Aura Collections)")
                 ok := true
                 if HasMethod(this.input, "ReAim")
                     try ok := this.input.ReAim(ctx)
@@ -1552,7 +1578,7 @@ class App {
         steps := Input.WithCamera(name, steps)          ; e.g. top-down for limbo_eden
         win := this._Window()
         if (win != "ok")
-            return {ok: false, msg: (win = "notfs") ? "Roblox is not fullscreen 2560x1440" : "Roblox is not open"}
+            return {ok: false, msg: (win = "notfs") ? "Roblox is not fullscreen" : "Roblox is not open"}
         if !this._FocusSettled()
             return {ok: false, msg: "Roblox did not take focus; click into it and press Test again"}
         key := RouteRecorder.InteractKey(name)
@@ -1888,8 +1914,16 @@ class App {
         App._harnessCfg := cfg
         inst := App(Map("cfg", cfg, "root", root))
         inst.Boot(mode)
-        if (mode = "normal")
+        if (mode = "normal") {
+            ; display self-check (Vesper.ahk set the DPI awareness first)
+            inst.Log("Display: DPI awareness " (Screen.dpiSet = "" ? "not set" : Screen.dpiSet)
+                . ", main monitor " A_ScreenWidth "x" A_ScreenHeight " at " Screen.ScaleAt() "%")
+            try {
+                if (inst._Window() != "ok")
+                    inst.Log("Display: Roblox is not open fullscreen yet; it is checked again at F1")
+            }
             inst.InstallHotkeys()
+        }
         else
             inst._Harness(mode, holdMs)
         return inst

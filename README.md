@@ -205,6 +205,11 @@ which walks faster. Without VIP your character is slower and those walks fall
 short: turn off **VIP gamepass routes** (Setup > Settings) and record your own
 walks here.
 
+**Your own sell walks:** record `sell_to_fisher` (respawn, walk to Captain
+Flarg, stop before pressing E) and `fisher_to_fishing` (stand at Captain
+Flarg with his dialog closed, walk to the fishing spot). Once recorded, the
+sell trip uses them instead of the shipped walk.
+
 The quest board and the cauldron need walking routes. Record them on the
 **Setup > Routes** page (Record stops a running macro first):
 

@@ -1,5 +1,10 @@
 #Requires AutoHotkey v2.0
+#Include %A_LineFile%\..\Screen.ahk
 ; ---------------------------------------------------------------------------
+; RECTS ARE DESIGN PX (2560x1440). Off that size Screen maps each rect to the
+; Roblox client and the crop is stretched to the size the design read had
+; (scale / Screen.s), so a small client is OCR'd larger; FindText returns
+; design px. At 2560x1440 nothing changes.
 ; Ocr: Windows.Media.Ocr (WinRT, built into Windows 10/11) on a small screen
 ; region. Original code: raw RoGetActivationFactory + vtable ComCall.
 ;
@@ -102,6 +107,12 @@ class Ocr {
         x := Integer(x), y := Integer(y), w := Integer(w), h := Integer(h)
         if (w < 1 || h < 1)
             return ""
+        ; DESIGN rect -> the client's screen rect; k = screen px per design px
+        k := 1
+        if !Screen.IsIdentity() {
+            r := Screen.Rect(x, y, w, h)
+            x := r.x, y := r.y, w := r.w, h := r.h, k := Screen.s
+        }
         objs := []      ; WinRT/COM pointers to Release
         hstrs := []     ; HSTRINGs to delete
         gdi := ""       ; capture handles
@@ -109,20 +120,30 @@ class Ocr {
             statics := Ocr._Factory("Windows.Media.Ocr.OcrEngine", "OcrEngineStatics", objs, hstrs)
             ComCall(6, statics, "UInt*", &maxDim := 0)           ; get_MaxImageDimension
             pad := ink ? Ocr.InkPad : 0
-            s := Max(1, Min(Integer(scale), ink ? Ocr.InkMaxScale : Ocr.MaxScale))
-            while (s > 1 && (w * s + 2 * pad > maxDim || h * s + 2 * pad > maxDim))
-                s--
-            if (w + 2 * pad > maxDim || h + 2 * pad > maxDim)
+            maxS := ink ? Ocr.InkMaxScale : Ocr.MaxScale
+            if (k = 1) {
+                s := Max(1, Min(Integer(scale), maxS))
+                while (s > 1 && (w * s + 2 * pad > maxDim || h * s + 2 * pad > maxDim))
+                    s--
+            } else {
+                ; off 2560x1440: stretch the screen crop to the size the
+                ; design read had (Screen.OcrScale: up when smaller, down on 4K)
+                s := Min(Screen.OcrScale(Max(1, Integer(scale))), maxS)
+                while (s > 1 && (Round(w * s) + 2 * pad > maxDim || Round(h * s) + 2 * pad > maxDim))
+                    s := Max(1, s - 1)
+            }
+            iw := Round(w * s), ih := Round(h * s)
+            if (iw + 2 * pad > maxDim || ih + 2 * pad > maxDim)
                 return ""
 
             engine := Ocr._Engine(statics, objs, hstrs)
             if !engine
                 return ""
 
-            sw := w * s + 2 * pad, sh := h * s + 2 * pad, size := sw * sh * 4
+            sw := iw + 2 * pad, sh := ih + 2 * pad, size := sw * sh * 4
             if ink {
                 gdi := Ocr._Capture(x, y, w, h, w, h)
-                gdi := Ocr._Ink(gdi, w, h, ink, s, pad)
+                gdi := Ocr._Ink(gdi, w, h, ink, iw, ih, pad)
             } else
                 gdi := Ocr._Capture(x, y, w, h, sw, sh)
 
@@ -175,8 +196,12 @@ class Ocr {
                 if (find != "") {
                     if RegExMatch(text, find) {
                         b := Ocr._LineBox(pLine, objs)
-                        if IsObject(b)
-                            return {x: x + Round((b.x1 + b.x2) / 2 / s), y: y + Round((b.y1 + b.y2) / 2 / s), text: text}
+                        if IsObject(b) {
+                            cx := x + Round((b.x1 + b.x2) / 2 / s), cy := y + Round((b.y1 + b.y2) / 2 / s)
+                            if (k != 1)                                 ; back to design px for the click
+                                d := Screen.Inv(cx, cy), cx := d.x, cy := d.y
+                            return {x: cx, y: cy, text: text}
+                        }
                     }
                     continue
                 }
@@ -313,16 +338,16 @@ class Ocr {
     }
 
     ; ReadInk: the 1x capture g (w x h) made black where red < ink, white
-    ; elsewhere, then copied s times up (COLORONCOLOR: no smoothing) into a
+    ; elsewhere, then stretched to iw x ih (COLORONCOLOR: no smoothing) into a
     ; white DIB pad px bigger on each side. g is freed. -> the new capture.
-    static _Ink(g, w, h, ink, s, pad) {
+    static _Ink(g, w, h, ink, iw, ih, pad) {
         try {
             p := g.bits
             Loop w * h {
                 NumPut("UInt", NumGet(p, 2, "UChar") < ink ? 0xFF000000 : 0xFFFFFFFF, p)
                 p += 4
             }
-            sw := w * s + 2 * pad, sh := h * s + 2 * pad
+            sw := iw + 2 * pad, sh := ih + 2 * pad
             n := {hdcScreen: 0, hdcMem: 0, hbm: 0, old: 0, bits: 0}
             try {
                 n.hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
@@ -337,7 +362,7 @@ class Ocr {
                 n.old := DllCall("SelectObject", "Ptr", n.hdcMem, "Ptr", n.hbm, "Ptr")
                 DllCall("PatBlt", "Ptr", n.hdcMem, "Int", 0, "Int", 0, "Int", sw, "Int", sh, "UInt", 0x00FF0062)   ; WHITENESS
                 DllCall("SetStretchBltMode", "Ptr", n.hdcMem, "Int", 3)                                        ; COLORONCOLOR
-                if !DllCall("StretchBlt", "Ptr", n.hdcMem, "Int", pad, "Int", pad, "Int", w * s, "Int", h * s
+                if !DllCall("StretchBlt", "Ptr", n.hdcMem, "Int", pad, "Int", pad, "Int", iw, "Int", ih
                     , "Ptr", g.hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h, "UInt", 0x00CC0020)
                     throw Error("Ocr: blit failed")
                 DllCall("GdiFlush")

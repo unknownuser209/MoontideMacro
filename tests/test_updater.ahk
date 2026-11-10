@@ -296,9 +296,9 @@ Test_Updater_OnlyWhenStopped() {
 
 Test_Updater_ProtectedPaths() {
     for p in ["settings.ini", "Settings.INI", "data\calibration.json", "data/routes.json", "data\quests.json", "data\merchants.json"
-        , "data\potions.json", "data\biomes.json", "data\auras_had.txt", "data\biome_items_state.json", "logs\a.log", "backup\1.0\Vesper.ahk"]
+        , "data\potions.json", "data\biomes.json", "data\auras_had.txt", "data\biome_items_state.json", "data\auras_learnt.json", "logs\a.log", "backup\1.0\Vesper.ahk"]
         AssertTrue(Updater.IsProtected(p), "protected " p)
-    for p in ["Vesper.ahk", "lib\App.ahk", "data\default_routes.json", "data\coords.json", "data\auras.json", "assets\ui\moon_0.png"]
+    for p in ["Vesper.ahk", "lib\App.ahk", "data\default_routes.json", "data\coords.json", "data\auras.json", "data\auras_abilities.json", "assets\ui\moon_0.png"]
         AssertTrue(!Updater.IsProtected(p), "not protected " p)
 }
 

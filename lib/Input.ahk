@@ -2,9 +2,12 @@
 #Include %A_LineFile%\..\Json.ahk
 #Include %A_LineFile%\..\Ocr.ahk
 #Include %A_LineFile%\..\Screenshot.ahk
+#Include %A_LineFile%\..\Screen.ahk
 ; ---------------------------------------------------------------------------
 ; Input: keyboard/mouse helpers and the timed route player.
-; Screen coordinates (CoordMode Mouse Screen). Keyboard + mouse only.
+; DESIGN coordinates (2560x1440); the real io (InputScreenIO) maps them to
+; the Roblox client through Screen (CoordMode Mouse Screen). Keyboard +
+; mouse only.
 ;
 ; ROUTE FORMAT (data/routes.json, Task 8+)
 ;   A route is an Array of steps, or {"steps": [...]}. A step is either
@@ -63,6 +66,10 @@
 ; ---------------------------------------------------------------------------
 
 class InputScreenIO {
+    ; Callers give DESIGN coords (2560x1440); the real mouse gets Screen's
+    ; mapping to the Roblox client (unchanged at 2560x1440). Unmap: back.
+    static Map(x, y) => Screen.Pt(x, y)
+    static Unmap(x, y) => Screen.Inv(x, y)
     Down(k) {
         SendInput("{" k " down}")
     }
@@ -70,8 +77,9 @@ class InputScreenIO {
         SendInput("{" k " up}")
     }
     MoveTo(x, y) {
+        p := InputScreenIO.Map(x, y)
         CoordMode("Mouse", "Screen")
-        MouseMove(x, y, 0)
+        MouseMove(p.x, p.y, 0)
         ; 1 px nudge so Roblox registers the hover before a click.
         MouseMove(1, 0, 0, "R")
         MouseMove(-1, 0, 0, "R")
@@ -103,13 +111,14 @@ class InputScreenIO {
     ; Shift lock probe (Input.ShiftLockOn): a plain absolute move (no nudge,
     ; no click) and where the cursor is now.
     MouseAt(x, y) {
+        p := InputScreenIO.Map(x, y)
         CoordMode("Mouse", "Screen")
-        MouseMove(x, y, 0)
+        MouseMove(p.x, p.y, 0)
     }
     MousePos() {
         CoordMode("Mouse", "Screen")
         MouseGetPos(&x, &y)
-        return {x: x, y: y}
+        return InputScreenIO.Unmap(x, y)
     }
     ; SendEvent (live 2026-11-02: Roblox's shift lock took Left Shift's scan
     ; code this way, not a plain {Shift}).
@@ -511,7 +520,9 @@ class Input {
     ; (Esc + R there never respawns, 2026-10-26), so limbo_eden starts where
     ; the Portable Crack puts the player and only the camera is re-aimed
     ; (Input.ReAim) before it.
-    static NoRespawn := Map("limbo_eden", true)
+    ; fisher_to_fishing starts at Captain Flarg (the sell walks there first):
+    ; recording / testing it re-aims the camera where you stand.
+    static NoRespawn := Map("limbo_eden", true, "fisher_to_fishing", true)
 
     ; Esc, R, Enter, then open + close Aura Collections (FishSol 1440p
     ; clicks). With io.Ocr each step is checked on screen and retried

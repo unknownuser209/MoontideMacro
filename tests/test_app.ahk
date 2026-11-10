@@ -151,7 +151,7 @@ class AppFakeRoblox {
         this.afterSleep := ""        ; callable run on App's settle sleep (the dashboard's minimize ending)
     }
     Hwnd() => this.win
-    IsFullscreen1440() => this.win && this.fs
+    ClientOk() => !this.win ? "missing" : this.fs ? "ok" : "notfs"
     IsActive() => this.win && this.activeOk
     Focus(t := 2) {
         this.focusCalls++

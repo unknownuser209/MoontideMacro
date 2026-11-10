@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "_about": "Skill auras for the Minions hunt (lib\\tasks\\Minions.ahk, MinionsTask.Auras / MinionSkills). Keys are aura names in lower case. panel: the skill rows top to bottom as on screen (rows fill the panel's lowest slots). order: keys to cast, first ready wins (a key left out is never cast). skills: per key, name as on the panel, cool = cooldown ms (the overlay), cast = ms from the press to the overlay's start, cost = resource points it needs, roots = no movement during its cast, needsRank = combo rank it needs. strategy: 'eden' (Eden's hand-written rule), 'order' (first ready in order); auras not listed use default.strategy ('learn': read the panel's key letters, else press every letter and learn the rows; cooldowns learnt from the overlay go to data\\auras_learnt.json). readers: extra HUD reads ('charge' = Eden's points bar, 'rank' = its combo letter). deathScreen: true = the dark red death screen (DeathScreen) counts as a death. \"unknown\" = not measured: never invented.",
+  "default": {
+    "strategy": "learn",
+    "castMs": 3000,
+    "learnMs": 8000,
+    "unknownHoldMs": 4000
+  },
+  "auras": {
+    "eden": {
+      "name": "Eden",
+      "source": "clip MedalTV 170608 (2026-11-03), live 2026-11-02, loops L19-L77",
+      "panel": ["t", "f", "e", "q", "r", "v"],
+      "order": ["r", "v", "f", "e", "t", "q"],
+      "strategy": "eden",
+      "resource": {"kind": "charge", "max": 100, "combo": true},
+      "readers": ["charge", "rank"],
+      "deathScreen": true,
+      "nameLogo": true,
+      "skills": {
+        "t": {"name": "Taunt", "cool": 8000, "cast": 400, "role": "taunt: +15 Charge, no damage"},
+        "f": {"name": "Darkmatter Barrage", "cool": 10000, "cast": 2800, "role": "aoe ahead, ~40 to all inside"},
+        "e": {"name": "Cut Into Nothing", "cool": 6000, "cast": 1000, "role": "ring, -31 to several"},
+        "q": {"name": "Impale", "cool": 3000, "cast": 1000, "role": "-15 to one minion in reach, 0 to the orb"},
+        "r": {"name": "Deadeye", "cool": 40000, "cast": 3400, "roots": true, "needsRank": "V", "role": "burst -102"},
+        "v": {"name": "Voidrush", "cool": 60000, "cast": 4800, "cost": 30, "role": "gap closer, costs 25 Charge"}
+      }
+    },
+    "equinox": {
+      "name": "Equinox",
+      "source": "clip MedalTV 170827 (2026-11-03), tests\\screens\\hand_panel_equinox.png",
+      "panel": ["e", "t", "r"],
+      "order": ["r", "t", "e"],
+      "strategy": "order",
+      "resource": {"kind": "unknown"},
+      "readers": [],
+      "deathScreen": "unknown",
+      "nameLogo": "unknown",
+      "skills": {
+        "e": {"name": "Release", "cool": 20000, "cast": 2500},
+        "t": {"name": "Confiscation", "cool": 20000, "cast": 5000},
+        "r": {"name": "Extinction", "cool": 20000, "cast": 3000}
+      }
+    },
+    "luminosity": {
+      "name": "Luminosity",
+      "source": "clip MedalTV 171013 (2026-11-03), tests\\screens\\hand_panel_luminosity.png",
+      "panel": ["f", "t", "q", "r", "e"],
+      "order": ["f", "e", "t", "r"],
+      "strategy": "order",
+      "resource": {"kind": "unknown"},
+      "readers": [],
+      "deathScreen": "unknown",
+      "nameLogo": true,
+      "skills": {
+        "f": {"name": "Blinding Witness", "cool": 25000, "cast": 1000},
+        "t": {"name": "Prism", "cool": 23000, "cast": 1000},
+        "q": {"name": "Lightspeed", "cool": 1900, "cast": 500, "role": "a dash, no damage: not in order"},
+        "r": {"name": "Brilliance", "cool": 50000, "cast": 2800},
+        "e": {"name": "Annihilate", "cool": 6900, "cast": 1000}
+      }
+    }
+  }
+}

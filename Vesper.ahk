@@ -7,4 +7,7 @@
 #Include %A_ScriptDir%\lib\App.ahk
 
 Persistent
+; Per-monitor DPI awareness before ANY coordinate or capture call: at 125 /
+; 150 % Windows would otherwise hand the macro scaled-down coordinates.
+Screen.InitDpi()
 VesperApp := App.Main(A_ScriptDir, A_Args)

@@ -67,11 +67,11 @@ class RouteRecorder {
     static Key := "F7"
     static Keys := ["w", "a", "s", "d", "Space", "e", "f", "RButton", "Left", "Right", "Up", "Down", "i", "o"]
     static LookMs := 40           ; camera movement is merged into one look step per 40 ms
-    static Names := ["quest_board", "cauldron", "limbo_eden", "obby", "memory_match"]   ; merchants use the teleporter; craft respawns after the cauldron; limbo_eden: Limbo spawn -> Eden; obby / memory_match: no shipped default (the user records them)
+    static Names := ["sell_to_fisher", "fisher_to_fishing", "quest_board", "cauldron", "limbo_eden", "obby", "memory_match"]   ; sell_to_fisher: spawn -> Captain Flarg (stop before E); fisher_to_fishing: stand at Flarg -> the fishing spot. Recorded, they replace the shipped sell walks   ; merchants use the teleporter; craft respawns after the cauldron; limbo_eden: Limbo spawn -> Eden; obby / memory_match: no shipped default (the user records them)
     ; The creator's recordings, shipped: Dashboard > Tools "Reset" copies a
     ; route from here back into data\routes.json.
     static DefaultsPath := RegExReplace(A_LineFile, "\\[^\\]*\\[^\\]*$") "\data\default_routes.json"
-    static Interact := Map("quest_board", "e", "cauldron", "f", "memory_match", "e")   ; QuestsTask / CraftTask / MemoryMatchTask OpenKey
+    static Interact := Map("quest_board", "e", "cauldron", "f", "memory_match", "e", "sell_to_fisher", "e")   ; QuestsTask / CraftTask / MemoryMatchTask OpenKey
     static Reserved := Map("vip", 1, "nonvip", 1, "_source", 1, "routes", 1)
     static MaxMs := 180000
     static HoldCancelMs := 1500     ; Esc held this long cancels before F7

@@ -1270,7 +1270,7 @@ class Dashboard {
         this._Panel(616, 152, 396, 116, "Minigame")
         this._BoolField(632, 188, "Advanced mode (track bar width)", "General.advancedFishing", 0)
         this._IntField(632, 222, "Advanced threshold", "General.advancedThreshold", 20, "px")
-        this._Panel(616, 284, 396, 120, "Fishing", "Click spots, colours and timings come from data\coords.json (FishSol 1440p values). "
+        this._Panel(616, 284, 396, 120, "Fishing", "Click spots, colours and timings come from data\coords.json (2560x1440). "
             . "The VIP route switch is under Setup > Settings.")
         this._BoolField(632, 318, "Fish when nothing else is due", "General.fishing", 1)
         Theme.Label(g, "x632 y348 w364 h40", "Off = only the quest board, craft, merchants and rare-biome potions run.", "muted")
@@ -2144,10 +2144,18 @@ class Dashboard {
 
     _PageCalibrate(p) {
         g := this._gui
-        this._Panel(204, 152, 808, 464, "Steps", "Hover each target in Roblox and press the capture key (" this._CapKey() "). Nothing is clicked. Esc cancels the wizard.")
+        this._Panel(204, 152, 808, 68, "Preset", "A ready calibration recorded fullscreen at one resolution and Windows display scale. "
+            . "Apply copies it over your calibration (the old one is kept as data\calibration.json.bak).")
+        this._calPreset := Theme.Dropdown(g, 220, 184, 220)
+        this._ids["calPreset"] := this._calPreset
+        this._ids["calPresetApply"] := Theme.Button(g, "x448 y182 w130 h30", "Apply preset", (*) => this._CalApplyPreset())
+        this._calPresetNote := Theme.Label(g, "x590 y188 w406 h20", "", "muted")
+        this._ids["calPresetNote"] := this._calPresetNote
+        this._calPresets := []
+        this._Panel(204, 232, 808, 384, "Steps", "Hover each target in Roblox and press the capture key (" this._CapKey() "). Nothing is clicked. Esc cancels the wizard.")
         cw := [200, 110, 466]
-        Theme.ListHeader(g, 220, 180, cw, ["Step", "Status", "What to hover"])
-        this._lvC := Theme.ListView(g, 220, 198, 776, 402, ["Step", "Status", "What to hover"], cw, "+Multi", ObjBindMethod(this, "_CalColor"))
+        Theme.ListHeader(g, 220, 260, cw, ["Step", "Status", "What to hover"])
+        this._lvC := Theme.ListView(g, 220, 278, 776, 322, ["Step", "Status", "What to hover"], cw, "+Multi", ObjBindMethod(this, "_CalColor"))
         this._ids["calibrate"] := this._lvC
         Theme.Button(g, "x204 y628 w170 h30", "Record selected", (*) => this._CalRun("selected"), "primary")
         Theme.Button(g, "x382 y628 w110 h30", "Run all", (*) => this._CalRun("all"))
@@ -2179,6 +2187,46 @@ class Dashboard {
         lv.Opt("+Redraw")
         Theme.FitLastCol(lv)           ; after +Redraw: the scrollbar is known then
         Theme.SetText(this._calStatus, done " of " steps.Length " steps recorded")
+        this._CalPresetsLoad()
+    }
+
+    ; Preset list (whatever data\presets holds), pre-selected to the one
+    ; made at this system's display; the note says when none matches.
+    _CalPresetsLoad() {
+        list := [], sys := ""
+        try list := Calibrate.Presets()
+        try sys := Calibrate.SystemFn.Call()
+        this._calPresets := list
+        labels := []
+        for p in list
+            labels.Push(p.label)
+        dd := this._calPreset
+        dd.Delete()
+        if labels.Length
+            dd.Add(labels)
+        match := Calibrate.MatchPreset(list, sys)
+        idx := 0
+        for i, p in list
+            if (IsObject(match) && p.path = match.path)
+                idx := i
+        if (idx || list.Length)
+            dd.Choose(idx ? idx : 1)
+        mine := IsObject(sys) ? Calibrate.PresetLabel(sys) : "unknown"
+        Theme.SetText(this._calPresetNote, !list.Length ? "No presets installed: calibrate the steps below."
+            : idx ? "Matches your display (" mine ")."
+            : "No preset for your display (" mine "): calibrate the steps below.")
+    }
+
+    _CalApplyPreset() {
+        i := this._calPreset.Value
+        if !(i >= 1 && i <= this._calPresets.Length)
+            return Theme.SetText(this._calPresetNote, "Pick a preset first.")
+        p := this._calPresets[i]
+        err := Calibrate.ApplyPreset(p.path)
+        this.Log("Calibrate: " (err = "" ? "preset " p.label " applied (the old calibration is in data\calibration.json.bak)" : "preset not applied: " err))
+        this._CalLoad()
+        if (err != "")
+            Theme.SetText(this._calPresetNote, "Not applied: " err)
     }
 
     _CalColor(row) {
@@ -2380,7 +2428,7 @@ class Dashboard {
         this._ids["memoryLayoutNote"] := Theme.Label(g, "x632 y224 w364 h40", "", "muted")
         this._ids["memoryNote"] := Theme.Label(g, "x632 y272 w364 h20", "", "muted")
         this._Panel(204, 388, 808, 220, "Minions (Halloween)", "In every weather biome (not rare, not event): puts on the combat aura, respawns, finds the orbs' and minions' health bars, "
-            . "walks up and uses the aura's skills (F R E Q V; never the number keys), then respawns (and puts your aura back when that is on). Once per biome. "
+            . "walks up and uses the aura's skills (any aura with skills; never the number keys), then respawns (and puts your aura back when that is on). Once per biome. "
             . "NORMAL has shown no orbs: it is not hunted unless Hunt in NORMAL too is on, only the aura and a respawn are made ready there. "
             . "Needs the aura storage steps calibrated (as the obby). Auto roll can equip a new aura mid-hunt; the skills then do nothing until the next hunt. "
             . "Shift lock keeps the character facing the target in fights; it needs Roblox's Shift Lock Switch setting on. "

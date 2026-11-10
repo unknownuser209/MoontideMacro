@@ -32,7 +32,7 @@ ProbeNow() {
     text := Ocr.Read(bx, by, ProbeBoxW, ProbeBoxH)
     ms := A_TickCount - t0
     ProbeLast := "pos " mx "," my "  color " color
-        . "`nroblox " (Roblox.Hwnd() ? (Roblox.IsFullscreen1440() ? "1440 fullscreen" : "NOT 2560x1440 at 0,0") : "not running")
+        . "`nroblox " (Roblox.Hwnd() ? (Roblox.ClientOk() = "ok" ? "fullscreen " Screen.SizeText() : "NOT fullscreen") : "not running")
         . "`nocr box " bx "," by " " ProbeBoxW "x" ProbeBoxH " (" ms " ms):"
         . "`n" (text = "" ? "<nothing>" : text)
     ToolTip(ProbeLast, mx + 24, my + ProbeBoxH // 2 + 8)

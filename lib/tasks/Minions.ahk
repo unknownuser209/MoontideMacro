@@ -155,26 +155,104 @@ class MinionsTask {
     ; damage; F Barrage ~40 to all inside, on the orb; E Cut -31 to several,
     ; mid range (the -31 once credited to Impale); Q Impale -15 to one, it
     ; mostly misses; V Voidrush needs 30 Charge, costs 25; R Deadeye -102 at
-    ; rank V only (it "came during" V). Any other aura: every letter (one an
+    ; rank V only (it "came during" V); Voidrush needs 30 Charge ("You need
+    ; 30 Charge to use this" at 27, clip 170608 t=12.6). Any other aura:
+    ; its panel's key letters read (PanelKeys), else every letter (one an
     ; aura lacks does nothing), cooldowns from its panel.
+    ; The numbers live in data\auras_abilities.json (AurasFile, read once:
+    ; Auras); an aura not in it goes by its "default" block.
     static Keys := ["e", "r", "t", "f", "q", "v"]
-    static Auras := Map(
-        "eden", {panel: ["t", "f", "e", "q", "r", "v"], order: ["r", "v", "f", "e", "t", "q"]
-            , cool: Map("t", 8000, "f", 10000, "e", 6000, "q", 3000, "v", 60000, "r", 40000)
-            , cast: Map("t", 400, "f", 2800, "e", 1000, "q", 1000, "v", 4800, "r", 3400)},
-        "equinox", {panel: ["e", "t", "r"], order: ["r", "t", "e"]
-            , cool: Map("r", 20000, "t", 20000, "e", 20000)
-            , cast: Map("r", 3000, "t", 5000, "e", 2500)},
-        "luminosity", {panel: ["f", "t", "q", "r", "e"], order: ["f", "e", "t", "r"]
-            , cool: Map("f", 25000, "t", 23000, "r", 50000, "e", 6900, "q", 1900)
-            , cast: Map("f", 1000, "t", 1000, "r", 2800, "e", 1000, "q", 500)})
-    static KeysFor(aura) {
-        k := StrLower(Trim(String(aura)))
-        return MinionsTask.Auras.Has(k) ? MinionsTask.Auras[k].order : MinionsTask.Keys
+    static AurasFile := A_LineFile "\..\..\..\data\auras_abilities.json"
+    static _auras := ""
+    ; aura (lower case) -> {name, panel, order, cool, cast, cost, roots,
+    ; rank (Maps key -> value), strategy, charge, rank reads (readsCharge,
+    ; readsRank), deathScreen}
+    static Auras {
+        get {
+            if !IsObject(MinionsTask._auras)
+                MinionsTask.AurasUse(MinionsTask.AurasRead(MinionsTask.AurasFile))
+            return MinionsTask._auras
+        }
     }
-    ; Points a skill needs (Eden: Voidrush 30, "You need 30 Charge to use
-    ; this" at 27, clip 170608 t=12.6)
-    static Costs := Map("eden", Map("v", 30))
+    ; -> the file's root Map, "" = missing or unreadable (every aura learns)
+    static AurasRead(path) {
+        try {
+            if FileExist(path) {
+                v := Json.Parse(FileRead(path, "UTF-8"))
+                if (v is Map)
+                    return v
+            }
+        }
+        return ""
+    }
+    ; the table from a parsed file (AurasRead; "" = none); its "default"
+    ; block sets MinionSkills' numbers for an unknown aura
+    static AurasUse(root) {
+        t := Map()
+        MinionsTask._auras := t
+        if !(root is Map)
+            return t
+        if (root.Has("default") && root["default"] is Map) {
+            d := root["default"]
+            for key, prop in Map("castMs", "GenericCastMs", "learnMs", "LearnMs", "unknownHoldMs", "UnknownHoldMs")
+                if (d.Has(key) && IsNumber(d[key]) && d[key] > 0)
+                    MinionSkills.%prop% := Integer(d[key])
+        }
+        if (root.Has("auras") && root["auras"] is Map)
+            for name, a in root["auras"]
+                if (a is Map)
+                    t[StrLower(Trim(name))] := MinionsTask._AuraOf(name, a)
+        return t
+    }
+    static _AuraOf(name, a) {
+        keys := (v) => MinionsTask._Letters(v)
+        s := {name: (a.Has("name") && a["name"] is String) ? a["name"] : name
+            , panel: keys(a.Get("panel", "")), order: keys(a.Get("order", ""))
+            , cool: Map(), cast: Map(), cost: Map(), roots: Map(), rank: Map()
+            , strategy: (a.Has("strategy") && a["strategy"] is String && a["strategy"] != "") ? StrLower(a["strategy"]) : "order"
+            , readsCharge: false, readsRank: false
+            , deathScreen: a.Has("deathScreen") && a["deathScreen"] is Integer && a["deathScreen"] = 1}
+        if (a.Has("readers") && a["readers"] is Array)
+            for r in a["readers"] {
+                if (r = "charge")
+                    s.readsCharge := true
+                else if (r = "rank")
+                    s.readsRank := true
+            }
+        if (a.Has("skills") && a["skills"] is Map)
+            for k, sk in a["skills"] {
+                k := StrLower(k)
+                if !(sk is Map)
+                    continue
+                for f in ["cool", "cast", "cost"]
+                    if (sk.Has(f) && IsNumber(sk[f]) && sk[f] >= 0)
+                        s.%f%[k] := Integer(sk[f])
+                if (sk.Has("roots") && sk["roots"] is Integer && sk["roots"] = 1)
+                    s.roots[k] := true
+                if (sk.Has("needsRank") && sk["needsRank"] is String && sk["needsRank"] != "")
+                    s.rank[k] := StrUpper(sk["needsRank"])
+            }
+        if !s.order.Length
+            s.order := s.panel.Clone()
+        return s
+    }
+    static _Letters(v) {
+        out := []
+        if (v is Array)
+            for k in v
+                if (k is String && RegExMatch(k, "^[A-Za-z0-9]$"))
+                    out.Push(StrLower(k))
+        return out
+    }
+    ; the table's entry for aura, "" = not in it
+    static AuraSpec(aura) {
+        k := StrLower(Trim(String(aura)))
+        return (k != "" && MinionsTask.Auras.Has(k)) ? MinionsTask.Auras[k] : ""
+    }
+    static KeysFor(aura) {
+        s := MinionsTask.AuraSpec(aura)
+        return IsObject(s) ? s.order : MinionsTask.Keys
+    }
     ; The aura's skill panel (live 2026-11-02, Eden; the layout is every
     ; aura's): one row per skill at the bottom right, SkillTops = the six
     ; row tops (fewer skills fill the lowest rows: clips 2026-11-03, Equinox
@@ -351,7 +429,7 @@ class MinionsTask {
     static FightTickMs := 300    ; a look at the fight between casts (the look in it: _TickLeft)
     static QuestEveryMs := 2000  ; how often a cast looks for the Quest Board's page (_QuestSeen)
     static JockRetryMs := 20000  ; after a failed Leave on Jock's dialog: fight on this long before another try
-    static PanelMinRows := 3     ; skill panel rows that prove an aura is on (_PanelShows; Eden has 6)
+    static PanelMinRows := 1     ; skill panel rows with a key letter in them that prove an aura is on (_PanelShows; Eden has 6, an aura may have 1)
     ; Flashes wash the bars out for seconds (t=46-50, 64 of 170827; 70-73 of
     ; 171013). No bar beside the fight: skills on BlindCastMs, then none for
     ; ClearMs so the screen clears; still no plate: a look round for it, at
@@ -671,8 +749,10 @@ class MinionsTask {
             this._sin := SinisterReport({webhook: this._env.wh, cfg: this._env.cfg, ghost: TaskEnv.Dep(deps, "ghost", "")
                 , log: this._env._logFn, now: this._env.nowFn})
         this._boss := false          ; this Run is boss mode (GRAVEYARD)
-        this._learnt := Map()        ; aura -> Map key -> panel row (MinionSkills), kept between hunts
-        this._eden := false
+        this._learnt := Map()        ; aura -> {rows, cool} learnt (MinionSkills), kept between hunts (learntFile)
+        this._learntFile := TaskEnv.Dep(deps, "learntFile", ""), this._learntLoaded := false
+        this._spec := ""             ; the combat aura's MinionsTask.Auras entry ("" = not in it; Run sets it)
+        try this._spec := MinionsTask.AuraSpec(this._env.cfg.Get("Minions.aura", MinionsTask.Aura))
         this._swap := ObbyTask(deps)
         this._swap.logoOk := true    ; Eden's name panel is a logo (live 2026-10-31)
         this._biome := ""            ; the biome seen last by CanRun
@@ -768,8 +848,9 @@ class MinionsTask {
             this._ShiftOff(ctx)
         if !this._ClickOk(ctx, "the aura swap")
             return 0
-        this._swap.wear := env.cfg.Get("Minions.aura", MinionsTask.Aura)
-        this._back := env.cfg.Get("Minions.putBack", 0) ? true : false
+        this._swap.wear := Trim(env.cfg.Get("Minions.aura", MinionsTask.Aura))
+        this._spec := MinionsTask.AuraSpec(this._swap.wear)
+        this._back :=env.cfg.Get("Minions.putBack", 0) ? true : false
         sw := this._back ? "" : this._AlreadyOn()
         already := IsObject(sw)
         ; a swap: the log has to show it tells this aura's respawns too (_Respawn's reset does)
@@ -1128,11 +1209,14 @@ class MinionsTask {
             this._respawnLog := RespawnTail()
         this._RespawnSync()                      ; the hunt's own reset is no death
         ; the equipped aura's skills from its panel (MinionSkills; a known
-        ; aura has its layout whatever the panel reads: no read)
-        this._eden := ObbyTask.SameAura(this._swap.wear, "Eden")
-        hud := MinionsTask.Auras.Has(StrLower(Trim(this._swap.wear))) ? "" : this._Hud()
+        ; aura has its layout whatever the panel reads: no read; any other:
+        ; the panel and its key letters read)
+        this._spec := MinionsTask.AuraSpec(this._swap.wear)
+        this._LearntRead()
+        hud := IsObject(this._spec) ? "" : this._Hud(true)
         book := MinionSkills(this._swap.wear, IsObject(hud) ? hud.rows : "", this._learnt)
         env.Log("minions: skills " book.how " (" MinionsTask._Join(book.keys) ")")
+        env.Log(this._SkillsLine(book, hud))
         checked := start, viewed := start
         b0 := this._BiomeNow(), bChecked := start, f.b0 := b0
         ; read after the set-up (~3 s): a hunt started at a biome's very end
@@ -1745,7 +1829,7 @@ class MinionsTask {
         ; orb (L44 13:54:21, minions dead 13:55:07, no rank V, the biome won); 3 s
         ; after the last minion bar is no proof either, 6 of 11 V went into a
         ; Locked orb. By hand: V, rank V, Deadeye -102. A boss is never Locked
-        eden := book.HasProp("eden") && book.eden && f.HasProp("foes")
+        eden := book.HasProp("eden") && book.eden && f.HasProp("foes")    ; the table's "eden" strategy
         ; Not for a minion ahead either (tried for Deadeye's rank V): L66 + L71,
         ; 19 V that went among minions put the HP at 45% or under within 6 s
         ; 11 times (04:48:28 -> 37% 04:48:32, dead 04:48:46; 03:54:53 -> 8%,
@@ -1773,6 +1857,7 @@ class MinionsTask {
                 no .= "v"
         }
         k := book.Next(hud, env.Now(), close, no)
+        this._LearntSave(book)                   ; what it learnt, kept at once (a halt loses nothing)
         if (k != "" && this._QuestSeen())
             return this._ClearView(ctx)
         if (k = "e" && this._Prompt()) {
@@ -2150,21 +2235,25 @@ class MinionsTask {
     }
 
     ; The equipped aura's skill panel is on screen (the screen itself, as
-    ; Panel reads it): PanelMinRows rows or more (a toast can hide some). A
-    ; scripted hud (tests: its empty rows mean "unread") or a read that
-    ; fails is no proof against the log: true.
+    ; Panel and PanelKeys read it): PanelMinRows rows or more (a toast can
+    ; hide some; an aura may have one skill), a row = a key box (KeyIn)
+    ; with a letter shape in it, or a letter told (KeyIn misses the box on
+    ; a bright world: graveyard prompt, 2 of Eden's 6). A key box alone is
+    ; no row: a menu's corner (collections_chat_052142). A scripted hud
+    ; (tests: its empty rows mean "unread") or a read that fails is no
+    ; proof against the log: true.
     _PanelShows() {
         if IsObject(this._hudFn)
             return true
-        rows := "", took := this._Snap()
-        try rows := MinionsTask.Panel(this._grab)
+        rows := "", keys := "", took := this._Snap()
+        try rows := MinionsTask.Panel(this._grab), keys := MinionsTask.PanelKeys(this._grab)
         if took
             this._SnapEnd()
-        if !IsObject(rows)
+        if !(IsObject(rows) && IsObject(keys))
             return true
         n := 0
-        for r in rows
-            n += IsObject(r) ? 1 : 0
+        for i, r in rows
+            n += ((IsObject(r) && keys[i] != "") || (keys[i] != "" && keys[i] != "?")) ? 1 : 0
         return n >= MinionsTask.PanelMinRows
     }
 
@@ -2299,7 +2388,10 @@ class MinionsTask {
         env := this._env, now := env.Now(), log := this._respawnLog
         if (IsObject(log) && log.Poll())
             return "a respawn in the log"
-        if IsObject(this._deathFn) {
+        ; the dark red death screen is Eden's: only for an aura whose table
+        ; entry asks for it (deathScreen); the log and the HP tell any aura's
+        if !(IsObject(this._spec) && this._spec.deathScreen) {
+        } else if IsObject(this._deathFn) {
             if (this._deathFn)()
                 return MinionsTask.DeathScreenSeen
         } else if !IsObject(this._scanFn) {
@@ -3070,6 +3162,95 @@ class MinionsTask {
         }
     }
 
+    ; The hunt's skill set-up in one line: the aura, where its skills came
+    ; from (the table's entry and its strategy, or the panel read / learnt),
+    ; the panel's key letters top to bottom ("-" no row, "?" a row not
+    ; told; table auras: not read), the cooldowns learnt so far
+    _SkillsLine(book, hud) {
+        src := IsObject(book.spec) ? "json entry (auras_abilities.json, strategy " book.strategy ")"
+            : "not in auras_abilities.json, " (book.how = "read" ? "keys read off the panel"
+            : book.how = "learn" ? "learn path (pressing letters for the rows not read)"
+            : "no panel read: every letter in turn")
+        panel := ""
+        if (IsObject(hud) && IsObject(hud.rows))
+            for r in hud.rows
+                panel .= !IsObject(r) ? "-" : (r.HasOwnProp("key") ? r.key : "?")
+        cool := ""
+        if IsObject(l := book.Learnt())
+            for k, ms in l.cool
+                cool .= " " k "=" Round(ms / 1000, 1) "s"
+        return "minions: aura " this._swap.wear ": " src
+            . (panel != "" ? ", panel keys " panel : "") ", casting " MinionsTask._Join(book.keys)
+            . (cool != "" ? ", learnt cooldowns" cool : "")
+    }
+
+    ; data\auras_learnt.json (learntFile): aura -> {rows: key -> panel
+    ; row, cool: key -> ms}, what MinionSkills learnt of the auras not in the
+    ; table, written each time it learns (a halted hunt keeps it)
+    _LearntRead() {
+        if this._learntLoaded
+            return
+        this._learntLoaded := true
+        cfg := this._env.cfg
+        if (this._learntFile = "" && cfg.HasProp("dataDir"))
+            this._learntFile := cfg.dataDir "\auras_learnt.json"
+        if (this._learntFile = "" || !FileExist(this._learntFile))
+            return
+        try {
+            for a, e in Json.Parse(FileRead(this._learntFile, "UTF-8")) {
+                rows := Map(), cool := Map()
+                if (e is Map && e.Has("rows") && e["rows"] is Map)
+                    for k, i in e["rows"]
+                        if (IsInteger(i) && i >= 1 && i <= MinionsTask.SkillTops.Length)
+                            rows[k] := Integer(i)
+                if (e is Map && e.Has("cool") && e["cool"] is Map)
+                    for k, ms in e["cool"]
+                        if (IsNumber(ms) && ms > 0)
+                            cool[k] := Integer(ms)
+                this._learnt[StrLower(a)] := {rows: rows, cool: cool}
+            }
+            this._env.Log("minions: learnt skills of " this._learnt.Count " aura(s) read")
+        } catch as e {
+            this._env.Log("minions: the learnt skills file is unreadable (" e.Message ") - learning afresh")
+        }
+    }
+
+    ; the book's new learning written out (a no-op when nothing new)
+    _LearntSave(book) {
+        if !(IsObject(book) && book.HasProp("learning") && book.learning)
+            return
+        book.learning := false
+        if (this._learntFile = "")
+            return
+        root := Map()
+        for a, e in this._learnt {
+            if (e is Map || !IsObject(e))
+                continue
+            rows := Map(), cool := Map()
+            for k, i in e.rows
+                rows[k] := i
+            for k, ms in e.cool
+                cool[k] := ms
+            root[a] := Map("rows", rows, "cool", cool)
+        }
+        try
+            Calibrate._AtomicWrite(this._learntFile, Json.Stringify(root) "`n")
+        catch as e
+            this._env.Log("minions: the learnt skills file not written (" e.Message ")")
+        cool := ""
+        if IsObject(l := book.Learnt())
+            for k, ms in l.cool
+                cool .= " " k "=" Round(ms / 1000, 1) "s"
+        this._env.Log("minions: learnt " this._swap.wear " - rows " MinionsTask._RowsText(book.rowOf) (cool != "" ? ", cooldowns" cool : "") " (saved)")
+    }
+
+    static _RowsText(m) {
+        s := ""
+        for k, i in m
+            s .= " " k "=" i
+        return s = "" ? "none" : LTrim(s)
+    }
+
     _RoutesSave() {
         if (this._routesFile = "")
             return
@@ -3341,9 +3522,11 @@ class MinionsTask {
         return ""
     }
 
-    ; The skill panel (and Eden's points and combo rank) now: {rows, points,
-    ; rank} for MinionSkills, "" = unknown (a failed grab; the hud dep's "").
-    _Hud() {
+    ; The skill panel (and the points and combo rank of an aura whose table
+    ; entry reads them: Eden's) now: {rows, points, rank} for MinionSkills,
+    ; "" = unknown (a failed grab; the hud dep's ""). keys: each row's key
+    ; letter too (PanelKeys: row.key), for an aura not in the table.
+    _Hud(keys := false) {
         air := this._jumpAt != "" && this._env.Now() - this._jumpAt < MinionsTask.VoidGroundMs
         if IsObject(this._hudFn) {
             h := (this._hudFn)()
@@ -3353,8 +3536,15 @@ class MinionsTask {
         }
         try {
             h := {rows: MinionsTask.Panel(this._grab), points: -1, rank: "", air: air}   ; the HP: _DeathSeen reads it each tick
-            if this._eden
-                h.points := MinionsTask.Points(this._grab), h.rank := MinionsTask.Rank(this._grab)
+            s := this._spec
+            if (IsObject(s) && s.readsCharge)
+                h.points := MinionsTask.Points(this._grab)
+            if (IsObject(s) && s.readsRank)
+                h.rank := MinionsTask.Rank(this._grab)
+            if keys
+                for i, k in MinionsTask.PanelKeys(this._grab)
+                    if (IsObject(h.rows[i]) && k != "" && k != "?")
+                        h.rows[i].key := k
             return h
         }
         return ""
@@ -4814,6 +5004,106 @@ class MinionsTask {
         return out
     }
 
+    ; Each SkillTops slot's key letter through grab (screen = its coords +
+    ; ox, oy), every slot on its own (an aura with 1..6 skills; no fill
+    ; order assumed) -> Array, one per slot: "" = no letter shape there, "?"
+    ; = a letter shape not told apart (a toast over it, a letter with no
+    ; glyph below), else the letter (lower case). The letter is the white
+    ; (every channel >= KeyWhite) in the key box (x KeyBoxX1..KeyBoxX2,
+    ; y top + 11..33), its bounding box cut to GlyphW x GlyphH cells (white
+    ; where half the cell is), nearest of KeyGlyphs by cells that differ:
+    ; GlyphMaxDiff or fewer, GlyphMargin fewer than the next. Its size
+    ; changes with the capture (live 16 x 17, clips 14 x 17): the cells
+    ; scale. Real frames: tests\screens\hand_panel_*, eden_panel_*.
+    static KeyBoxX1 := 2026
+    static KeyBoxX2 := 2054
+    static KeyWhite := 220
+    static GlyphW := 8
+    static GlyphH := 10
+    static GlyphMaxDiff := 12    ; real: 0..9, a toast over the letter 20+
+    static GlyphMargin := 8      ; real: the next letter 11+ away
+    static GlyphMinH := 12       ; px: a letter's height (real 17..19)
+    static GlyphMaxH := 22
+    static GlyphMaxW := 22       ; px (real 12..18)
+    ; the six letters seen (eden_panel_cd_v_toast.png, live 2026-11-02),
+    ; GlyphW cells a row, GlyphH rows, top to bottom
+    static KeyGlyphs := Map(
+        "t", "######## ...##... ...##... ...##... ...##... ...##... ...##... ...##... ...##... ...##...",
+        "f", "######## ###..... ###..... ###..... ###..... ######## ###..... ###..... ###..... ###.....",
+        "e", "######## ###..... ###..... ###..... ######## #######. ###..... ###..... ###..... ########",
+        "q", "######## ###...## ###...## ###...## ###...## ###...## ###...## ###...## ######## ....###.",
+        "r", "######## ###...## ###...## ###...## ###...## ######## ######## ###..##. ###..### ###...##",
+        "v", "##....## ###..### ###..### .##..##. .###.##. .###.##. ..####.. ..####.. ..####.. ...###..")
+    static PanelKeys(grab, ox := 0, oy := 0) {
+        ys := []
+        for top in MinionsTask.SkillTops {
+            y := top + 11
+            while (y <= top + 33)
+                ys.Push(y - oy), y++
+        }
+        rows := grab(MinionsTask.KeyBoxX1 - ox, MinionsTask.KeyBoxX2 - ox, ys, 1)
+        per := ys.Length // MinionsTask.SkillTops.Length
+        out := []
+        Loop MinionsTask.SkillTops.Length {
+            box := []
+            i := (A_Index - 1) * per
+            Loop per
+                box.Push(rows[i + A_Index])
+            out.Push(MinionsTask.KeyLetter(box))
+        }
+        return out
+    }
+
+    ; One key box's rows of pixels (every px) -> the letter, "?" or "" (PanelKeys)
+    static KeyLetter(box) {
+        x1 := 99999, x2 := 0, y1 := 99999, y2 := 0
+        white := []
+        for y, row in box {
+            w := []
+            for x, c in row {
+                on := MinionsTask._Low(c) >= MinionsTask.KeyWhite
+                w.Push(on)
+                if on
+                    x1 := Min(x1, x), x2 := Max(x2, x), y1 := Min(y1, y), y2 := Max(y2, y)
+            }
+            white.Push(w)
+        }
+        if (x2 < x1)
+            return ""
+        h := y2 - y1 + 1, wd := x2 - x1 + 1
+        if (h < MinionsTask.GlyphMinH || h > MinionsTask.GlyphMaxH || wd > MinionsTask.GlyphMaxW)
+            return ""
+        cells := ""
+        Loop MinionsTask.GlyphH {
+            gy := A_Index - 1
+            Loop MinionsTask.GlyphW {
+                gx := A_Index - 1, n := 0, s := 0
+                Loop h {
+                    yy := A_Index - 1
+                    if !((yy + 0.5) >= gy * h / MinionsTask.GlyphH && (yy + 0.5) < (gy + 1) * h / MinionsTask.GlyphH)
+                        continue
+                    Loop wd {
+                        xx := A_Index - 1
+                        if ((xx + 0.5) >= gx * wd / MinionsTask.GlyphW && (xx + 0.5) < (gx + 1) * wd / MinionsTask.GlyphW)
+                            n++, s += white[y1 + yy][x1 + xx]
+                    }
+                }
+                cells .= (n && s * 2 >= n) ? "#" : "."
+            }
+        }
+        best := "", bd := 99999, next := 99999
+        for k, g in MinionsTask.KeyGlyphs {
+            g := StrReplace(g, " "), d := 0
+            Loop Parse cells
+                d += (A_LoopField != SubStr(g, A_Index, 1)) ? 1 : 0
+            if (d < bd)
+                next := bd, bd := d, best := k
+            else if (d < next)
+                next := d
+        }
+        return (bd <= MinionsTask.GlyphMaxDiff && next - bd >= MinionsTask.GlyphMargin) ? best : "?"
+    }
+
     ; A key box's rows (pixels from screen x x0, every stride-th) hold a
     ; letter: its right border lit in half of them or more, LetterMin..
     ; LetterMax of the inside (x 2026..2054) white. An empty row is the
@@ -5522,14 +5812,14 @@ class MinionsTask {
 ;   b := MinionSkills(aura, rows, learnt := "")
 ;     rows   MinionsTask.Panel() at the hunt's start ("" / no row = the
 ;            panel unknown)
-;     learnt Map aura -> Map key -> row, rows learnt in earlier hunts (kept
-;            up to date by the book)
+;     learnt Map aura -> {rows: key -> row, cool: key -> ms} learnt in
+;            earlier hunts (kept up to date by the book)
 ;   b.Next(hud, now, close := false) -> the key to press, "" = none now
 ;     hud {rows (Panel), points (Points, -1 unknown), rank (Rank), air} or ""
 ;     close: a minion in Impale's reach (QReach; Eden: Impale only then)
 ;   b.Pressed(k, hud, now)
 ;   b.CastMs(k), b.Casting(now), b.Rooted(now) (no movement: Deadeye's windup)
-;   b.keys, b.rowOf (key -> row index), b.how ("panel" / "learn" / "keys")
+;   b.keys, b.rowOf (key -> row index), b.how ("panel" / "read" / "learn" / "keys")
 ;
 ; One cast at a time: a cooldown overlay starts when the cast ENDS, so after
 ; a press nothing goes until CastMs is out, and an empty row during a
@@ -5538,14 +5828,19 @@ class MinionsTask {
 ; showed nothing (no overlay, no points moved) ConfirmMs after its cast
 ; failed: free again after RetryMs. A row whose overlay reads is never ready.
 ;
-; MinionsTask.Auras (panel top to bottom, the last row at the bottom, order
-; to cast in, cooldowns, casts): Eden, Equinox, Luminosity. Eden goes by
-; rule: R at rank V; E, then F (FirstOfFE); Q with a minion in reach (close);
-; T; V at Charge 30 or more, unless held back (no: the orb still Locked).
-; Others:
-; the first ready in their order. Unknown aura: every letter (Keys) in
-; turn, one at a time, the row whose cooldown starts after it is that key's
-; (learnt); a key that started none twice is dropped.
+; MinionsTask.Auras (data\auras_abilities.json: panel top to bottom, the
+; last row at the bottom, order to cast in, cooldowns, casts, costs, roots,
+; ranks, strategy): Eden, Equinox, Luminosity. Strategy "eden": R at its
+; rank (V); E, then F (FirstOfFE); Q with a minion in reach (close); T; V
+; at its Charge cost or more, unless held back (no: the orb still Locked).
+; "order": the first ready in their order. An aura not in the table: the
+; key letters read in its rows (rows[i].key, PanelKeys) are its keys
+; (how "read"); rows not read: every letter (Keys) in turn, one at a time,
+; the row whose cooldown starts after it is that key's (how "learn"); a
+; key that started none twice is dropped. Its cooldowns are learnt from
+; two overlay reads (_LearnCool), the longest cast first once known; rows
+; and cooldowns kept in learnt[aura] = {rows, cool} (b.Learnt(); the task
+; writes them to data\auras_learnt.json when b.learning).
 ; ---------------------------------------------------------------------------
 
 class MinionSkills {
@@ -5556,15 +5851,18 @@ class MinionSkills {
     static RetryMs := 2000           ; a press that failed: again after this
     static PointsKeepMs := 5000      ; the Charge read last, through a flash
     static EWaitMs := 1500           ; Eden: F ready, E back within this: F waits for E (at most this long)
+    static LearnDrop := 0.2          ; an unknown cooldown: overlay width lost between its two reads
 
     __New(aura, rows, learnt := "") {
         a := StrLower(Trim(String(aura)))
         this.aura := a
-        this.eden := (a = "eden")
-        this.spec := MinionsTask.Auras.Has(a) ? MinionsTask.Auras[a] : ""
+        this.spec := MinionsTask.AuraSpec(a)
+        this.strategy := IsObject(this.spec) ? this.spec.strategy : "learn"
+        this.eden := (this.strategy = "eden")
         this.rowOf := Map()
         this.keys := MinionsTask.KeysFor(a)
         this.how := "keys"
+        this.learning := false       ; a cooldown or row learnt since made (the task saves them)
         this._i := 0
         this._castUntil := 0
         this._rootUntil := 0
@@ -5574,6 +5872,7 @@ class MinionSkills {
         this._miss := Map()          ; key -> presses that started no cooldown (learning)
         this._dead := Map()
         this._learnt := (learnt is Map) ? learnt : Map()
+        this._cool := Map()          ; key -> cooldown ms learnt from its overlay (an aura not in the table)
         slots := []
         if IsObject(rows)
             for i, r in rows
@@ -5590,14 +5889,38 @@ class MinionSkills {
             this.how := "panel"
             return
         }
+        ; any other aura: kept between hunts as learnt[a] = {rows: key ->
+        ; row, cool: key -> ms} (MinionsTask saves it: auras_learnt.json)
+        if (this._learnt.Has(a) && !(this._learnt[a] is Map) && IsObject(this._learnt[a]))
+            this._cool := this._learnt[a].cool
+        else
+            this._learnt[a] := {rows: Map(), cool: this._cool}
         if !slots.Length
             return
         this.how := "learn"
-        if this._learnt.Has(a)
-            for k, i in this._learnt[a]
-                if IsObject(rows[i])
-                    this.rowOf[k] := i
-        this._learnt[a] := this.rowOf
+        ; the letters read in the rows (PanelKeys: rows[i].key), then rows
+        ; learnt in earlier hunts; a row left: every letter pressed to learn it
+        read := 0
+        for i in slots
+            if (rows[i].HasOwnProp("key") && RegExMatch(rows[i].key, "^[a-z0-9]$") && !this.rowOf.Has(rows[i].key))
+                this.rowOf[rows[i].key] := i, read++
+        for k, i in this._learnt[a].rows
+            if (!this.rowOf.Has(k) && i <= rows.Length && IsObject(rows[i]) && !this._Taken(i))
+                this.rowOf[k] := i
+        this._learnt[a].rows := this.rowOf
+        if (read && read = slots.Length)
+            this.how := "read"
+        ; the keys known first (a letter read may be none of Keys), then
+        ; the letters still to try
+        ks := []
+        for i in slots
+            for k, r in this.rowOf
+                if (r = i)
+                    ks.Push(k)
+        for k in this.keys
+            if !this.rowOf.Has(k)
+                ks.Push(k)
+        this.keys := ks
         this._Narrow()
     }
 
@@ -5608,7 +5931,7 @@ class MinionSkills {
             return ""
         if this.eden {
             pts := this._Points(hud, now)
-            if (IsObject(hud) && hud.HasOwnProp("rank") && hud.rank = "V" && this._Ready("r", hud, now))
+            if (IsObject(hud) && hud.HasOwnProp("rank") && hud.rank != "" && hud.rank = this._NeedsRank("r") && this._Ready("r", hud, now))
                 return "r"
             ; F and E first: V at first contact threw the player off the target (L23 18:05:18, 18:09:50)
             if ((k := this._FirstOfFE(hud, now, no)) != "")
@@ -5630,6 +5953,14 @@ class MinionSkills {
         }
         if IsObject(this.spec) {
             for k in this.keys
+                if (!InStr(no, k) && this._Ready(k, hud, now))
+                    return k
+            return ""
+        }
+        ; an aura not in the table: cooldowns learnt -> the longest first (a
+        ; long cooldown is mostly the big hit), then the rest in turn
+        if this._cool.Count {
+            for k in this._ByCool()
                 if (!InStr(no, k) && this._Ready(k, hud, now))
                     return k
             return ""
@@ -5661,10 +5992,30 @@ class MinionSkills {
     CastMs(k) => (IsObject(this.spec) && this.spec.cast.Has(k)) ? this.spec.cast[k] : MinionSkills.GenericCastMs
     Casting(now) => now < this._castUntil
     Rooted(now) => now < this._rootUntil
-    Roots(k) => this.eden && k = "r"
+    Roots(k) => IsObject(this.spec) && this.spec.roots.Has(k)
+    ; the learnt cooldowns (key -> ms) and rows (key -> row) to keep
+    Learnt() => (this._learnt.Has(this.aura) && !(this._learnt[this.aura] is Map)) ? this._learnt[this.aura] : ""
 
-    _Cost(k) => (MinionsTask.Costs.Has(this.aura) && MinionsTask.Costs[this.aura].Has(k)) ? MinionsTask.Costs[this.aura][k] : 0
-    _CoolMs(k) => (IsObject(this.spec) && this.spec.cool.Has(k)) ? this.spec.cool[k] : 0
+    _Cost(k) => (IsObject(this.spec) && this.spec.cost.Has(k)) ? this.spec.cost[k] : 0
+    _NeedsRank(k) => (IsObject(this.spec) && this.spec.rank.Has(k)) ? this.spec.rank[k] : ""
+    _CoolMs(k) => (IsObject(this.spec) && this.spec.cool.Has(k)) ? this.spec.cool[k] : this._cool.Has(k) ? this._cool[k] : 0
+
+    ; keys by learnt cooldown, longest first; unlearnt after, in key order
+    _ByCool() {
+        ks := [], rest := []
+        for k in this.keys
+            (this._cool.Has(k) ? ks : rest).Push(k)
+        n := ks.Length
+        Loop n - 1 {
+            i := A_Index
+            Loop n - i
+                if (this._cool[ks[A_Index]] < this._cool[ks[A_Index + 1]])
+                    t := ks[A_Index], ks[A_Index] := ks[A_Index + 1], ks[A_Index + 1] := t
+        }
+        for k in rest
+            ks.Push(k)
+        return ks
+    }
     _Rows(hud) => (IsObject(hud) && IsObject(hud.rows)) ? hud.rows : []
 
     ; k's row as read now, "" = none (unknown key, a row unread)
@@ -5748,12 +6099,13 @@ class MinionSkills {
             row := this._Row(k, hud)
             if (IsObject(row) && row.cd > 0) {
                 st.seen := true
+                this._LearnCool(k, st, row.cd, now)
                 if this._CoolMs(k)
                     st.est := now + Round(row.cd * this._CoolMs(k))
             } else if (!this.rowOf.Has(k) && this.how = "learn") {
                 for i in this._slots
                     if (!this._Taken(i) && i <= rows.Length && IsObject(rows[i]) && rows[i].cd > 0 && st.cds.Length >= i && st.cds[i] = 0) {
-                        this.rowOf[k] := i, st.seen := true
+                        this.rowOf[k] := i, st.seen := true, this.learning := true
                         this._Narrow()
                         break
                     }
@@ -5772,6 +6124,22 @@ class MinionSkills {
                 st.seen := true, st.est := now + MinionSkills.RetryMs
             }
         }
+    }
+
+    ; an aura not in the table: k's cooldown from two overlay reads of one
+    ; press, LearnDrop or more apart (ms between / width lost: the cast's
+    ; length, unknown, plays no part), kept (_cool, learnt)
+    _LearnCool(k, st, cd, now) {
+        if (IsObject(this.spec) || this._cool.Has(k))
+            return
+        if !st.HasOwnProp("cd1") {
+            st.cd1 := cd, st.cdAt := now
+            return
+        }
+        if (st.cd1 - cd < MinionSkills.LearnDrop || now <= st.cdAt)
+            return
+        this._cool[k] := Round((now - st.cdAt) / (st.cd1 - cd) / 100) * 100
+        this.learning := true
     }
 
     _Taken(i) {

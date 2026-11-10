@@ -445,8 +445,8 @@ Test_Dashboard_RouteResetToTheShippedDefault() {
     AssertEq(RouteRecorder.DefaultsPath, root "\data\default_routes.json", "defaults file path")
     defs := Json.Parse(FileRead(RouteRecorder.DefaultsPath, "UTF-8"))
     for name in RouteRecorder.Names {
-        if (name = "obby" || name = "memory_match")
-            continue                    ; the user records these; no shipped default
+        if (name = "obby" || name = "memory_match" || name = "sell_to_fisher" || name = "fisher_to_fishing")
+            continue                    ; the user records these; no shipped default (the sell walks fall back to vip / nonvip)
         AssertTrue(defs.Has(name) && defs[name]["steps"].Length > 0, name " is recorded in the shipped defaults")
     }
 }

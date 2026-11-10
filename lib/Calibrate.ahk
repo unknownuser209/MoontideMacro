@@ -3,13 +3,15 @@
 #Include %A_LineFile%\..\Json.ahk
 #Include %A_LineFile%\..\Pixel.ahk
 #Include %A_LineFile%\..\GameLists.ahk
+#Include %A_LineFile%\..\Roblox.ahk
 ; ---------------------------------------------------------------------------
 ; Calibrate: guided click-recording wizard + the store tasks read from.
 ;
 ; Store: data\calibration.json (via Json.ahk), written atomically (tmp +
 ; FileMove, with a guard against the target being a directory).
 ;
-;   Calibrate.Point(id)  -> {x, y, color}   screen coords; color = Integer
+;   Calibrate.Point(id)  -> {x, y, color}   DESIGN coords (2560x1440; the
+;                           capture stores Screen.Inv of the pointer); color = Integer
 ;                           0xRRGGBB sampled at the click. "" when the id is
 ;                           missing, malformed, or is a rect step.
 ;   Calibrate.Rect(id)   -> {x, y, w, h}    normalised (x,y = top-left, w,h>0)
@@ -199,13 +201,19 @@ class Calibrate {
         CoordMode("Mouse", "Screen")
         MouseGetPos(&mx, &my)
         try {
-            MouseMove(r.x + r.w // 2, r.y + r.h + 60, 0)
+            p := Screen.Pt(r.x + r.w // 2, r.y + r.h + 60)
+            MouseMove(p.x, p.y, 0)
             Sleep(150)
             return Pixel.Signature(r.x, r.y, r.w, r.h)
         } finally {
             MouseMove(mx, my, 0)
         }
     }
+
+    ; Screen px of the pointer -> the DESIGN-space point stored (2560x1440):
+    ; a point recorded at 1920x1080 is stored / 0.75, so the file is the same
+    ; at every size and version-1 files (taken at 2560x1440) stay valid.
+    static ToDesign(sx, sy) => Screen.Inv(sx, sy)
 
     ; ok | missing | bad  (state of the file at last load)
     static LoadStatus() {
@@ -390,6 +398,7 @@ class Calibrate {
         sess := Calibrate._Session(steps)
         g := ""
         try {
+            try Roblox.ClientOk()          ; Screen maps to Roblox's client now (macro may be stopped)
             CoordMode("Mouse", "Screen")
             g := Calibrate._BuildGui(sess)
             lastRev := -1
@@ -407,8 +416,10 @@ class Calibrate {
                     MouseGetPos(&mx, &my, &win)
                     if (win = g.Hwnd())
                         sess.Notice("Move the pointer onto the target (off this window), then press " key ".")
-                    else
-                        sess.Capture(mx, my)
+                    else {
+                        d := Calibrate.ToDesign(mx, my)        ; stored in design space
+                        sess.Capture(d.x, d.y)
+                    }
                 }
                 prev := down
                 esc := GetKeyState("Escape", "P")
@@ -608,13 +619,16 @@ class Calibrate {
         Calibrate._store := Map()
         path := Calibrate._path
         ; no calibration yet (no file, or the shipped one with no steps): start
-        ; from the preset (2560x1440 fullscreen, Windows scale 100%), so a new
-        ; user at that size can start at once. Read only: the user's file is
-        ; not written until a step is recorded (then it holds the preset +
-        ; the new step)
+        ; from the preset made at THIS system's display (resolution + Windows
+        ; scale), if one ships; otherwise stay empty (the Calibrate page says
+        ; so). Read only: the user's file is not written until a step is
+        ; recorded (then it holds the preset + the new step)
         src := path
-        if (FileExist(Calibrate.PresetPath(path)) && Calibrate._NoSteps(path))
-            src := Calibrate.PresetPath(path)
+        if Calibrate._NoSteps(path) {
+            pp := Calibrate.PresetPath(path)
+            if (pp != "" && FileExist(pp))
+                src := pp
+        }
         if !FileExist(src) {
             Calibrate._status := "missing"
             return
@@ -633,11 +647,82 @@ class Calibrate {
         }
     }
 
-    ; The shipped preset next to the calibration file: data\presets\
-    ; calibration_2560x1440_100.json (2560x1440 fullscreen, 100% scale).
-    static PresetPath(path) {
-        SplitPath(path, , &dir)
-        return dir "\presets\calibration_2560x1440_100.json"
+    ; ---- presets: data\presets\calibration_<W>x<H>_<scale>.json -------------
+    ; A preset is a calibration file recorded fullscreen at W x H with Windows
+    ; display scale <scale> %. Only a preset made at the user's own display is
+    ; applied automatically (first run); the Calibrate page lists them all.
+
+    static PresetPrefix := "calibration_"
+
+    ; (cal path) -> the presets folder next to it
+    static PresetDir(path := "") {
+        SplitPath((path != "") ? path : (Calibrate._path != "" ? Calibrate._path : Calibrate._DefaultPath()), , &dir)
+        return dir "\presets"
+    }
+
+    ; "calibration_2560x1440_100.json" -> {w, h, scale} or "" (any other name)
+    static ParsePresetName(file) {
+        SplitPath(file, &name)
+        if !RegExMatch(name, "i)^calibration_(\d{3,5})x(\d{3,5})_(\d{2,3})\.json$", &m)
+            return ""
+        return {w: Integer(m[1]), h: Integer(m[2]), scale: Integer(m[3])}
+    }
+
+    static PresetLabel(p) => p.w "x" p.h " " Chr(0xB7) " " p.scale "%"
+
+    ; -> Array of {w, h, scale, label, path}, biggest resolution first, then
+    ; by scale. Files that do not follow the name pattern are left out.
+    static Presets(path := "") {
+        list := []
+        try {
+            Loop Files Calibrate.PresetDir(path) "\calibration_*.json" {
+                p := Calibrate.ParsePresetName(A_LoopFileName)
+                if !IsObject(p)
+                    continue
+                p.label := Calibrate.PresetLabel(p), p.path := A_LoopFileFullPath
+                i := 1
+                while (i <= list.Length && Calibrate._PresetBefore(list[i], p))
+                    i++
+                list.InsertAt(i, p)
+            }
+        }
+        return list
+    }
+
+    static _PresetBefore(a, b) => (a.w * a.h != b.w * b.h) ? (a.w * a.h > b.w * b.h) : (a.w != b.w) ? (a.w > b.w) : (a.scale <= b.scale)
+
+    ; the preset made at display sys {w, h, scale}, or ""
+    static MatchPreset(list, sys) {
+        if !IsObject(sys)
+            return ""
+        for p in list
+            if (p.w = sys.w && p.h = sys.h && p.scale = sys.scale)
+                return p
+        return ""
+    }
+
+    ; () -> {w, h, scale}: this system's display. Tests swap it.
+    static SystemFn := () => Calibrate.SystemDisplay()
+
+    ; The monitor Roblox is on (the primary one when Roblox is not open):
+    ; its resolution in physical px and its Windows display scale in %.
+    static SystemDisplay() {
+        m := ""
+        try {
+            hwnd := Roblox.Hwnd()
+            if hwnd
+                m := Roblox._Monitor(hwnd)
+        }
+        if !IsObject(m)
+            m := {x: 0, y: 0, w: A_ScreenWidth, h: A_ScreenHeight}
+        return {w: m.w, h: m.h, scale: Screen.ScaleAt(m.x + 1, m.y + 1)}
+    }
+
+    ; Path of the preset matching this system's display, or "".
+    static PresetPath(path := "") {
+        p := ""
+        try p := Calibrate.MatchPreset(Calibrate.Presets(path), Calibrate.SystemFn.Call())
+        return IsObject(p) ? p.path : ""
     }
 
     ; No calibration file, or one that parses with an empty "steps" map.
@@ -648,6 +733,26 @@ class Calibrate {
         root := ""
         try root := Json.Parse(FileRead(path, "UTF-8"))
         return (root is Map && root.Has("steps") && root["steps"] is Map && root["steps"].Count = 0)
+    }
+
+    ; Dashboard "Apply preset": the current calibration is copied to
+    ; <file>.bak (when there is one), the preset copied over it and reloaded.
+    ; -> "" on success, else what went wrong (nothing changed).
+    static ApplyPreset(presetPath) {
+        Calibrate._Ensure()
+        root := ""
+        try root := Json.Parse(FileRead(presetPath, "UTF-8"))
+        if !(root is Map && root.Has("steps") && root["steps"] is Map)
+            return "the preset file is missing or broken"
+        path := Calibrate._path
+        try {
+            if FileExist(path)
+                FileCopy(path, path ".bak", 1)
+            FileCopy(presetPath, path, 1)
+        } catch Any as e
+            return "could not copy the preset (" e.Message ")"
+        Calibrate._Load()
+        return ""
     }
 
     ; -> normalised Map or "" if malformed.
@@ -685,7 +790,8 @@ class Calibrate {
         list := []
         for s in Calibrate.Steps()
             list.Push(Map("id", s["id"], "kind", s["kind"], "prompt", s["prompt"]))
-        root := Map("version", 1, "steps", steps, "stepList", list)
+        ; version 2: coordinates are design space (2560x1440) at any client size
+        root := Map("version", 2, "space", "design 2560x1440", "steps", steps, "stepList", list)
         path := Calibrate._path
         ; A corrupt file is kept as <path>.bad instead of being lost silently.
         if (Calibrate._status = "bad" && FileExist(path) && !InStr(FileExist(path), "D"))

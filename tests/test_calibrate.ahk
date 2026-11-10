@@ -645,6 +645,8 @@ Test_Calibrate_shipped_file_is_empty_with_metadata() {
 ; there is no calibration yet; a real one, or a broken one, is never replaced.
 Test_Calibrate_PresetFillsAnEmptyCalibration() {
     d := CalTempDir()
+    old := Calibrate.SystemFn
+    Calibrate.SystemFn := () => {w: 2560, h: 1440, scale: 100}     ; the preset's display (the first-run rule)
     try {
         DirCreate(d "\presets")
         FileAppend('{"version": 1, "steps": {"rod": {"x": 10, "y": 20, "color": "0xFFFFFF"}}}', d "\presets\calibration_2560x1440_100.json", "UTF-8")
@@ -667,6 +669,7 @@ Test_Calibrate_PresetFillsAnEmptyCalibration() {
         Calibrate.Use(d "\calibration.json")
         AssertEq(Calibrate.Point("rod"), "", "broken: not replaced by the preset")
     } finally {
+        Calibrate.SystemFn := old
         CalCleanup(d)
     }
 }

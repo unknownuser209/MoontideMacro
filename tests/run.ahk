@@ -60,6 +60,9 @@
 #Include test_sinister.ahk
 #Include test_tidy.ahk
 #Include test_updater.ahk
+#Include test_screen.ahk
+#Include test_resample.ahk
+#Include test_presets.ahk
 
 Main()
 

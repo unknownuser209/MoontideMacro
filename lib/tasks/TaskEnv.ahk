@@ -59,7 +59,7 @@ class TaskEnv {
             this.pixelFn := (x, y, c, tol) => Pixel.Is(x, y, c, tol)
         this.rectFn := TaskEnv.Dep(deps, "rect", "")
         if !IsObject(this.rectFn)
-            this.rectFn := (x, y, w, h) => (Pixel._grabber)(x, y, w, h)
+            this.rectFn := (x, y, w, h) => Pixel.Grab(x, y, w, h)      ; design px at any client size
         this.nowFn := TaskEnv.Dep(deps, "now", "")
         if !IsObject(this.nowFn)
             this.nowFn := () => A_TickCount

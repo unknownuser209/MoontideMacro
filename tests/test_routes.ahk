@@ -342,14 +342,7 @@ Test_Pixel_IsAndWaitForInjected() {
 
 ; ---- roblox ----------------------------------------------------------------
 
-Test_Roblox_RectIs1440() {
-    AssertEq(Roblox.RectIs1440(0, 0, 2560, 1440), true, "fullscreen client")
-    AssertEq(Roblox.RectIs1440(0, 0, 2560, 1400), false, "windowed height")
-    AssertEq(Roblox.RectIs1440(8, 31, 2560, 1440), false, "offset client")
-    AssertEq(Roblox.RectIs1440(0, 0, 1920, 1080), false, "1080p")
-    h := Roblox.Hwnd()
-    AssertTrue(Type(h) = "Integer", "Hwnd returns integer")
-}
+; the fullscreen gate: tests\test_screen.ahk (Test_Roblox_CoversMonitor)
 
 ; ---- ocr -------------------------------------------------------------------
 

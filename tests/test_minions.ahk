@@ -3311,6 +3311,70 @@ Test_Minions_RealHandFightPanels() {
     AssertEq(b.rowOf["f"] b.rowOf["t"] b.rowOf["q"] b.rowOf["r"] b.rowOf["e"], "23456", "F T Q R E")
 }
 
+; ---- any skill aura: the panel's key letters, data\auras_abilities.json ----
+
+MnKeys(name, oy := 1005) {
+    s := ""
+    for k in MinionsTask.PanelKeys(MatchFileGrab(A_ScriptDir "\screens\" name), 2016, oy)
+        s .= (k = "" ? "-" : k)
+    return s
+}
+
+; every slot read on its own: the letters of Eden (live and clip scale),
+; Equinox and Luminosity (clips 2026-11-03), no fill order assumed
+Test_Minions_RealPanelKeyLetters() {
+    AssertEq(MnKeys("hand_panel_eden_night.png"), "tfeqrv", "Eden at night (clip)")
+    AssertEq(MnKeys("eden_panel_cd_t.png"), "tfeqrv", "Eden live")
+    AssertEq(MnKeys("eden_panel_cd_v_toast.png"), "tfeqrv", "Eden on a light world")
+    AssertEq(MnKeys("eden_panel_cd_f_e.png"), "tfeqr-", "Eden, V cut off by the crop")
+    AssertEq(MnKeys("hand_panel_equinox.png"), "---etr", "Equinox: E T R in the lowest three")
+    AssertEq(MnKeys("hand_panel_luminosity.png"), "-ftqre", "Luminosity: F T Q R E")
+    ; the potion toast over F / E / Q: not told, never a wrong letter
+    for f in ["eden_panel_toast_normal.png", "eden_panel_toast_snowy.png"] {
+        k := MnKeys(f, 1004)
+        AssertEq(SubStr(k, 1, 1) SubStr(k, 6, 1), "tv", f ": T and V clear of it (" k ")")
+        Loop Parse SubStr(k, 2, 4)
+            AssertTrue(InStr("-?" SubStr("feqr", A_Index, 1), A_LoopField), f ": row " (A_Index + 1) " not misread (" k ")")
+    }
+    AssertEq(MnKeys("world_day.jpg", 0), "------", "no panel in the world frame")
+}
+
+; grab of a panel crop with every row above screen y `below` blacked out:
+; an aura with fewer skills
+MnFewRows(name, below) {
+    g := MnShifted(MatchFileGrab(A_ScriptDir "\screens\" name), 2016, 1005)
+    return (x1, x2, ys, stride := 1) => MnBlackAbove(g(x1, x2, ys, stride), ys, below)
+}
+MnBlackAbove(rows, ys, below) {
+    for i, y in ys
+        if (y < below)
+            Loop rows[i].Length
+                rows[i][A_Index] := 0
+    return rows
+}
+
+; PanelMinRows 1: an aura with one or two skills is on; a menu's lone
+; corner box (no letter in it) is no panel
+Test_Minions_PanelShowsOneOrTwoRows() {
+    m := MnTask([[]])
+    m.t._hudFn := ""
+    for c in [{below: 1208, keys: "----tr"}, {below: 1257, keys: "-----r"}] {
+        m.t._grab := MnFewRows("hand_panel_equinox.png", c.below)
+        AssertEq(MnKeys2(m.t._grab), c.keys, "the rows left")
+        AssertTrue(m.t._PanelShows(), c.keys ": on")
+    }
+    m.t._grab := MatchFileGrab(A_ScriptDir "\screens\collections_chat_052142.jpg")
+    AssertTrue(!m.t._PanelShows(), "a menu's corner box: no panel")
+    m.t._grab := MatchFileGrab(A_ScriptDir "\screens\nodeath_graveyard_prompt.jpg")
+    AssertTrue(m.t._PanelShows(), "Eden on a bright world (KeyIn 2 of 6): the letters tell it")
+}
+MnKeys2(g) {
+    s := ""
+    for k in MinionsTask.PanelKeys(g)
+        s .= (k = "" ? "-" : k)
+    return s
+}
+
 ; a real V: hollow, its middle ~3 px left of the centre; an E cut off by
 ; the grab has its stem on top: no V. Deadeye rides on this
 Test_Minions_RealRankVAtNight() {
@@ -3770,6 +3834,166 @@ Test_Minions_BookWithoutAPanel() {
         t += b.CastMs(k)
     }
     AssertEq(seen, "ertfqv", "in turn, a cast apart")
+}
+
+; data\auras_abilities.json: the numbers Eden, Equinox and Luminosity had
+; in the code, the Eden-only parts asked for by Eden's entry alone
+Test_Minions_AuraTableFromJson() {
+    e := MinionsTask.AuraSpec(" EDEN ")
+    AssertEq(MinionsTask._Join(e.panel) "|" MinionsTask._Join(e.order), "t f e q r v|r v f e t q", "Eden's panel and order")
+    AssertEq(e.cast["t"] " " e.cast["f"] " " e.cast["e"] " " e.cast["q"] " " e.cast["v"] " " e.cast["r"], "400 2800 1000 1000 4800 3400", "Eden's casts")
+    AssertEq(e.strategy " " e.readsCharge e.readsRank e.deathScreen " " e.cost["v"] " " e.rank["r"] " " e.roots.Has("r") e.roots.Count, "eden 111 30 V 11", "Eden's rule, reads, cost, rank, root")
+    q := MinionsTask.AuraSpec("Equinox")
+    AssertEq(MinionsTask._Join(q.order) " " q.cool["r"] " " q.cast["t"] " " q.strategy, "r t e 20000 5000 order", "Equinox")
+    AssertEq(q.readsCharge q.readsRank q.deathScreen q.roots.Count q.cost.Count, "00000", "unknown: no Eden reads, no death screen")
+    l := MinionsTask.AuraSpec("Luminosity")
+    AssertEq(MinionsTask._Join(l.order) " " l.cool["e"] " " l.cast["r"], "f e t r 6900 2800", "Luminosity (Q a dash: not in order)")
+    AssertEq(MinionsTask.AuraSpec("Glock"), "", "an aura not listed")
+    AssertEq(MinionSkills("Equinox", "").Roots("r") MinionSkills("Eden", "").Roots("r"), "01", "only Deadeye roots")
+}
+
+; tables swapped for a test, then the shipped file back
+MnTableWith(name, entry) {
+    root := MinionsTask.AurasRead(MinionsTask.AurasFile)
+    root["auras"][name] := entry
+    MinionsTask.AurasUse(root)
+}
+MnTableBack() => MinionsTask.AurasUse(MinionsTask.AurasRead(MinionsTask.AurasFile))
+
+; a fake two skill aura in the table: its rows are the panel's lowest two,
+; cast in its order by their overlays; no file: every aura learns
+Test_Minions_BookTwoSkillAura() {
+    try {
+        MnTableWith("duo", Map("panel", ["q", "e"], "order", ["e", "q"], "strategy", "order"
+            , "skills", Map("e", Map("cool", 9000, "cast", 1200), "q", Map("cool", 4000, "cast", "unknown"))))
+        b := MinionSkills("Duo", "")
+        AssertEq(b.how " " b.rowOf["q"] b.rowOf["e"], "panel 56", "the lowest two rows")
+        AssertEq(b.CastMs("e") " " b.CastMs("q"), "1200 " MinionSkills.GenericCastMs, "unknown cast: the default")
+        hud := MnHudOf(["", "", "", "", "q", "e"])
+        t := 0, s := ""
+        Loop 3
+            s .= MnBookPress(b, hud, &t)
+        AssertEq(s, "eq", "E, Q, then both cooling")
+        ; Q showed no overlay: a failed press, free again after RetryMs; E's overlay holds E
+        cdE := MnHudOf(["", "", "", "", "q", "e"], Map("e", 0.5))
+        AssertEq(b.Next(cdE, 20000), "", "Q's press failed: RetryMs first")
+        AssertEq(b.Next(cdE, 20000 + MinionSkills.RetryMs), "q", "then Q; E held by its overlay")
+        AssertTrue(!b.eden && !b.Roots("e"), "none of Eden's rule")
+        MinionsTask.AurasUse("")
+        AssertEq(MinionSkills("Eden", MnHudOf(["", "", "", "", {cd: 0}, {cd: 0}]).rows).how, "learn", "no table: Eden learns too")
+    } finally
+        MnTableBack()
+    AssertEq(MinionSkills("Eden", "").how, "panel", "the file back")
+}
+
+; an aura not in the table: the key letters read in its rows (PanelKeys)
+; are its keys, no pressing to learn them; a row not read is learnt
+Test_Minions_BookReadsKeyLetters() {
+    p := MnPanel("hand_panel_equinox.png")
+    for i, k in MinionsTask.PanelKeys(MatchFileGrab(A_ScriptDir "\screens\hand_panel_equinox.png"), 2016, 1005)
+        if IsObject(p[i])
+            p[i].key := k
+    b := MinionSkills("Mystery", p)
+    AssertEq(b.how " " MinionsTask._Join(b.keys) " " b.rowOf["e"] b.rowOf["t"] b.rowOf["r"], "read e t r 456", "Equinox's frame as an unknown aura")
+    rows := ["", "", "", "", {cd: 0, key: "g"}, {cd: 0}]
+    b := MinionSkills("Glock", rows)
+    AssertEq(b.how " " b.rowOf["g"], "learn 5", "G read, the last row learnt")
+    AssertEq(b.Next({rows: rows, points: -1, rank: ""}, 0), "g", "G ready at once")
+}
+
+; an aura not in the table: a cooldown from two overlay reads of one
+; press, kept in learnt for the next hunt; the longest cooldown first
+Test_Minions_BookLearnsCooldowns() {
+    learnt := Map()
+    row := (q, e) => {rows: ["", "", "", "", {cd: q, key: "q"}, {cd: e, key: "e"}], points: -1, rank: ""}
+    b := MinionSkills("Glock", row(0, 0).rows, learnt)
+    AssertEq(b.how, "read", "both read")
+    b.Pressed("q", row(0, 0), 0)
+    b.Next(row(0.9, 0), 4000)
+    AssertTrue(!b.learning, "one read: nothing yet")
+    b.Next(row(0.5, 0), 8000)
+    AssertEq(b._CoolMs("q"), 10000, "0.4 of the row in 4 s: 10 s")
+    AssertTrue(b.learning, "to be saved")
+    b.Pressed("e", row(0, 0), 20000)
+    b.Next(row(0, 0.8), 24000), b.Next(row(0, 0.4), 26000)
+    AssertEq(b._CoolMs("e"), 5000, "E: 5 s")
+    b2 := MinionSkills("Glock", row(0, 0).rows, learnt)
+    AssertEq(b2._CoolMs("q") " " b2._CoolMs("e"), "10000 5000", "kept for the next hunt")
+    AssertEq(b2.Next(row(0, 0), 0), "q", "both ready: the longest cooldown first")
+    AssertTrue(!IsObject(MinionSkills("Eden", "").Learnt()), "a table aura learns nothing")
+}
+
+; a hunt with an aura not in the table (2026-11-10, any aura): the start
+; line names it, the keys read, the learn path; what it learns is written
+; out as soon as learnt (a halted hunt keeps it) and read back next time
+Test_Minions_UnknownAuraHuntLearnsAndSaves() {
+    file := A_Temp "\mn_learnt_test.json"
+    try FileDelete(file)
+    near := [{x: 1280, y: 680, w: 200}]
+    fr := []
+    Loop 60
+        fr.Push(near)
+    fr.Push([])
+    m := MnTask(fr, Map("Minions.aura", "Glock"))
+    m.t._learntFile := file
+    ; the game: Q and E (12 s), their overlay from 3 s after the press
+    cdOf := (k) => MnFakeCd(m.io, k, 3000, 12000)
+    m.t._hudFn := () => {rows: ["", "", "", "", {cd: cdOf("q"), key: "q"}, {cd: cdOf("e"), key: "e"}], points: -1, rank: ""}
+    m.t.Run(SchedCtx())
+    AssertTrue(MnLogged(m, "minions: aura Glock: not in auras_abilities.json, keys read off the panel, panel keys ----qe, casting q e"), "the start line")
+    AssertTrue(QmObbyDowns(m.io, "q") >= 1 && QmObbyDowns(m.io, "e") >= 1, "both cast")
+    AssertTrue(MnLogged(m, "minions: learnt Glock"), "the learning logged")
+    AssertTrue(FileExist(file), "written")
+    j := Json.Parse(FileRead(file, "UTF-8"))
+    AssertEq(j["glock"]["rows"]["q"] j["glock"]["rows"]["e"], "56", "rows kept")
+    c := j["glock"]["cool"]
+    AssertTrue(c.Count >= 1, "a cooldown learnt")
+    for k, ms in c
+        AssertTrue(Abs(ms - 12000) <= 1500, k " ~12 s (" ms ")")
+    ; another task (a restart): read back, on the start line
+    m2 := MnTask([near, []], Map("Minions.aura", "Glock"))
+    m2.t._learntFile := file
+    m2.t._hudFn := m.t._hudFn
+    m2.t.Run(SchedCtx())
+    AssertTrue(MnLogged(m2, "learnt cooldowns"), "the learnt cooldowns read back")
+    try FileDelete(file)
+}
+
+; the overlay of k as the fake game shows it: from castMs after its last
+; press, cool ms long, 0 when none
+MnFakeCd(io, k, castMs, cool) {
+    at := ""
+    for i, e in io.log
+        if (e = "down " k && io.downAt.Has(i))
+            at := io.downAt[i]
+    if (at = "" || io.t < at + castMs)
+        return 0
+    f := 1 - (io.t - at - castMs) / cool
+    return (f > 0 && f < 0.97) ? Round(f, 2) : 0
+}
+
+; the dark red death screen is Eden's: another aura's hunt does not take it
+Test_Minions_DeathScreenOnlyForEden() {
+    m := MnTask(, Map("Minions.aura", "Equinox"))
+    m.t._deathFn := () => true
+    AssertTrue(m.t._DeathSeen() != MinionsTask.DeathScreenSeen, "Equinox: not asked for")
+    m2 := MnTask()
+    m2.t._deathFn := () => true
+    AssertEq(m2.t._DeathSeen(), MinionsTask.DeathScreenSeen, "Eden: as before")
+}
+
+; Eden's points and rank are read for Eden alone (its entry's readers)
+Test_Minions_HudReadsChargeOnlyForEden() {
+    for c in [{aura: "Equinox", bar: 0}, {aura: "Eden", bar: 1}] {
+        m := MnTask(, Map("Minions.aura", c.aura))
+        m.t._hudFn := ""
+        n := {bar: 0}
+        g := MnShifted(MatchFileGrab(A_ScriptDir "\screens\hand_panel_equinox.png"), 2016, 1005)
+        m.t._grab := (x1, x2, ys, stride := 1) => (x1 = MinionsTask.BarX1 ? n.bar := 1 : 0, g(x1, x2, ys, stride))
+        h := m.t._Hud()
+        AssertEq(n.bar, c.bar, c.aura ": the Charge bar read or not")
+        AssertEq(h.points, -1, c.aura ": no bar in the crop")
+    }
 }
 
 ; ---- the fight -------------------------------------------------------------

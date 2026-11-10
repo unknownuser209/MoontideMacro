@@ -127,7 +127,7 @@ class SellTask {
                 return
             if !this._Camera(ctx)
                 return
-            if !Input.PlayRoute(this._routes[variant]["toShop"], ctx, io)
+            if !Input.PlayRoute(this._Walk(variant, "toShop"), ctx, io)
                 return this._Cleanup(ctx)
             r := this._AtFisher(ctx)
             nudge := this._routes.Has("nudge") ? this._routes["nudge"]["steps"] : []
@@ -161,6 +161,10 @@ class SellTask {
             && !(this.state.HasProp("startSell") && this.state.startSell)
         if empty {
             d.log.Call("sell: nothing caught since the last sell - skipping the shop")
+            ; his text first: the Leave button only shows once it is clicked
+            ; through (live 10:28: three Leave clicks on the text did nothing)
+            if !this._SkipText(ctx)
+                return this._Cleanup(ctx)
         } else {
             if !this._Dialog(ctx)
                 return this._Cleanup(ctx)
@@ -215,7 +219,7 @@ class SellTask {
         if (g = 0)
             d.log.Call("sell: Captain Flarg's dialog is still open"
                 . (IsObject(this._CalPoint("fisher_leave")) ? "" : " (record fisher_leave in Setup so it can be closed)"))
-        if !Input.PlayRoute(this._routes[variant]["back"], ctx, io)
+        if !Input.PlayRoute(this._Walk(variant, "back"), ctx, io)
             return
         this.state.fishLoops := 0
         this.state.needRepath := false
@@ -265,6 +269,44 @@ class SellTask {
     }
 
     ; Opens the seller's dialog after the route's `e` press.
+    ; The walk to Captain Flarg / back to the fishing spot: the user's own
+    ; recordings (Setup > Routes: sell_to_fisher, fisher_to_fishing) when
+    ; present, else the shipped vip / nonvip walk. sell_to_fisher is
+    ; recorded up to Flarg; E is pressed after it here (TrimInteract drops a
+    ; recorded E at the end).
+    _Walk(variant, which) {
+        own := (which = "toShop") ? "sell_to_fisher" : "fisher_to_fishing"
+        if (this._routes.Has(own) && this._routes[own] is Map && this._routes[own].Has("steps")) {
+            raw := this._routes[own]["steps"]
+            ok := false
+            try ok := (raw is Array) && Input.ParseRoute(raw).Length > 0   ; a broken recording falls back
+            if ok {
+                steps := raw.Clone()
+                if (which = "toShop")
+                    steps.Push(["e", "down", 300], ["e", "up", 300])
+                return steps
+            }
+        }
+        return this._routes[variant][which]
+    }
+
+    ; Clicks through Captain Flarg's text (the dialog's A clicks) so his
+    ; Open Shop / Sell / Leave buttons show. -> false when stopped.
+    _SkipText(ctx) {
+        dlg := this._coords["sell"]["dialog"]
+        io := this.deps.io
+        a := dlg["a"]
+        io.MoveTo(a[1], a[2])
+        if !io.Wait(dlg["aGapMs"], ctx)
+            return false
+        Loop dlg["aClicks"] {
+            io.ClickHere()
+            if !io.Wait(A_Index < dlg["aClicks"] ? dlg["aGapMs"] : dlg["aAfterMs"], ctx)
+                return false
+        }
+        return true
+    }
+
     _Dialog(ctx) {
         dlg := this._coords["sell"]["dialog"]
         io := this.deps.io

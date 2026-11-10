@@ -46,7 +46,32 @@ class StripGrab {
     ; requested rows are read from the buffer. PixelGetColor per pixel costs
     ; milliseconds each (measured ~5.6 ms), a strip scan has to be one copy.
     ; -> Array (one entry per y in `ys`) of Arrays of 0xRRGGBB, x1, x1+stride...
+    ; x1, x2, ys, stride are DESIGN px (2560x1440): off that size every
+    ; sample is read at its Screen-mapped pixel (nearest), so callers keep
+    ; their design geometry, counts and strides. At 2560x1440: unchanged.
     static Rows(x1, x2, ys, stride := 1) {
+        if Screen.IsIdentity()
+            return StripGrab._Blit(x1, x2, ys, stride)
+        m := StripGrab.Map(x1, x2, ys, stride)
+        return StripGrab._Blit(m.xs[1], m.xs[m.xs.Length], m.ys, 1, m.xs)
+    }
+
+    ; Design samples -> screen px: {xs: one per column, ys: one per row}.
+    static Map(x1, x2, ys, stride := 1) {
+        sx := [], sy := []
+        x := x1
+        while (x <= x2) {
+            sx.Push(Screen.X(x))
+            x += stride
+        }
+        for y in ys
+            sy.Push(Screen.Y(y))
+        return {xs: sx, ys: sy}
+    }
+
+    ; Screen px. cols (optional): the absolute screen xs to read in each row
+    ; instead of x1, x1+stride...
+    static _Blit(x1, x2, ys, stride := 1, cols := "") {
         y1 := ys[1], y2 := ys[1]
         for y in ys {
             y1 := Min(y1, y)
@@ -78,10 +103,15 @@ class StripGrab {
             for y in ys {
                 row := []
                 off := (y - y1) * w * 4
-                x := 0
-                while (x < w) {
-                    row.Push(NumGet(pBits, off + x * 4, "UInt") & 0xFFFFFF)
-                    x += stride
+                if IsObject(cols) {
+                    for cx in cols
+                        row.Push(NumGet(pBits, off + (cx - x1) * 4, "UInt") & 0xFFFFFF)
+                } else {
+                    x := 0
+                    while (x < w) {
+                        row.Push(NumGet(pBits, off + x * 4, "UInt") & 0xFFFFFF)
+                        x += stride
+                    }
                 }
                 out.Push(row)
             }
@@ -119,6 +149,8 @@ class ScreenFrame {
     Call(x1, x2, ys, stride := 1) {
         if !this.Held
             this._Take()
+        if !Screen.IsIdentity()
+            return this._Mapped(x1, x2, ys, stride)
         for y in ys
             if (y < 0 || y >= this._h || x1 < 0 || x2 >= this._w)
                 return StripGrab.Rows(x1, x2, ys, stride)
@@ -132,6 +164,27 @@ class ScreenFrame {
                 row.Push(NumGet(p, off, "UInt") & 0xFFFFFF)
                 off += step
             }
+            out.Push(row)
+        }
+        return out
+    }
+
+    ; Design samples read at their Screen-mapped pixels of the held copy
+    ; (the copy is the primary monitor; a client off it -> StripGrab.Rows).
+    _Mapped(x1, x2, ys, stride) {
+        m := StripGrab.Map(x1, x2, ys, stride)
+        if (m.xs[1] < 0 || m.xs[m.xs.Length] >= this._w)
+            return StripGrab.Rows(x1, x2, ys, stride)
+        for sy in m.ys
+            if (sy < 0 || sy >= this._h)
+                return StripGrab.Rows(x1, x2, ys, stride)
+        out := [], p := this._bits, line := this._w * 4
+        for sy in m.ys {
+            row := []
+            row.Capacity := m.xs.Length
+            base := sy * line
+            for sx in m.xs
+                row.Push(NumGet(p, base + sx * 4, "UInt") & 0xFFFFFF)
             out.Push(row)
         }
         return out

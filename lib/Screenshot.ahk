@@ -3,7 +3,7 @@
 ; Window screenshot via GDI + GDI+ (own DllCalls, no third-party library).
 ;
 ;   path := Screenshot.Capture(hwnd)
-;     Copies the window rectangle (GetWindowRect) from the screen DC and
+;     Copies the window's client rect (any size) from the screen DC and
 ;     saves it as PNG to A_Temp\vesper_shot_<timestamp>.png.
 ;     Returns the path, or "" on ANY failure (bad/minimised window, GDI+
 ;     error). Never throws.
@@ -37,11 +37,16 @@ class Screenshot {
             return ""
         if DllCall("IsIconic", "Ptr", hwnd, "Int")
             return ""
+        ; the CLIENT rect (no title bar / borders; the same as the window
+        ; rect for fullscreen Roblox), at its physical size (DPI aware)
         rc := Buffer(16, 0)
-        if !DllCall("GetWindowRect", "Ptr", hwnd, "Ptr", rc, "Int")
+        if !DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc, "Int")
             return ""
-        x := NumGet(rc, 0, "Int"), y := NumGet(rc, 4, "Int")
-        w := NumGet(rc, 8, "Int") - x, h := NumGet(rc, 12, "Int") - y
+        pt := Buffer(8, 0)
+        if !DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", pt, "Int")
+            return ""
+        x := NumGet(pt, 0, "Int"), y := NumGet(pt, 4, "Int")
+        w := NumGet(rc, 8, "Int"), h := NumGet(rc, 12, "Int")
         if (w < 1 || h < 1)
             return ""
 

@@ -37,7 +37,7 @@ class Updater {
     ; relative paths (lower case) the updater must never overwrite
     static Protected := ["settings.ini", "data\calibration.json", "data\routes.json", "data\quests.json"
         , "data\merchants.json", "data\potions.json", "data\biomes.json", "data\auras_had.txt"
-        , "data\potion_usage.json", "data\last_biome.txt", "data\minions_routes.json"]
+        , "data\potion_usage.json", "data\last_biome.txt", "data\minions_routes.json", "data\auras_learnt.json"]
     static ProtectedDirs := ["logs\", "backup\", "update_tmp\"]
 
     static ParseVersion(tag) {

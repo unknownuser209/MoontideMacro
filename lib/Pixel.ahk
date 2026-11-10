@@ -1,7 +1,9 @@
 #Requires AutoHotkey v2.0
+#Include %A_LineFile%\..\Screen.ahk
 ; ---------------------------------------------------------------------------
 ; Pixel: single-point color checks with per-channel tolerance.
-; Screen coordinates. Colors are 0xRRGGBB (Integer) or "0xRRGGBB" /
+; DESIGN coordinates (2560x1440): Get / Is / WaitFor / Signature / Grab map
+; them to the Roblox client through Screen (unchanged at 2560x1440). Colors are 0xRRGGBB (Integer) or "0xRRGGBB" /
 ; "#RRGGBB" / "RRGGBB" strings. Tolerance: every channel |a-b| <= tol.
 ; No PixelSearch / ImageSearch (spec: single-point checks only; the rect
 ; signature below compares one fixed calibrated rect, it never searches).
@@ -30,7 +32,9 @@
 ;     target AND L1(live, target) <= sumTol AND L1(live, other) -
 ;     L1(live, target) >= margin ("1" vs "empty" box, 12b fix 1)
 ; Pixel._grabber is the rect source, (x, y, w, h) -> Array of w*h colors
-; 0xRRGGBB row-major (one BitBlt). Tests swap it.
+; 0xRRGGBB row-major (one BitBlt); off 2560x1440 Pixel.Grab calls it as
+; (sx, sy, sw, sh, dw, dh) -> dw*dh colors (screen rect stretched to the
+; design size). Tests swap it.
 ; ---------------------------------------------------------------------------
 
 class Pixel {
@@ -45,7 +49,7 @@ class Pixel {
             return ""
         cols := Max(1, Min(Integer(cols), w, 40)), rows := Max(1, Min(Integer(rows), h, 40))
         px := ""
-        try px := (Pixel._grabber)(x, y, w, h)
+        try px := Pixel.Grab(x, y, w, h)
         if !(px is Array && px.Length = w * h)
             return ""
         return Pixel.SigFromPixels(px, w, h, cols, rows, thr)
@@ -152,9 +156,26 @@ class Pixel {
         return out
     }
 
+    ; A DESIGN-space rect (2560x1440 px) -> Array of w*h 0xRRGGBB, row-major,
+    ; whatever the client size: at 2560x1440 the old _grabber(x, y, w, h)
+    ; call; at another size _grabber(sx, sy, sw, sh, w, h) grabs the mapped
+    ; screen rect and stretches it (nearest pixel) back to w x h, so every
+    ; rect detector keeps its design-px geometry and strides.
+    static Grab(x, y, w, h) {
+        if Screen.IsIdentity()
+            return (Pixel._grabber)(x, y, w, h)
+        r := Screen.Rect(x, y, w, h)
+        return (Pixel._grabber)(r.x, r.y, r.w, r.h, w, h)
+    }
+
     ; One BitBlt of the rect into a 32bpp top-down DIB -> Array of 0xRRGGBB.
-    static _ScreenGrab(x, y, w, h) {
+    ; dw, dh (default w, h): the array's size; a different size stretches
+    ; (COLORONCOLOR: nearest pixel, colours kept exact).
+    static _ScreenGrab(x, y, w, h, dw := "", dh := "") {
         hdcScreen := 0, hdcMem := 0, hbm := 0, old := 0
+        sx := x, sy := y, sw := w, sh := h
+        if (dw != "")
+            w := dw, h := dh
         try {
             hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
             hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdcScreen, "Ptr")
@@ -165,9 +186,16 @@ class Pixel {
             if (!hbm || !bits)
                 return ""
             old := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
-            if !DllCall("BitBlt", "Ptr", hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h
-                , "Ptr", hdcScreen, "Int", x, "Int", y, "UInt", 0x00CC0020)
-                return ""
+            if (sw = w && sh = h) {
+                if !DllCall("BitBlt", "Ptr", hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h
+                    , "Ptr", hdcScreen, "Int", sx, "Int", sy, "UInt", 0x00CC0020)
+                    return ""
+            } else {
+                DllCall("SetStretchBltMode", "Ptr", hdcMem, "Int", 3)          ; COLORONCOLOR
+                if !DllCall("StretchBlt", "Ptr", hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h
+                    , "Ptr", hdcScreen, "Int", sx, "Int", sy, "Int", sw, "Int", sh, "UInt", 0x00CC0020)
+                    return ""
+            }
             DllCall("GdiFlush")
             out := []
             out.Capacity := w * h
@@ -191,9 +219,13 @@ class Pixel {
         return PixelGetColor(x, y, "RGB")
     }
 
-    ; Current color at x,y as Integer 0xRRGGBB.
+    ; Current color at DESIGN x,y (Screen maps it to the client) as Integer
+    ; 0xRRGGBB. At 2560x1440 the getter gets x, y untouched.
     static Get(x, y) {
-        return Pixel.ToRgb((Pixel._getter)(x, y))
+        if Screen.IsIdentity()
+            return Pixel.ToRgb((Pixel._getter)(x, y))
+        p := Screen.Pt(x, y)
+        return Pixel.ToRgb((Pixel._getter)(p.x, p.y))
     }
 
     static Is(x, y, color, tol := 10) {

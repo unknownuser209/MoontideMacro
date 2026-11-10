@@ -19,7 +19,7 @@
     "minigamePollMs": 10,
     "afterMinigameMs": 300,
     "close": [1457, 491],
-    "closePreMs": 700,
+    "closePreMs": 1100,
     "afterCloseMs": 300,
     "failsafe": {
       "fishingSec": 31,

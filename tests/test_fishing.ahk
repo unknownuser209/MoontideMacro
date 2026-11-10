@@ -729,6 +729,7 @@ Test_Sell_NothingCaughtSkipsTheShop() {
         SellTask(t.cfg, st, d).Run(SchedCtx())
         AssertEq(io.Count("click@1289,1264"), 0, "no Open Shop click")
         AssertEq(io.Count("click@1958,361"), 0, "no shop X")
+        AssertEq(io.Count("click@1308,1073"), 2, "his text clicked through (Leave only shows after it)")
         AssertTrue(io.IndexOf("BUY HERE") > 0, "a due buy still happens")
         AssertEq(st.needRepath, false, "back at the fishing spot")
         found := false
@@ -747,6 +748,34 @@ Test_Sell_NothingCaughtSkipsTheShop() {
         FsSellScreen(io2, 1)
         SellTask(t.cfg, st2, FsDeps(io2)).Run(SchedCtx())
         AssertTrue(io2.Count("click@1289,1264") > 0, "start sell opens the shop")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; The user's own recorded sell walks (Setup > Routes) replace the shipped
+; ones; E is pressed after sell_to_fisher; a broken recording falls back.
+Test_Sell_UsesTheRecordedWalks() {
+    t := FsMakeCfg()
+    FsScreen.Install()
+    try {
+        io := FsIO()
+        FsSellScreen(io, 1)
+        task := SellTask(t.cfg, FsCaught(), FsDeps(io))
+        task._routes["sell_to_fisher"] := Map("steps", [["d", "down", 777], ["d", "up", 0]])
+        task._routes["fisher_to_fishing"] := Map("steps", [["s", "down", 555], ["s", "up", 0]])
+        task.Run(SchedCtx())
+        iD := io.IndexOf("down d"), iE := io.IndexOf("down e"), iBack := io.IndexOf("down s")
+        AssertTrue(iD > 0 && iE > iD, "recorded walk, then E")
+        AssertEq(io.IndexOf("down Space"), 0, "the shipped walk (with its jump) not used")
+        AssertTrue(iBack > iE, "recorded walk back")
+        io2 := FsIO()
+        FsSellScreen(io2, 1)
+        task2 := SellTask(t.cfg, FsCaught(), FsDeps(io2))
+        task2._routes["sell_to_fisher"] := Map("steps", "broken")
+        task2.Run(SchedCtx())
+        AssertTrue(io2.IndexOf("down Space") > 0, "broken recording: the shipped walk")
     } finally {
         FsScreen.Restore()
         FsClean(t.dir)
