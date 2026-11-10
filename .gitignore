@@ -1,0 +1,16 @@
+settings.ini
+data/potion_usage.json
+data/last_biome.txt
+data/auras_had.txt
+data/memory_match_state.json
+data/biome_items_state.json
+*.log
+.superpowers/
+*.tmp
+*.probe
+.claude/
+!tests/fixtures/*.log
+*.bad
+data/calibration.json.bad
+data/minions_routes.json
+dist/

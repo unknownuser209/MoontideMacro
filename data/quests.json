@@ -1,0 +1,69 @@
+{
+  "types": [
+    {
+      "name": "Player Hunt", "enabled": true,
+      "quests": [
+        { "name": "Player Hunt I", "enabled": true },
+        { "name": "Player Hunt II", "enabled": true },
+        { "name": "Player Hunt III", "enabled": true }
+      ]
+    },
+    {
+      "name": "Aura Hunt", "enabled": true,
+      "quests": [
+        { "name": "Basic Aura Hunt", "enabled": true },
+        { "name": "Epic Aura Hunt", "enabled": true },
+        { "name": "Unique Aura Hunt", "enabled": true },
+        { "name": "Legendary Aura Hunt", "enabled": true },
+        { "name": "Mythic Aura Hunt", "enabled": true }
+      ]
+    },
+    {
+      "name": "Breakthroughs", "enabled": true,
+      "quests": [ { "name": "Breakthroughs", "enabled": true } ]
+    },
+    {
+      "name": "Resonance", "enabled": true,
+      "quests": [ { "name": "Resonance", "enabled": true } ]
+    },
+    {
+      "name": "Delivery", "enabled": true,
+      "quests": [
+        { "name": "Delivery I", "enabled": true },
+        { "name": "Delivery II", "enabled": true },
+        { "name": "Delivery III", "enabled": true },
+        { "name": "Delivery IV", "enabled": true },
+        { "name": "Delivery V", "enabled": true }
+      ]
+    },
+    {
+      "name": "Fishing", "enabled": true,
+      "quests": [
+        { "name": "River Angler", "enabled": true },
+        { "name": "Minnow Rookie", "enabled": true },
+        { "name": "Deep-Sea Hunter", "enabled": true },
+        { "name": "Legendary Fisher", "enabled": true }
+      ]
+    },
+    {
+      "name": "Finding a Person", "enabled": true,
+      "quests": [ { "name": "Finding a Person", "enabled": true } ]
+    },
+    {
+      "name": "Lucky Clover", "enabled": true,
+      "quests": [ { "name": "Lucky Clover", "enabled": true } ]
+    },
+    {
+      "name": "Time of Patience", "enabled": true,
+      "quests": [ { "name": "Time of Patience", "enabled": true } ]
+    },
+    {
+      "name": "Meditation", "enabled": true,
+      "quests": [
+        { "name": "Meditation I", "enabled": true },
+        { "name": "Meditation II", "enabled": true },
+        { "name": "Meditation III", "enabled": true }
+      ]
+    }
+  ]
+}

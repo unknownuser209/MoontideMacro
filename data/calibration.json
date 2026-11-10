@@ -1,0 +1,221 @@
+{
+  "stepList": [
+    {
+      "id": "notify_rect",
+      "kind": "rect",
+      "prompt": "Wait for an in-game notification (let auto craft make something, or press E at an EMPTY quest board). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the area where notification text shows (make it a bit bigger than one notification)."
+    },
+    {
+      "id": "fisher_open_shop",
+      "kind": "point",
+      "prompt": "Talk to Captain Flarg so his two buttons show. Hover the Open Shop button (not Sell Fish)."
+    },
+    {
+      "id": "fisher_item_lucky_potion",
+      "kind": "point",
+      "prompt": "Fisher shop open (Open Shop). Hover the Lucky Potion tile in the shop list (the tile that picks it)."
+    },
+    {
+      "id": "fisher_item_speed_potion",
+      "kind": "point",
+      "prompt": "Fisher shop open (Open Shop). Hover the Speed Potion tile in the shop list (the tile that picks it)."
+    },
+    {
+      "id": "fisher_buy_button",
+      "kind": "point",
+      "prompt": "Fisher shop open, a potion picked. Hover the Buy button (the same spot for every potion)."
+    },
+    {
+      "id": "fisher_picked_name",
+      "kind": "rect",
+      "prompt": "Fisher shop open, a potion picked. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the picked item's big NAME in the left panel (make it wide enough for the longest name, e.g. 'Fortune Potion III'). The macro reads it so it never buys the wrong item."
+    },
+    {
+      "id": "fisher_qty",
+      "kind": "point",
+      "prompt": "Stand at the Fisher shop with a potion selected. Hover the quantity box."
+    },
+    {
+      "id": "fisher_confirm",
+      "kind": "point",
+      "prompt": "Stand at the Fisher shop. Hover the final Confirm / Purchase button."
+    },
+    {
+      "id": "fisher_purchase_close",
+      "kind": "point",
+      "prompt": "Fisher shop, the purchase window still open after buying. Hover the button that closes the purchase window (its X)."
+    },
+    {
+      "id": "fisher_shop_close",
+      "kind": "point",
+      "prompt": "Fisher shop open (purchase window closed). Hover the X that closes the whole shop."
+    },
+    {
+      "id": "fisher_leave",
+      "kind": "point",
+      "prompt": "Talk to Captain Flarg so his three buttons show (Open Shop, Sell Fish, Leave). Hover the Leave button."
+    },
+    {
+      "id": "cauldron_gui",
+      "kind": "rect",
+      "prompt": "Open Stella's cauldron (Stella's Workshop). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of its title text 'Stella's Workshop'."
+    },
+    {
+      "id": "cauldron_search",
+      "kind": "point",
+      "prompt": "Stella's cauldron open. Hover the recipe search box."
+    },
+    {
+      "id": "cauldron_result",
+      "kind": "rect",
+      "prompt": "Type a recipe name in the search box. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result card (its name and the line under it)."
+    },
+    {
+      "id": "cauldron_result_2",
+      "kind": "rect",
+      "prompt": "Type Godly Potion in the search box (three results). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the SECOND result card, the same parts as the first. Only needed for the Godly Potions."
+    },
+    {
+      "id": "cauldron_open_recipe",
+      "kind": "point",
+      "prompt": "Recipe selected. Hover the Open Recipe button."
+    },
+    {
+      "id": "cauldron_add_all",
+      "kind": "point",
+      "prompt": "Recipe open. Hover the Add All button."
+    },
+    {
+      "id": "cauldron_close",
+      "kind": "point",
+      "prompt": "Hover the button that closes the cauldron window."
+    },
+    {
+      "id": "stella_dialog",
+      "kind": "rect",
+      "prompt": "Walk into Stella so her dialog shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of her NAME ('Stella') at the top of the dialog."
+    },
+    {
+      "id": "inv_open",
+      "kind": "point",
+      "prompt": "Stand anywhere with the inventory closed. Hover the inventory button."
+    },
+    {
+      "id": "inv_items_tab",
+      "kind": "point",
+      "prompt": "Open the inventory (it opens on the Gears tab). Hover the Items tab button (do not press it)."
+    },
+    {
+      "id": "inv_search",
+      "kind": "point",
+      "prompt": "Inventory open on the Items tab. Hover the item search box."
+    },
+    {
+      "id": "inv_tile1_rect",
+      "kind": "rect",
+      "prompt": "Search 'Potion' so a full row of results shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result tile's NAME text (both lines of it)."
+    },
+    {
+      "id": "inv_tile2_rect",
+      "kind": "rect",
+      "prompt": "Same results. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the SECOND result tile's NAME text, the same way as the first (this sets the tile spacing)."
+    },
+    {
+      "id": "inv_count_rect",
+      "kind": "rect",
+      "prompt": "Same results. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result tile's count text (e.g. x12)."
+    },
+    {
+      "id": "inv_use",
+      "kind": "point",
+      "prompt": "Select a potion tile yourself. Hover the Use button (do not press it)."
+    },
+    {
+      "id": "inv_desc_rect",
+      "kind": "rect",
+      "prompt": "Potion selected. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the description text under Use (the first two lines, e.g. 'Gives you ... of [Lucky]')."
+    },
+    {
+      "id": "inv_amount_box",
+      "kind": "rect",
+      "prompt": "Potion selected. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the INSIDE of the amount box next to Use (where the number goes)."
+    },
+    {
+      "id": "quest_board_rect",
+      "kind": "rect",
+      "prompt": "Stand at the quest board with it open. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the quest text area."
+    },
+    {
+      "id": "quest_accept",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the Accept button (Claim Rewards shows in the same spot)."
+    },
+    {
+      "id": "quest_dismiss",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the Dismiss / Abandon button."
+    },
+    {
+      "id": "quest_close",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the button that exits / closes the board."
+    },
+    {
+      "id": "quest_next",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the > arrow to the right of the board (next quest)."
+    },
+    {
+      "id": "aura_open",
+      "kind": "point",
+      "prompt": "Stand anywhere with every menu closed. Hover the Aura Storage button (the one that opens your auras)."
+    },
+    {
+      "id": "aura_search",
+      "kind": "point",
+      "prompt": "Aura Storage open. Hover its search box."
+    },
+    {
+      "id": "aura_tile_rect",
+      "kind": "rect",
+      "prompt": "Aura Storage open, type Sailor in the search box. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result's NAME text."
+    },
+    {
+      "id": "aura_equip",
+      "kind": "point",
+      "prompt": "Aura Storage open, select the Sailor tile yourself. Hover the Equip button (do NOT press it; never a Delete button). The macro reads Equip / Unequip on it before it ever presses it."
+    },
+    {
+      "id": "aura_close",
+      "kind": "point",
+      "prompt": "Aura Storage open. Hover the X that closes it."
+    },
+    {
+      "id": "buff_expand",
+      "kind": "point",
+      "prompt": "Hover the arrow / button that expands your buff list so every buff shows (the same button collapses it)."
+    },
+    {
+      "id": "obby_blessing",
+      "kind": "point",
+      "prompt": "Touch the obby's star so the Basic Blessing shows, expand the buff list, then hover the Basic Blessing icon (the macro checks its colour after each obby run)."
+    },
+    {
+      "id": "selector_list_rect",
+      "kind": "rect",
+      "prompt": "Use the Biome Selector so its list of Drives shows. Hover the TOP-LEFT corner of the first Drive (Radiant Star), then the BOTTOM-RIGHT corner of the last one you can see. The macro reads the list, so the slow bobbing does not matter."
+    },
+    {
+      "id": "selector_confirm",
+      "kind": "point",
+      "prompt": "Biome Selector open, a Drive selected. Hover the button that confirms / uses it (do not press it)."
+    },
+    {
+      "id": "chat_rect",
+      "kind": "rect",
+      "prompt": "Open the chat. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the chat message area."
+    }
+  ],
+  "steps": {},
+  "version": 1
+}

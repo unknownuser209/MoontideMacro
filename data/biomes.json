@@ -1,0 +1,24 @@
+{
+  "biomes": [
+    { "name": "NORMAL", "rare": false, "potions": [] },
+    { "name": "WINDY", "rare": false, "potions": [] },
+    { "name": "SNOWY", "rare": false, "potions": [] },
+    { "name": "RAINY", "rare": false, "potions": [] },
+    { "name": "SAND STORM", "rare": false, "potions": [] },
+    { "name": "HELL", "rare": false, "potions": [] },
+    { "name": "STARFALL", "rare": false, "potions": [] },
+    { "name": "CORRUPTION", "rare": false, "potions": [] },
+    { "name": "LOST FOREST", "rare": false, "potions": [] },
+    { "name": "NULL", "rare": false, "potions": [] },
+    { "name": "HEAVEN", "rare": false, "potions": [] },
+    { "name": "GLITCHED", "rare": true, "potions": [] },
+    { "name": "DREAMSPACE", "rare": true, "potions": [] },
+    { "name": "CYBERSPACE", "rare": true, "potions": [] },
+    { "name": "SINGULARITY", "rare": true, "potions": [] },
+    { "name": "RADIANT FOREST", "rare": true, "potions": [] },
+    { "name": "PUMPKIN MOON", "rare": false, "potions": [] },
+    { "name": "GRAVEYARD", "rare": false, "potions": [] },
+    { "name": "BLOOD RAIN", "rare": false, "potions": [] },
+    { "name": "EGGLAND", "rare": false, "potions": [] }
+  ]
+}

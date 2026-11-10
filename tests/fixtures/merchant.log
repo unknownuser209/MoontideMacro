@@ -1,0 +1,8 @@
+2026-10-24T02:52:20.001Z,15098.001000,7564,6,Info [FLog::Output] Connecting to UDMUX server
+2026-10-24T02:52:21.500Z,15099.500000,7564,6,Warning [FLog::Network] Some warning about nothing
+2026-10-24T03:00:00.000Z,15500.0,7564,6,Info [FLog::Output] Mari has arrived at the Hub
+2026-10-24T03:00:01.000Z,15501.0,7564,6,Info [FLog::Output] Mari has arrived at the Hub
+2026-10-24T03:00:05.000Z,15505.0,7564,6,Info [FLog::Output] Marigold has arrived
+2026-10-24T03:00:06.000Z,15506.0,7564,6,Info [FLog::Output] Jester appeared near the pier
+2026-10-24T03:00:07.000Z,15507.0,7564,6,Info [FLog::Output] mari arrived (lowercase must not match)
+2026-10-24T03:00:08.000Z,15508.0,7564,6,Info [FLog::Output] Mari is selling potions

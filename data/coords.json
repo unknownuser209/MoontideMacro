@@ -1,0 +1,85 @@
+{
+  "_source": "All values are FishSol-v2.1.ahk 1440p (2560x1440), label DoMouseMove2 (line 4045+). Line numbers in the _source fields refer to that file. 1080p/768p branches ignored. Only values were transcribed; no code was copied.",
+  "fishing": {
+    "_source": "rod click L4565-4568 (MouseMove 1161,1124; Sleep 30; click; sleep 300). bite pixel L4579 (1536,1119)=0xFFFFFF exact. park mouse L4581 (1263,1177), sleep 50 L4582. bar color sample L4584 (1261,1033). normal strip L4664 PixelSearch 1043,1033 -> 1519,1058 tol 5. advanced strip L4639 row y=1033 x 1043..1519 tol 5, extend tol 10 L4647, threshold default 25 L62, click then sleep 25. minigame cap L4633 (9000 ms). after loop L4671-4675: sleep 300, move 1457,491, sleep 700, click, sleep 300. fishing failsafe L4591 (31 s, default L60) clicks 1690,1224 / 1523,649 / 1457,491 / 1163,1126 with 300 ms gaps (L4592-4605). pathing failsafe L4614 (61 s, default L61). strip rows/stride, minigamePollMs, poll and pre-click values are Vesper choices. FishSol PixelSearches the whole rect; Vesper grabs the strip once per pass with BitBlt (StripGrab) and tests the rows in code, so stride 1 = every pixel. A per-pixel PixelGetColor scan measured ~5.6 ms/px on the dev PC, far too slow.",
+    "rod": [1161, 1124],
+    "rodPreMs": 30,
+    "rodSettleMs": 300,
+    "bite": {"pixel": [1536, 1119], "color": "0xFFFFFF", "tol": 0, "pollMs": 20},
+    "parkMouse": [1263, 1177],
+    "parkSettleMs": 50,
+    "barSample": [1261, 1033],
+    "strip": {"x1": 1043, "x2": 1519, "rows": [1033, 1046, 1058], "stride": 1, "tol": 5},
+    "advanced": {"y": 1033, "x1": 1043, "x2": 1519, "stride": 1, "tol": 5, "extendTol": 10, "thresholdPx": 25, "afterClickMs": 25},
+    "reel": {"_note": "2026 reel UI (lossless captures 2026-10-25): bar frame y 1030/1055, inside x 1042..1517; arrow base line y 1025; colours change per fish/light so none are stored. Used unless General.legacyReel=1.", "x1": 1042, "x2": 1517, "arrowY": 1025, "barY": 1044, "borderYs": [1026, 1028, 1030, 1032, 1034, 1036], "stride": 2, "pollMs": 10, "leadMs": 100, "aim": 0.15, "clickGapMs": 40, "endMs": 400},
+    "result": {"_note": "Card after the reel (recording 2026-10-25): a miss shows 'Fishing Failed' / 'The fish is gone...' (it slides up, so the rect is tall). Used for the stop summary's caught / got away counts.", "rect": [1000, 440, 560, 480], "failWords": ["failed", "gone"], "waitMs": 3000, "pollMs": 150},
+    "panelTitle": {"_note": "The fishing panel's 'Fishing' title (OCR). No panel and no Fish button before a cast = not at the fishing spot.", "rect": [1130, 980, 300, 45], "word": "fishing"},
+    "fishButton": {"_note": "The panel's Fish / Exit button under the rod click. Before casting, wait (OCR) until it reads Fish: after a catch or a miss it shows up late.", "rect": [1050, 1095, 200, 45], "word": "fish", "waitMs": 4000, "pollMs": 150, "settleMs": 250},
+    "minigameCapMs": 9000,
+    "minigamePollMs": 10,
+    "afterMinigameMs": 300,
+    "close": [1457, 491],
+    "closePreMs": 700,
+    "afterCloseMs": 300,
+    "failsafe": {
+      "fishingSec": 31,
+      "pathingSec": 61,
+      "clicks": [[1690, 1224], [1523, 649], [1457, 491], [1163, 1126]],
+      "gapMs": 300
+    }
+  },
+  "sell": {
+    "_source": "daily reward check L4165 (PixelSearch 1228,879 -> 1331,904 color 0x7ffd90 tol 3; up to 3 tries), claim click L4167 (1280,895), close click L4171 (1890,527), 200 ms gaps. camera zoom L4182-4190: 80x WheelUp (25 ms), sleep 500, 35x WheelDown (25 ms), sleep 300. shop dialog clicks L4232-4238: (1308,1073) clicked twice 50 ms apart then 200, (1289,1264) after 200, then 800. sell loop L4244-4281 (VIP copy L4346-4385, same values): sleep 3000, item (1117,550) 200/200, sell-all (904,1080) or selected (700,1078) 200/500, shop-loaded pixel (593,795)=0x999999 timeout 5000 else close click (1945,355) after 200, sleep 50, confirm (1002,831) 200/1000, more-to-sell check PixelSearch 1027,595 -> 1183,604 white tol 3 (not found = stop), max rounds = fishingLoopCount default 15 (L15). shop close L4285 (1958,361) 200/200. Pre-route reset (Esc, R, Enter, menu clicks) is Input.ResetToSpawn. Grid rows/stride for the rect checks are Vesper choices (FishSol uses PixelSearch).",
+    "dailyReward": {
+      "rect": [1228, 879, 1331, 904],
+      "rows": [884, 891, 899],
+      "stride": 8,
+      "color": "0x7ffd90",
+      "tol": 3,
+      "maxTries": 3,
+      "claim": [1280, 895],
+      "close": [1890, 527],
+      "gapMs": 200
+    },
+    "camera": {"wheelUp": 80, "wheelDown": 35, "wheelGapMs": 25, "pauseMs": 500, "afterMs": 300},
+    "dialog": {
+      "a": [1308, 1073],
+      "aClicks": 2,
+      "aGapMs": 50,
+      "aAfterMs": 200,
+      "b": [1289, 1264],
+      "bPreMs": 200,
+      "bAfterMs": 800
+    },
+    "loop": {
+      "maxRounds": 15,
+      "startDelayMs": 3000,
+      "item": [1117, 550],
+      "itemPreMs": 200,
+      "itemPostMs": 200,
+      "sellAll": [904, 1080],
+      "sellSelected": [700, 1078],
+      "optionPreMs": 200,
+      "optionPostMs": 500,
+      "loaded": {"pixel": [593, 795], "color": "0x999999", "tol": 0, "timeoutMs": 5000, "pollMs": 20, "closeClick": [1945, 355], "closePreMs": 200},
+      "afterLoadMs": 50,
+      "confirm": [1002, 831],
+      "confirmPreMs": 200,
+      "confirmPostMs": 1000,
+      "more": {"rect": [1027, 595, 1183, 604], "rows": [595, 599, 604], "stride": 8, "color": "0xFFFFFF", "tol": 3}
+    },
+    "close": [1958, 361],
+    "closePreMs": 200,
+    "closePostMs": 200
+  }
+  ,"craft": {
+    "_source": "FishSol-v2.1.ahk RunForcedRespawnAction 1440p branch (VIP variant, 1440p branch: dialog L1961-1967, Lucky item L1974, qty box L1982, confirm L1990, Speed item L2001, Speed confirm L2017, unmapped L1978/L1994, close L2028; the non-VIP copy from L2304 has the same values). Values only. Shop dialog: click (1308,1073) twice 50 ms apart, sleep 200, click (870,1264), sleep 800. Per-potion item click (Lucky 1126,543 / Speed 1370,543) is replaced by the calibrated fisher_buy_<potion>; quantity box (1490,674) = fisher_qty; FishSol pastes the amount with the clipboard, Vesper types it; (1500,820)/(1490,820) = fisher_confirm. FishSol also clicks (784,1069) between the item and the quantity box and (1675,524) after the confirm: purpose unknown, NOT used (listed in unmapped for the manual check). Shop close: sleep 800, move (1945,355), sleep 300, click, sleep 300. 300 ms gaps between steps. Cauldron timings are Vesper choices (CraftTask statics).",
+    "dialog": {"a": [1308, 1073], "aClicks": 2, "aGapMs": 50, "aAfterMs": 200, "b": [870, 1264], "bPreMs": 200, "bAfterMs": 800},
+    "stepMs": 300,
+    "close": [1945, 355],
+    "closePreMs": 800,
+    "closeMoveMs": 300,
+    "closePostMs": 300,
+    "unmapped": {"betweenItemAndQty": [784, 1069], "afterConfirm": [1675, 524]}
+  }
+}

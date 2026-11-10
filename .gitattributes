@@ -1,0 +1,4 @@
+# Credits.ahk and the avatar are fingerprinted byte for byte (lib\Credits.ahk): never convert line endings.
+lib/Credits.ahk -text
+assets/credits/avatar.png binary
+*.sh text eol=lf
