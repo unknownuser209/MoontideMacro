@@ -67,6 +67,12 @@ class LogWatch {
     static PRIVATE_REQUEST := "RequestPrivateGame"   ; launch request of a private server join
     static TAIL_BYTES := 65536       ; first open: start this far from the end
     static MAX_READ := 1048576       ; bytes per read chunk
+    ; a live join waits this long for its GameJoinLoadTime line before it
+    ; counts as "other": a read can end between the two lines (live
+    ; 2026-11-11: the macro's own private rejoin read as a ghost server and
+    ; it rejoined until the limit)
+    static JOIN_WAIT_MS := 15000
+    static TickFn := () => A_TickCount
 
     ; ---- instance state ----------------------------------------------------
     Dir := ""
@@ -78,6 +84,7 @@ class LogWatch {
     CurrentJoin := ""                ; "private" | "other" | "" (no join seen in this log)
     _lastReq := ""                   ; requestType of the last launch request, until its join
     _pending := false                ; a join waits for its GameJoinLoadTime line (_JoinLine)
+    _pendingAt := 0                  ; TickFn when that join was seen
     _pendingTs := ""
     _joinTs := ""                    ; ts of the last join seen during backfill / the prefix scan
     _skipFirst := false
@@ -191,8 +198,13 @@ class LogWatch {
         } finally {
             f.Close()
         }
+        ; a live join whose GameJoinLoadTime line never came: "other" now
+        if (!this._backfilling && this._JoinWaitOver() && (kind := this._FlushJoin()) != "")
+            events.Push(LogWatch._Ev("join", kind, this._pendingTs, true))
         return events
     }
+
+    _JoinWaitOver() => this._pending && ((LogWatch.TickFn)() - this._pendingAt >= LogWatch.JOIN_WAIT_MS)
 
     _ReadNew(f, events) {
         try {
@@ -321,7 +333,7 @@ class LogWatch {
                 return "private"
             }
             this._lastReq := ""
-            this._pending := true, this._pendingTs := LogWatch._Ts(line)
+            this._pending := true, this._pendingTs := LogWatch._Ts(line), this._pendingAt := (LogWatch.TickFn)()
             return ""
         }
         if (this._pending && InStr(line, "[FLog::GameJoinLoadTime]")) {
@@ -380,8 +392,9 @@ class LogWatch {
             }
         }
         ; the GameJoinLoadTime line is written with the join: one missing by
-        ; the end of the chunk is not coming (older logs): a plain join
-        if ((kind := this._FlushJoin()) != "") {
+        ; the end of the chunk is not coming (older logs): a plain join. Live,
+        ; it may still be on its way: only after JOIN_WAIT_MS (Poll flushes)
+        if ((backfill || this._JoinWaitOver()) && (kind := this._FlushJoin()) != "") {
             if backfill
                 this._joinTs := this._pendingTs
             else

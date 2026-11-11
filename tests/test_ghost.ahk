@@ -34,13 +34,22 @@ Test_Ghost_LiveJoinEvents() {
         AssertEq(j[1]["name"], "private", "the link join is private")
         AssertEq(j[1]["live"], true, "live")
         FileAppend(GhTeleport("2026-10-26T22:52:41.000Z") "`n" GhJoin("2026-10-26T22:52:41.500Z") "`n", path, "UTF-8-RAW")
+        AssertEq(GhJoins(lw.Poll()).Length, 0, "a live join waits for its GameJoinLoadTime line")
+        t0 := A_TickCount
+        LogWatch.TickFn := () => t0 + LogWatch.JOIN_WAIT_MS + 1000
         j := GhJoins(lw.Poll())
+        LogWatch.TickFn := () => A_TickCount
         AssertEq(j.Length, 1, "the teleport join")
         AssertEq(j[1]["name"], "other", "a teleport is not the private server")
         AssertEq(lw.CurrentJoin, "other", "current join kept")
         ; a public join (any other request type) is not private either
         FileAppend(GhReq("2026-10-26T23:00:00.000Z", "RequestGame") "`n" GhJoin("2026-10-26T23:00:01.000Z") "`n", path, "UTF-8-RAW")
-        AssertEq(GhJoins(lw.Poll())[1]["name"], "other", "public join")
+        lw.Poll()
+        t1 := A_TickCount
+        LogWatch.TickFn := () => t1 + LogWatch.JOIN_WAIT_MS + 1000
+        pj := GhJoins(lw.Poll())
+        LogWatch.TickFn := () => A_TickCount
+        AssertEq(pj.Length ? pj[1]["name"] : "", "other", "public join")
         for ev in GhJoins(lw.Poll())
             AssertTrue(!InStr(ev["name"] ev["ts"], "SECRET"), "never the access code")
     } finally {
@@ -184,3 +193,25 @@ Test_Ghost_WarmStartPrivateJoinIsPrivate() {
     }
 }
 
+
+; live 2026-11-11 15:24:58: the macro's own private rejoin: the read ended
+; after "Joining game" and before the GameJoinLoadTime line; the join was
+; taken as a ghost server and it rejoined until the limit (3 in 10 min)
+Test_Ghost_JoinSplitAcrossReadsIsPrivate() {
+    d := LwTmpDir()
+    try {
+        path := d "\0.1_20261111T000000Z_Player_CCCCC_last.log"
+        FileAppend("", path)
+        lw := LogWatch(d)
+        lw.Poll()
+        FileAppend(GhJoin("2026-11-11T21:24:57.000Z") "`n", path, "UTF-8-RAW")
+        AssertEq(GhJoins(lw.Poll()).Length, 0, "no verdict yet")
+        FileAppend(GhLoad("2026-11-11T21:24:58.000Z", "RequestPrivateGame") "`n", path, "UTF-8-RAW")
+        j := GhJoins(lw.Poll())
+        AssertEq(j.Length, 1, "one join")
+        AssertEq(j.Length ? j[1]["name"] : "", "private", "the rejoin is the private server")
+    } finally {
+        LogWatch.TickFn := () => A_TickCount
+        LwTmpClean(d)
+    }
+}

@@ -304,10 +304,19 @@ class RecoveryTask {
         h := Roblox.Hwnd()
         if !h
             return true
+        pid := 0
+        try pid := WinGetPID("ahk_id " h)
         try WinClose("ahk_id " h)
         if WinWaitClose("ahk_id " h, , 10)
             return true
-        try ProcessClose("RobloxPlayerBeta.exe")
+        ; the process that owns the window: Roblox runs two
+        ; RobloxPlayerBeta.exe, and closing "the" one by name could hit the
+        ; small helper and leave the game window up (live 2026-11-11 15:23:
+        ; "the old Roblox window did not close")
+        if pid
+            try ProcessClose(pid)
+        if Roblox.Hwnd()
+            try ProcessClose("RobloxPlayerBeta.exe")
         return !Roblox.Hwnd()
     }
 
