@@ -536,7 +536,16 @@ class FishLogic {
     ; otherwise. Colours are never hard-coded: the arrow is read from its
     ; white base line, the click bar colour from the bar's left end, and the
     ; fish is the biggest block of colour that is not the click bar's.
-    static ReelDark(c) => Max((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF) < 70
+    ; The bar's empty part is see-through: black in the dark, a dim grey
+    ; over a bright scene (live 1080p SNOWY 2026-11-10: 0x3E4750, brightest
+    ; channel 80). Counted as fish, that grey was the biggest block and the
+    ; arrow chased it to the bar's end while the fish got away. So a dim,
+    ; unsaturated grey (max < 100, channels within 24) is empty too.
+    static ReelDark(c) {
+        r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+        mx := Max(r, g, b)
+        return mx < 70 || (mx < 100 && mx - Min(r, g, b) <= 24)
+    }
     static ReelWhite(c) => Min((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF) > 220
     ; Largest single-channel difference. The fish under the click bar can be
     ; very close to the bar's colour: (0,255,255) on (47,255,255) by day,

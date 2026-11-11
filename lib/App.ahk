@@ -97,6 +97,8 @@
 ; CHAT: ChatWatch.Check (it moves the mouse) only between tasks, running,
 ;   not paused, window ok, merchant.enabled, NOT during a rare biome. It
 ;   throttles itself to merchant.chatPollSec. onFound -> MerchantTask.Notify.
+;   A chat a task hid (ChatGuard: below 1440p it lies over clicks) is shown
+;   again after the task (_Tidy) and before each chat read.
 ;   Fishing runs until a sell, so while it runs the tick sets state.chatDue
 ;   every merchant.chatPollSec (chat watching on, chat_rect calibrated, no
 ;   rare biome); FishingTask returns after its current catch, the chat is
@@ -200,7 +202,11 @@ class App {
         if !d.Has("cfg")
             throw ValueError("App: cfg is required")
         this.cfg := d["cfg"]
+        ; hidden test switch (settings.ini only): a windowed Roblox counts
+        ; as fullscreen, mapped to its client (testing other sizes on one monitor)
+        try Roblox.AllowWindowed := (this.cfg.Get("General.allowWindowed", 0) = 1)
         this.root := App._Dep(d, "root", App.DefaultRoot())
+        try ChatGuard.FlagPath := this.root "\logs\chat_hidden.flag"
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
         this.state := App._Dep(d, "state", "")
         if !IsObject(this.state)
@@ -242,7 +248,7 @@ class App {
         this._lastPoll := ""
         this._pauseReason := ""
         this._note := ""
-        this._display := ""          ; "Roblox 1920x1080 (x0.75): only 2560x1440 is verified so far"
+        this._display := ""          ; "Roblox 1280x1024 (x0.5): not tested at this size yet ...
         this._displayLogged := ""
         this._holdUntil := 0
         this._polling := false
@@ -316,7 +322,7 @@ class App {
             this.chat := d["chatWatch"]
         } else {
             this.chat := ChatWatch({cfg: this.cfg, webhook: this.wh, log: this._logFn
-                , onFound: ObjBindMethod(this, "_OnChatMerchant")})
+                , onFound: ObjBindMethod(this, "_OnChatMerchant"), startOld: true})
         }
     }
 
@@ -332,7 +338,7 @@ class App {
                 case "sell": return SellTask(cfg, this.state, {log: this._logFn, afterSell: (ctx) => this._AfterSell(ctx)
                     , stuck: (msg) => this._Error("Stuck: " msg), cal: Calibrate})
                 case "craft": return CraftTask({cfg: cfg, webhook: this.wh, log: this._logFn})
-                case "quests": return QuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
+                case "quests": return QuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn, cards: (c) => this._ClearCards(c)})
                 case "biomeitems": return BiomeItemsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "obby": return ObbyTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()})
                 case "minions": return MinionsTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()
@@ -516,6 +522,8 @@ class App {
         this.state.obbyIntervalMs := Sched.ObbyIntervalFrom(this.cfg.Get("Obby.intervalMin", 10))
         dry := this._DryRun()
         this.Log("Started. Potion dry run " (dry ? "ON" : "OFF"))
+        if (IsObject(this.chat) && HasMethod(this.chat, "Rebase"))
+            this.chat.Rebase()                  ; a merchant line already in the chat is old
         ; One start message per ENABLED webhook (whatever its event boxes say),
         ; no mention, no @everyone. It replaces the old `startstop` start
         ; message, so a webhook never gets two. Stop still routes `startstop`.
@@ -524,6 +532,8 @@ class App {
         win := this._Window()
         if (win != "ok")
             this._PauseFor(win)
+        else if (this._taskMap.Has("fishing") && HasMethod(this._taskMap["fishing"], "LineInAtStart"))
+            this._taskMap["fishing"].LineInAtStart(this.ctx)     ; a line a stop left out
         this.timerFn.Call(this._tickFn, App.TickMs)
         this._timerOn := true
         this._Status()
@@ -807,7 +817,7 @@ class App {
         } catch Any as e {
             failed := true
             this._holdUntil := this.Now() + App.ErrorHoldMs
-            this._Error(StrTitle(task.name) ": error: " App._ErrText(e))
+            this._Error(StrTitle(task.name) ": error: " App._ErrText(e) App._ErrWhere(e))
         } finally {
             how := this._EndHow(failed)
             this.Log("task: " task.name " end" (how != "" ? " (" how ")" : ""))
@@ -854,6 +864,15 @@ class App {
         items := this._TidyItems(task)
         if items.Length
             Tidy.Run(task.name, items, c, this._logFn)
+        this._ChatBack(c)
+    }
+
+    ; The chat a task hid (ChatGuard: it lay over a click below 1440p) is
+    ; shown again between tasks, so ChatWatch can read the merchants' lines.
+    ; Nothing read or sent when no task hid it.
+    _ChatBack(c) {
+        if ChatGuard.Hidden()
+            try ChatGuard.Restore(CleanupCtx(c), "", this._logFn)
     }
 
     ; The task's own leftovers (Leftovers()), Captain Flarg's after craft
@@ -883,6 +902,20 @@ class App {
         if IsObject(scr)
             try items.Push(scr.TidyItem(task.name != "fishing"))
         return items
+    }
+
+    ; A fishing catch card over the screen closed (the fishing task's
+    ; leftovers, as in the tidy) -> true when one was. Quests: the board did
+    ; not open after E.
+    _ClearCards(c) {
+        if !this._taskMap.Has("fishing")
+            return false
+        f := this._taskMap["fishing"]
+        if !HasMethod(f, "Leftovers")
+            return false
+        try
+            return Tidy.Run("quests", f.Leftovers(), c, this._logFn).Length > 0
+        return false
     }
 
     ; Before a launch (Roblox in front): the title screen a disconnect or a
@@ -923,6 +956,7 @@ class App {
             return
         if !this._Active()
             return
+        this._ChatBack(this.ctx)                ; a tidy that was skipped (paused, unfocused) left it hidden
         try {
             this.chat.Check()
         } catch Any as e {
@@ -1037,8 +1071,13 @@ class App {
             this._displayLogged := d
             this.Log("Display: " d)
         }
-        this._display := this.roblox.Verified() ? "" : "Roblox " this.roblox.SizeText() ": only 2560x1440 is verified so far"
+        this._display := this.roblox.Verified() ? "" : "Roblox " this.roblox.SizeText() ": " Screen.NotTestedNote
     }
+
+    ; Below 2560x1440 Roblox's chat keeps its pixel size and covers the left
+    ; menu (Aura Storage / Collections): ChatGuard hides it right before such
+    ; a click and _Tidy opens it again, so merchants work there too (the old
+    ; "turn Merchants off" warning is gone, 2026-11-11).
 
     ; ---- log events -------------------------------------------------------------
 
@@ -1152,11 +1191,21 @@ class App {
     ; Every log line also goes to <root>\logs\macro.log (date, time, secrets
     ; scrubbed): the dashboard keeps its log only in memory, so after a bad
     ; run there was nothing to read back (2026-10-27). Moved to
-    ; macro.old.log past LogFileMax.
+    ; macro.old.log past LogFileMax. A line that cannot be written (another
+    ; program holds the file without write sharing, e.g. Git Bash tail -F) is
+    ; kept and written with the next line, up to LogPendingMax characters
+    ; (oldest dropped), so a lock never loses the run's log (2026-11-10).
     static LogFileMax := 1048576
+    static LogPendingMax := 262144
+    _logPending := ""
     _LogFile(text) {
         if (this.root = "")
             return
+        line := ""
+        try line := FormatTime(, "yyyy-MM-dd ") UiLogic.LogLine(text, this._Secrets()) "`n"
+        this._logPending .= line
+        if (StrLen(this._logPending) > App.LogPendingMax)
+            this._logPending := SubStr(this._logPending, -App.LogPendingMax)
         try {
             dir := this.root "\logs"
             if !DirExist(dir)
@@ -1164,7 +1213,8 @@ class App {
             path := dir "\macro.log"
             if (FileExist(path) && FileGetSize(path) > App.LogFileMax)
                 FileMove(path, dir "\macro.old.log", 1)
-            FileAppend(FormatTime(, "yyyy-MM-dd ") UiLogic.LogLine(text, this._Secrets()) "`n", path, "UTF-8")
+            FileAppend(this._logPending, path, "UTF-8")
+            this._logPending := ""
         }
     }
 
@@ -1256,7 +1306,7 @@ class App {
         craft := cfg.Get("Craft.enabled", 1)
         pots := ""
         if craft {
-            for p in StrSplit(cfg.Get("Craft.potions", "Lucky Potion,Speed Potion"), ",", " `t")
+            for p in StrSplit(cfg.Get("Craft.potions", "Lucky Potion"), ",", " `t")
                 pots .= (pots = "" || p = "" ? "" : ", ") p
         }
         F.Push(Webhook.Field(Emoji.Alembic " Auto-craft", ok(craft, pots)))
@@ -1362,6 +1412,18 @@ class App {
     _DryRun() => this.cfg.Get("General.dryRun", 1) ? true : false
 
     static _ErrText(e) => (e is Error) ? e.Message : String(e)
+
+    ; " (Obby.ahk:812 in _Swap, x)" for a code error, so a log line points at
+    ; it (the message alone named no variable or line, 2026-11-10)
+    static _ErrWhere(e) {
+        if !(e is Error)
+            return ""
+        f := ""
+        try SplitPath(e.File, &f)
+        w := ""
+        try w := (f != "" ? f ":" e.Line : "") (e.What != "" ? " in " e.What : "") (e.Extra != "" ? ", " SubStr(String(e.Extra), 1, 40) : "")
+        return (w != "") ? " (" w ")" : ""
+    }
 
     ; ---- dashboard callbacks ----------------------------------------------------
 
@@ -1634,8 +1696,10 @@ class App {
         try r := this.cfg.Data("routes")
         if (r is Map && r.Has("routes") && r["routes"] is Map)
             r := r["routes"]
-        if !(r is Map && r.Has(name))
-            return "not recorded yet: press Record first"
+        if !(r is Map && r.Has(name)) {
+            b := RouteRecorder.BuiltinWalk(r, name, this.cfg.Get("General.vip", 1) != 0)
+            return IsObject(b) ? b.steps : "not recorded yet: press Record first"
+        }
         e := r[name]
         steps := (e is Map && e.Has("steps")) ? e["steps"] : e
         try {

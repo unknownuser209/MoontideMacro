@@ -72,6 +72,11 @@ class QuestsTask {
     static MaxSteps := 16          ; reads per pass (5 quests need ~10)
     static OpenKey := "e"
     static SettleMs := 700
+    static ButtonTries := 8       ; button reads again while it reads nothing (a toast over it)
+    static ButtonRetryMs := 500
+    static SkillRe := "i)t[ao]unt|b[ao]rr[ao]ge|nothing|imp[ao][lI1]e|de[ao]deye|voidrush|rkm[ao]t"   ; Eden's skill list
+    static AfterCardMs := 1200     ; after a catch card closed, before E
+    static WalkTries := 2          ; respawn + walk + E when the board did not open
     static OpenWaitMs := 2000      ; board text must appear within this after E
     static PollMs := 250
     static TitleUp := 130          ; px above quest_board_rect that hold the quest title
@@ -86,6 +91,10 @@ class QuestsTask {
     __New(deps := "") {
         this._env := TaskEnv(deps)
         this._notice := ""      ; last notification text seen while waiting for the board
+        this._btnRaw := ""      ; the last button read (the words, not the verdict)
+        ; deps "cards": (ctx) => true when it closed a fishing catch card (App:
+        ; the fishing task's leftovers); "" = none
+        this._cards := (IsObject(deps) && deps.HasOwnProp("cards")) ? deps.cards : ""
     }
 
     CanRun(state) {
@@ -122,26 +131,63 @@ class QuestsTask {
         cc := CleanupCtx(ctx)
         away := false                       ; left spawn: respawn at the end
         try {
-            if !Input.ResetToSpawn(ctx, io)
-                return 0
-            away := true
-            if !Input.PlayRoute(steps, ctx, io)
-                return 0
-            Input.Key(QuestsTask.OpenKey, 80, io)
-            opened := this._WaitOpen(ctx, area)
-            if (opened < 0) {
-                ; told to stop while the board was opening: close it if it is up
+            ; a walk that missed the board (another player's boat in the way,
+            ; a card over the screen after a stop mid-cast: live 2026-11-11)
+            ; gets one more respawn + walk before the run gives up
+            oldMode := Screen.Mode
+            closeRH := Screen.Convert(closePt, "S", "RH")
+            opened := 0
+            Loop QuestsTask.WalkTries {
+                if (A_Index > 1)
+                    env.Log(this._NoBoardReason() " - walking there once more")
+                if !Input.ResetToSpawn(ctx, io) {
+                    ; said why (a silent quests run at 1366x768, 2026-11-11)
+                    if !ctx.ShouldStop()
+                        env.Log("quests: the respawn failed (" (Input.LastResetError != "" ? Input.LastResetError : "no reason given") "): board not tried")
+                    return 0
+                }
+                away := true
+                if !Input.PlayRoute(steps, ctx, io) {
+                    if !ctx.ShouldStop()
+                        env.Log("quests: the walk to the board did not finish: board not tried")
+                    return 0
+                }
+                ; a catch card over the screen (a line left out when the macro was
+                ; stopped, live 1920x1080 2026-11-11): E did nothing under it, and
+                ; an E after it closed cast Eden's dash: close it before E
+                ; (E right after the close still did nothing, three times live: the
+                ; board's prompt comes back a moment later)
+                if (this._ClearCard(cc, Screen.Mode) && !env.Wait(QuestsTask.AfterCardMs, ctx))
+                    return 0
+                Input.Key(QuestsTask.OpenKey, 80, io)
+                ; the quest panel scales by height and hugs the right edge where
+                ; the rest stretches (16:10, live 1440x900): the board phase maps
+                ; in Screen mode "RH"; its Exit and > buttons stretch (converted)
+                Screen.Mode := "RH"
+                try
+                    opened := this._WaitOpen(ctx, area)
+                finally
+                    Screen.Mode := oldMode
+                if (opened != 0 || RegExMatch(this._notice, QuestsTask.NoQuestRe))
+                    break                           ; open, stopped, or the game says empty
+            }
+            Screen.Mode := "RH"
+            try {
+                if (opened < 0) {
+                    ; told to stop while the board was opening: close it if it is up
+                    if !CleanupCtx.Halted(ctx)
+                        this._CloseBoard(cc, closeRH, area)
+                    return 0
+                }
+                if !opened {
+                    env.Log(this._NoBoardReason())
+                    return 0
+                }
+                done := this._Pass(ctx, area)
                 if !CleanupCtx.Halted(ctx)
-                    this._CloseBoard(cc, closePt, area)
-                return 0
-            }
-            if !opened {
-                env.Log(this._NoBoardReason())
-                return 0
-            }
-            done := this._Pass(ctx, area)
-            if !CleanupCtx.Halted(ctx)
-                this._CloseBoard(cc, closePt, area)
+                    this._CloseBoard(cc, closeRH, area)
+            } finally
+                Screen.Mode := oldMode
         } finally {
             if (away && !CleanupCtx.Halted(ctx))
                 Input.ResetToSpawn(cc, io)
@@ -218,6 +264,17 @@ class QuestsTask {
         }
     }
 
+    ; deps "cards" in the screen mode the rest of the game maps in -> true
+    ; when a catch card was closed
+    _ClearCard(ctx, mode) {
+        f := this._cards
+        if !IsObject(f)
+            return false
+        try
+            return Screen.WithMode(mode, () => f.Call(ctx)) ? true : false
+        return false
+    }
+
     ; Why the board is not open: the game's "no quests" notification, or not there.
     _NoBoardReason() {
         env := this._env
@@ -240,12 +297,24 @@ class QuestsTask {
         env := this._env
         b := QuestsTask.Button
         t := (env.ocrFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h)
+        this._btnRaw := String(t)
         if RegExMatch(t, QuestsTask.ClaimRe)
             return "claim"
         if RegExMatch(t, "i)accepted|in progress|[ao]ctive|tr[ao]cking")
             return "active"
-        if RegExMatch(t, "i)accept")
+        ; 'Accep t': split by the skill list over it (live 2560x1440)
+        if RegExMatch(t, "i)a\s?c\s?c\s?e\s?p\s?t")
             return "accept"
+        ; the skill list's white names over it ('rkmot'): its green word
+        ; alone (Accept / Claim Rewards are green; 'Accevi' at 2560x1440)
+        if RegExMatch(t, QuestsTask.SkillRe) {
+            g := String((env.inkFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h, 2, "g"))
+            this._btnRaw .= " / green '" g "'"
+            if RegExMatch(g, QuestsTask.ClaimRe)
+                return "claim"
+            if RegExMatch(g, "i)acce[pv]")
+                return "accept"
+        }
         return ""
     }
 
@@ -256,6 +325,8 @@ class QuestsTask {
         dismissOn := IsObject(env.cfg) && env.cfg.Get("quests.dismissDisabled", 0)
         acceptPt := env.cal.Point("quest_accept")
         nextPt := env.cal.Point("quest_next")
+        if IsObject(nextPt)                 ; > stretches (the board's own panel maps "RH")
+            nextPt := Screen.Convert(nextPt, "S", Screen.Mode)
         done := []
         seen := Map()
         lastKey := ""
@@ -283,7 +354,19 @@ class QuestsTask {
             title := QuestsTask.Title(text)
             m := QuestMatch.Match(text, quests)
             word := IsObject(acceptPt) ? this._ButtonWord(acceptPt) : ""
-            env.Log("quests: [" seen.Count "] '" title "' -> " ((m != "") ? m.name (m.enabled ? " (ticked)" : " (not ticked)") : "no match") ", button: " ((word != "") ? word : "?"))
+            ; the game's "Potion Auto Added" toast (fixed px, bottom right)
+            ; covers the button for a few seconds below 1440p (1366x768,
+            ; 2026-11-11): read it again until it goes
+            tries := 0
+            ; An aura's skill list (Eden: Taunt, Darkmatter Barrage...) sits
+            ; there for good: no wait for that (4 s a quest, live 2560x1440)
+            while (word = "" && IsObject(acceptPt) && !RegExMatch(this._btnRaw, QuestsTask.SkillRe)
+                && tries++ < QuestsTask.ButtonTries) {
+                if !env.Wait(QuestsTask.ButtonRetryMs, ctx)
+                    break
+                word := this._ButtonWord(acceptPt)
+            }
+            env.Log("quests: [" seen.Count "] '" title "' -> " ((m != "") ? m.name (m.enabled ? " (ticked)" : " (not ticked)") : "no match") ", button: " ((word != "") ? word : "? ('" SubStr(Trim(RegExReplace(this._btnRaw, "\s+", " ")), 1, 30) "')"))
             action := ""
             if (word = "claim" || (word = "" && m != "" && QuestMatch.IsComplete(text)))
                 action := "turnin"

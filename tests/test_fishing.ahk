@@ -1132,3 +1132,134 @@ Test_Fishing_AllBlackCaptureNeverClicks() {
         FsClean(t.dir)
     }
 }
+
+; 2026-11-11 (1366x768 soak): Obby / Memory Match took over while the line
+; was out; a fish bit during the next task and its "Fishing Failed" card
+; covered the Aura Storage title and the Memory Match notification. A preempt
+; during the bite wait reels the line in (the button reads Exit) first; a
+; halt (F3) still stops without a click.
+Test_Fishing_PreemptInTheBiteWaitReelsTheLineIn() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := FsPanelIO()
+        ctx := SchedCtx()
+        FsScreen.fn := (x, y) => ((io.lineOut && io.clock > 3000) ? ctx.RequestPreempt() : 0, 0x101010)
+        logs := []
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(ctx)
+        AssertEq(r, "stopped", "the next task runs")
+        AssertEq(io.reeledIn, 1, "the line was reeled in")
+        AssertEq(io.lineOut, false, "no line left out")
+        AssertTrue(FsHasLog(logs, "line in"), "logged")
+        ; a halt: no click
+        io2 := FsPanelIO()
+        ctx2 := SchedCtx()
+        FsScreen.fn := (x, y) => ((io2.lineOut && io2.clock > 3000) ? ctx2.Stop() : 0, 0x101010)
+        FishingTask(t.cfg, SchedState(), FsDeps(io2)).CatchOnce(ctx2)
+        AssertEq(io2.reeledIn, 0, "F3: nothing clicked")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; FsPanelIO whose first Wait after the line went out asks for a preempt (the
+; next task became due during the rod click's settle wait); waits on a
+; stopped ctx return false, as the real io's do.
+class FsPreemptAfterCastIO extends FsPanelIO {
+    __New() {
+        super.__New()
+        this.fired := false
+    }
+    Wait(ms, ctx := "") {
+        if (this.lineOut && !this.fired && IsObject(ctx) && HasMethod(ctx, "RequestPreempt")) {
+            this.fired := true
+            ctx.RequestPreempt()
+            return false
+        }
+        if (IsObject(ctx) && ctx.ShouldStop())
+            return false
+        return super.Wait(ms, ctx)
+    }
+}
+
+; 2026-11-11 06:30 (1920x1080): Memory Match became due during the cast;
+; the line went out, a fish bit during Memory Match and its Fishing Failed
+; card covered the Start Memory Match notification. A preempt right after
+; the rod click reels the line in too.
+Test_Fishing_PreemptRightAfterTheCastReelsTheLineIn() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        FsScreen.fn := (x, y) => 0x101010
+        io := FsPreemptAfterCastIO()
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io)).CatchOnce(SchedCtx())
+        AssertEq(r, "stopped", "the next task runs")
+        AssertTrue(io.fired, "the preempt came after the cast")
+        AssertEq(io.reeledIn, 1, "the line was reeled in")
+        AssertEq(io.lineOut, false, "no line left out")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; 2026-11-11 (1920x1080): stopped mid-cast and started again: the line's
+; catch card came up during the quest walk and the board never opened. Start
+; reels a line that is out in; a line in (Fish) or no panel: no click.
+Test_Fishing_LineInAtStart() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := FsPanelIO()
+        io.lineOut := true
+        logs := []
+        FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).LineInAtStart(SchedCtx())
+        AssertEq(io.reeledIn, 1, "the line reeled in")
+        AssertTrue(FsHasLog(logs, "line in"), "logged")
+        io2 := FsPanelIO()
+        logs2 := []
+        FishingTask(t.cfg, SchedState(), FsDeps(io2, "", true, logs2)).LineInAtStart(SchedCtx())
+        AssertEq(io2.casts + io2.reeledIn, 0, "line in: the button never clicked")
+        AssertEq(logs2.Length, 0, "nothing logged")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; The 2560x1440 waiting panel: with the line out the button reads nothing
+; ("It's quiet... too quiet." only); the title still reads Fishing.
+class FsQuietPanelIO extends FsPanelIO {
+    Ocr(x, y, w, h, scale := 1) {
+        if (x = 1050)
+            return this.lineOut ? "" : "Fish"
+        return super.Ocr(x, y, w, h, scale)
+    }
+}
+
+; 2026-11-11 12:12 (2560x1440): a preempt in the bite wait left the line out
+; (the button never read Exit) and its card covered the obby's Aura Storage.
+; The line is out for sure there: a button that reads neither Exit nor Fish
+; is clicked once.
+Test_Fishing_PreemptInTheBiteWaitClicksAQuietButton() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := FsQuietPanelIO()
+        ctx := SchedCtx()
+        FsScreen.fn := (x, y) => ((io.lineOut && io.clock > 3000) ? ctx.RequestPreempt() : 0, 0x101010)
+        logs := []
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(ctx)
+        AssertEq(r, "stopped", "the next task runs")
+        AssertEq(io.reeledIn, 1, "the line reeled in")
+        AssertTrue(FsHasLog(logs, "clicked once"), "logged")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}

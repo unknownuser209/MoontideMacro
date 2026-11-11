@@ -16,11 +16,16 @@
 ;   1366x768:  all read.
 ;   1920x1080: all but two: Mari's name on mari_day_buttons (reads nothing at
 ;              the 2.67 stretch; 1x and 2x read "Mori") and Memory Match's
-;              "Start" (1.33 reads "Sturt"; 2x and 4x read it). Pinned below
-;              as known misses so a change shows. Whole-number stretches
-;              were measured too and missed more (5 over the sizes; see
-;              Screen.OcrScale). Real game frames at 1080p (drawn at that
-;              size, not scaled down) are still to be checked.
+;              "Start" (1.33 reads "Sturt"; 2x and 4x read it). Whole-number
+;              stretches were measured too and missed more (5 over the
+;              sizes; see Screen.OcrScale). Real game frames at 1080p (drawn
+;              at that size, not scaled down) are still to be checked.
+;   Later 2026-11-10 (a friend at 1080p: fishing, quests, the aura swap did
+;   not read): 10 of the tests\screens checks missed at 1080p with the one
+;   HALFTONE stretch, every filter / factor missing some. Ocr.OffVariants
+;   (bicubic, then other factors, kept by known words) reads all of them and
+;   the two above, at 1080p, 900p and 768p (RsScreensChecks). Pixel reads:
+;   Test_Resample_PixelReads.
 ;   Rect grabs (Pixel.Grab): the inventory title box's signature at 1080p is
 ;   within 2 of the 1440 one.
 ; ---------------------------------------------------------------------------
@@ -142,8 +147,156 @@ RsJoin(a) {
 }
 
 Test_Resample_1920x1080() {
-    ; known misses (see the header): pinned so a fix or a new miss shows
-    AssertEq(RsJoin(RsChecks(1920, 1080)), "mari_day_buttons name, mm start", "1920x1080 reads")
+    AssertEq(RsJoin(RsChecks(1920, 1080)), "", "every read at 1920x1080")
+}
+
+; The tests\screens reads that missed at 1080p before Ocr.OffVariants (a
+; friend at 1920x1080, 2026-11-10: fishing, quests, the aura swap, Memory
+; Match): the aura panel's name and Equip, the storage / UGC titles, Memory
+; Match's Start / Close, the fishing status line; and the pixel reads
+; (Memory Match pictures, aura result tiles) through a grab mapped like
+; StripGrab.Rows / Pixel.Grab (RsMapGrab), as in the game. -> failed names
+RsScreensChecks(cw, ch) {
+    f := cw / 2560
+    bad := []
+    try {
+        RsAt(cw, ch)
+        ; aura panel (the user's aura_equip point 840, 843)
+        n := ObbyTask.NameBox, b := ObbyTask.ButtonBox
+        nb := {x: 840 + n.dx, y: 843 + n.dy, w: n.w, h: n.h}
+        sailor := RsNames(RsFrame("aura_selected_sailor", f), nb)
+        dutch := RsNames(RsFrame("aura_selected_dutchman", f), nb)
+        if (ObbyTask.NameVerdict(sailor, "Sailor") != "same")
+            bad.Push("Sailor name")
+        if (ObbyTask.NameVerdict(sailor, "Sailor_Flying_Dutchman") = "same")
+            bad.Push("Sailor read as Flying Dutchman")
+        if (ObbyTask.NameVerdict(dutch, "Sailor_Flying_Dutchman") != "same")
+            bad.Push("Flying Dutchman name")
+        if (ObbyTask.NameVerdict(dutch, "Sailor") != "other")
+            bad.Push("Flying Dutchman read as Sailor")
+        if (ObbyTask.NameVerdict(RsNames(RsFrame("aura_search_sailor", f), nb), "Sailor") != "unread")
+            bad.Push("no aura selected")
+        if !RegExMatch(RsRead(RsFrame("aura_selected_sailor", f), {x: 840 + b.dx, y: 843 + b.dy, w: b.w, h: b.h}), "i)^\W*equip\W*$")
+            bad.Push("Equip")
+        ; the storage title (aura_search 1146, 490) and its tiles
+        sb := ObbyTask.StorageBox, box := {x: 1146 + sb.dx, y: 490 + sb.dy, w: sb.w, h: sb.h}
+        for name in ["aura_search_sailor", "aura_selected_sailor", "aura_selected_dutchman"] {
+            p := RsFrame(name, f)
+            if !RegExMatch(RsRead(p, box), ObbyTask.StorageRe)
+                bad.Push(name " storage title")
+        }
+        if RegExMatch(RsRead(RsFrame("world_day", f), box), ObbyTask.StorageRe)
+            bad.Push("world_day storage title")
+        ; the UGC Shop in the Inventory's frame
+        t := RsRead(RsFrame("ugc_shop_windy", f), ObbyTask.InvBox)
+        if (!RegExMatch(t, ObbyTask.ShopRe) || RegExMatch(t, ObbyTask.InvRe))
+            bad.Push("UGC title")
+        ; Memory Match: Start, Close, the pictures
+        M := MemoryMatchTask.Layout
+        t := RsRead(RsFrame("mm_prompt_ready", f), M.startBox)
+        if (!RegExMatch(t, MemoryMatchTask.StartRe) || RegExMatch(t, MemoryMatchTask.CooldownRe))
+            bad.Push("mm Start")
+        if !RegExMatch(RsRead(RsFrame("mm_prompt_cooldown", f), M.startBox), MemoryMatchTask.CooldownRe)
+            bad.Push("mm cooldown")
+        if !RegExMatch(RsRead(RsFrame("mm_end", f), M.closeBox), MemoryMatchTask.CloseRe)
+            bad.Push("mm Close")
+        if RegExMatch(RsRead(RsFrame("mm_board_start", f), M.closeBox), MemoryMatchTask.CloseRe)
+            bad.Push("mm Close mid-round")
+        ; the fishing panel's status line (under Eden's combo bar)
+        s := FishingTask.StatusRect, sr := {x: s[1], y: s[2], w: s[3], h: s[4]}
+        if !RegExMatch(RsRead(RsFrame("fish_status_ready_eden", f), sr), FishingTask.ReadyRe)
+            bad.Push("fishing Location")
+        for name in ["fish_status_waiting_eden", "fish_status_anyminute_eden"]
+            if RegExMatch(RsRead(RsFrame(name, f), sr), FishingTask.ReadyRe)
+                bad.Push(name " read as ready")
+    } finally
+        Screen.Reset()
+    return bad
+}
+
+; The pixel reads of tests\screens through RsMapGrab: Memory Match's tile
+; states and pairs, the aura result tiles (shown / empty). -> failed names
+RsPixelChecks(cw, ch) {
+    f := cw / 2560
+    bad := []
+    try {
+        RsAt(cw, ch)
+        for name in ["aura_search_sailor", "aura_selected_sailor", "aura_selected_dutchman"] {
+            g := RsMapGrab(MatchFileGrab(RsFrame(name, f)))
+            Loop 16 {
+                r := ObbyTask.TileRect({x: 1056, y: 548, w: 78, h: 66}, A_Index)
+                if (ObbyTask.TileShown(ScrTilePixels(g, r), r.w, r.h) != (A_Index <= 8))
+                    bad.Push(name " tile " A_Index)
+            }
+        }
+        v := MatchVision(RsMapGrab(MatchFileGrab(RsFrame("mm_board_start", f))))
+        Loop 20
+            if (v.State(A_Index) != "hidden")
+                bad.Push("mm tile " A_Index " face down")
+        v := MatchVision(RsMapGrab(MatchFileGrab(RsFrame("mm_end", f))))
+        found := ""
+        Loop 20 {
+            i := A_Index
+            Loop 20
+                if (A_Index > i && v.State(i) = "open" && v.State(A_Index) = "open" && MatchVision.Same(v.Sig(i), v.Sig(A_Index)))
+                    found .= i "-" A_Index " "
+        }
+        if (found != "1-19 2-12 3-11 4-17 5-16 6-18 7-10 8-14 13-20 ")
+            bad.Push("mm pairs")
+    } finally
+        Screen.Reset()
+    return bad
+}
+
+; the aura panel at every scale the swap reads it (ObbyTask._ReadName)
+RsNames(p, r) {
+    out := []
+    for s in ObbyTask.NameScales
+        out.Push(RsRead(p, r, s))
+    return out
+}
+
+; grab(x1, x2, ys, stride) in DESIGN px over a scaled frame: each sample at
+; its Screen-mapped pixel (nearest), as StripGrab.Rows does on the screen
+RsMapGrab(g) => (x1, x2, ys, stride := 1) => RsMapRows(g, x1, x2, ys, stride)
+
+RsMapRows(g, x1, x2, ys, stride) {
+    xs := []
+    x := x1
+    while (x <= x2)
+        xs.Push(Screen.X(x)), x += stride
+    out := []
+    for y in ys {
+        sy := Screen.Y(y), row := []
+        for sx in xs {
+            DllCall("gdiplus\GdipBitmapGetPixel", "Ptr", g._bmp, "Int", sx, "Int", sy, "UInt*", &c := 0)
+            row.Push(c & 0xFFFFFF)
+        }
+        out.Push(row)
+    }
+    return out
+}
+
+Test_Resample_ScreensAt1920x1080() {
+    AssertEq(RsJoin(RsScreensChecks(1920, 1080)), "", "every screen read at 1920x1080")
+}
+
+Test_Resample_ScreensAt1600x900() {
+    AssertEq(RsJoin(RsScreensChecks(1600, 900)), "", "every screen read at 1600x900")
+}
+
+Test_Resample_ScreensAt1366x768() {
+    AssertEq(RsJoin(RsScreensChecks(1366, 768)), "", "every screen read at 1366x768")
+}
+
+; Pixel reads below 1440p: Memory Match's pairs (the amount's column profile
+; is too fine for a nearest-pixel grab) and, at 900p / 768p, the first aura
+; tiles of one frame. Not OCR: pinned as known misses so a fix or a new miss
+; shows. Tile states read at every size.
+Test_Resample_PixelReads() {
+    AssertEq(RsJoin(RsPixelChecks(1920, 1080)), "mm pairs", "1920x1080 pixel reads")
+    AssertEq(RsJoin(RsPixelChecks(1600, 900)), "aura_search_sailor tile 1, aura_search_sailor tile 2, aura_search_sailor tile 3, aura_search_sailor tile 4, aura_search_sailor tile 5, mm pairs", "1600x900 pixel reads")
+    AssertEq(RsJoin(RsPixelChecks(1366, 768)), "aura_search_sailor tile 1, aura_search_sailor tile 2, aura_search_sailor tile 3, aura_search_sailor tile 4, aura_search_sailor tile 5, mm pairs", "1366x768 pixel reads")
 }
 
 Test_Resample_3840x2160() {

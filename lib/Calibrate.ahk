@@ -36,7 +36,7 @@
 ;                           for the potion list; reloads from disk.
 ;
 ; Fisher buy steps: one per potion in the config key  [Craft] potions  (comma
-; list of full in-game names, default "Lucky Potion,Speed Potion"; blank ->
+; list of full in-game names, default "Lucky Potion"; blank ->
 ; default). Every entry must match a name in data\potions.json (the single
 ; source of potion identity; match is case/space-insensitive and the
 ; canonical spelling from potions.json is used). Entries not found there are
@@ -67,7 +67,7 @@
 ; ---------------------------------------------------------------------------
 
 class Calibrate {
-    static DefaultPotions := "Lucky Potion,Speed Potion"
+    static DefaultPotions := "Lucky Potion"
     ; F4: F9 opens Roblox's developer console (it closed the game window
     ; being calibrated), F7 is the route recorder, F6 / F8 are left for Medal.
     static DefaultCaptureKey := "F4"
@@ -715,7 +715,14 @@ class Calibrate {
         }
         if !IsObject(m)
             m := {x: 0, y: 0, w: A_ScreenWidth, h: A_ScreenHeight}
-        return {w: m.w, h: m.h, scale: Screen.ScaleAt(m.x + 1, m.y + 1)}
+        sc := Screen.ScaleAt(m.x + 1, m.y + 1)
+        if Roblox.AllowWindowed                 ; testing: the window's client size is "the display"
+            try {
+                WinGetClientPos(, , &cw, &ch, "ahk_id " Roblox.Hwnd())
+                if (cw > 0 && ch > 0)
+                    m := {x: m.x, y: m.y, w: cw, h: ch}
+            }
+        return {w: m.w, h: m.h, scale: sc}
     }
 
     ; Path of the preset matching this system's display, or "".

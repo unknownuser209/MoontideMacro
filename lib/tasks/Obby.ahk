@@ -82,6 +82,20 @@
 ;   Already in the wanted state (the button reads the other word) -> no
 ;   click on it. Every check failing -> nothing clicked on the button.
 ;
+; EQUIP FIRST (settings.ini [Auras] equipFirst=1, default 0; for resolutions
+; where the name / button reads fail, 1920x1080 and below): no read of the
+; tiles' names, the name panel or the button (_SetAuraFirst). Whether the
+; aura is on comes from the last swap seen, else the Roblox log (_Aura): on
+; already (or off already, to unequip) -> the storage is not opened (a
+; click on Equip would toggle it the wrong way). Else aura_open -> per try
+; the Regular / Special tab, the search typed -> result tile 1 clicked when
+; its pixels show one (an empty first slot: the other tab next try) ->
+; Equip clicked at aura_equip (its calibrated point, never anywhere else)
+; -> aura_close. Kept: the storage title before every click (_Refused),
+; the purchase prompt guard, the Daily Rewards / Collections checks, the
+; checked close. The search must list only the wanted aura first (the
+; user's setup: "Sailor" lists "Sailor: Admiral" in front when owned).
+;
 ; NO BLIND CLICKS (live 2026-11-02 09:20: "Eden" searched on the Regular
 ; tab left the grid empty; a click on the empty slot went through the
 ; storage into the world, hit a Donation board and opened Roblox's "Buy
@@ -208,6 +222,13 @@ class ObbyTask {
                 msg := "could not equip Sailor (" sw.why "): obby skipped"
                 env.Log("obby: " msg)
                 env.Report("errors", "Obby failed", msg, 0xE74C3C)
+                ; the search's log pick can leave another aura on (Sailor:
+                ; Admiral, live 2560x1440 11:10): the one from before back
+                now := this._LogAura()
+                if (sw.prev != "" && now != "?" && !ObbyTask.SameAura(now, sw.prev)) {
+                    env.Log("obby: " now " went on during the search: " sw.prev " put back")
+                    this.PutBack(ctx, {ok: true, had: false, prev: sw.prev})
+                }
             }
             return 0
         }
@@ -378,6 +399,11 @@ class ObbyTask {
             return (StrLen(f) < StrLen(want) && SubStr(want, 1, StrLen(f)) == f) ? "unread" : "other"
         if ((f == want) || (StrLen(want) >= 8 && GameLists.Distance(f, want) <= 1))
             return "same"
+        ; small UI (16:10 at 1440x900, live 2026-11-11): plain Sailor read
+        ; 'Sanor'. Two letters off a 5+ letter name counts, unless the read
+        ; is itself a real aura name (the search already narrowed the tiles)
+        if (StrLen(want) >= 5 && Abs(StrLen(f) - StrLen(want)) <= 2 && GameLists.Distance(f, want) <= 2 && !ObbyTask._IsKnownOther(f, want))
+            return "same"
         v := ObbyTask._Extra(f, want) > Max(1, StrLen(f) // 5) ? "other" : "unread"
         ; a read that is no real aura name is noise (logo fonts: Luminosity
         ; read 'LVIßTOSITY' / 'xvnmrosrrr', live 2026-11-10), not "another
@@ -399,6 +425,21 @@ class ObbyTask {
             return true
         for k in ObbyTask.Known
             if (Abs(StrLen(k) - StrLen(f)) <= 1 && GameLists.Distance(f, k) <= 1)
+                return true
+        return false
+    }
+
+    ; f is a known aura name other than want, or one letter off one that the
+    ; search for want can list (its name holds want: Sailor: Admiral for
+    ; Sailor). 'Sanor' is one letter off Solar too, but a Sailor search never
+    ; lists Solar (live 1366x768, 2026-11-11)
+    static _IsKnownOther(f, want) {
+        if !(IsObject(ObbyTask.Known) && ObbyTask.Known.Count)
+            return false
+        if (f != want && ObbyTask.Known.Has(f))
+            return true
+        for k in ObbyTask.Known
+            if (k != want && InStr(k, want) && Abs(StrLen(k) - StrLen(f)) <= 1 && GameLists.Distance(f, k) <= 1)
                 return true
         return false
     }
@@ -447,9 +488,16 @@ class ObbyTask {
     ; ends with a colon (the name goes on)}.
     static _NameParts(text) {
         s := ""
-        for line in StrSplit(String(text), "`n", "`r")
+        for line in StrSplit(String(text), "`n", "`r") {
+            ; the rarity on the name's line, misread without digits: 'Sailor
+            ; npoo,ooo' / 'Sailor 12poopoo' for "1 in 100,000" (live 1600x900,
+            ; 2560x1440): cut at the first word with a comma or a digit
+            line := RegExReplace(RegExReplace(line, "(^|\s+)\S*[,\d]\S*.*$"), "(\s+\S{0,3})?\s+in(\s.*)?$")
+            ; ...and with no digit or comma at all: "npoopoo" (live 2560x1440)
+            line := RegExReplace(line, "i)(^|\s+)[nu1il2]{0,2}[po0][po0.]{3,}\s*$")
             if !RegExMatch(line, "\d|^\W*\S{0,2}\s+in(\s|$)")
                 s .= line " "
+        }
         return {f: GameLists.Fold(s), cont: RegExMatch(s, ":[^A-Za-z]*$") > 0}
     }
 
@@ -491,6 +539,15 @@ class ObbyTask {
     static TileRect(first, k) {
         s := ObbyTask.TileStep, cols := ObbyTask.TileCols
         return {x: first.x + Mod(k - 1, cols) * s.dx, y: first.y + ((k - 1) // cols) * s.dy, w: first.w, h: first.h}
+    }
+
+    ; c's calibrated spots named (the ones it has), for ChatGuard.ClearFor.
+    static _Spots(c, names*) {
+        out := []
+        for n in names
+            if (IsObject(c) && c.HasOwnProp(n) && IsObject(c.%n%))
+                out.Push(c.%n%)
+        return out
     }
 
     ; -> {open, search, tile, equip, close} or "" (missing steps logged once).
@@ -580,6 +637,10 @@ class ObbyTask {
                 env.Log("obby: " aura " is result " k " on the " tabName " tab (its name read)")
                 return k
             }
+            ; the name in the first read but no match: every scale's read, to
+            ; see which one said no (live 2560x1440: 'Sailor 12poopoo')
+            if InStr(GameLists.Fold(text), GameLists.Fold(aura))
+                env.Log("obby: tile " k " reads " rd.v ": '" SubStr(RegExReplace(rd.all, "\s+", " "), 1, 120) "'")
             ; logoOk: some auras' names show as a logo there that OCR cannot
             ; read (Eden, live 2026-10-31). Then the first result is taken
             ; when its panel reads nothing but its button reads Equip /
@@ -608,7 +669,23 @@ class ObbyTask {
     ; (the chat overlaps its title, so a read can miss it), then one retry.
     ; A click refused by the checks (no blind clicks, header) stops it too:
     ; 0, this._why says why.
+    ; The Aura Storage scales evenly and stays centred where the rest of the
+    ; UI stretches (16:10, live 1440x900): the whole swap maps in Screen
+    ; mode "C" (the same pixels at 16:9).
     _SetAura(c, aura, equip, ctx, &was := "") {
+        ; an early return (stopped while closing a Collections screen left
+        ; open) left `was` unset and PutOnSailor threw (live 2026-11-10 23:31
+        ; and 11-11 03:26, "local variable has not been assigned", Obby:316)
+        was := ""
+        old := Screen.Mode
+        Screen.Mode := "C"
+        try
+            return this._SetAuraM(c, aura, equip, ctx, &was)
+        finally
+            Screen.Mode := old
+    }
+
+    _SetAuraM(c, aura, equip, ctx, &was := "") {
         if (this._Uncover(ctx) < 0)
             return -1
         env := this._env
@@ -759,7 +836,7 @@ class ObbyTask {
     ; key at spawn; the shop came up over the fight, the orb behind it. The
     ; same frame as the Inventory: its title in InvBox, its X at InvX. Only
     ; the X is ever clicked, never Purchase (Robux).
-    static ShopRe := "i)(ugc|l[il1]gg?)\s*sh[o0][opq]"   ; reads "UGC Shoo" in InvBox
+    static ShopRe := "i)(ugc|ugg|[il1|\x22'-]{1,3}g[cg]|l[il1]gg?)\s*sh[o0][opqn]"   ; reads "UGC Shoo" in InvBox; "UGG Shon", "IIGC Shon", "I-IGC Shoo" below 1440p
     ShopUp() => this._Reads(ObbyTask.InvBox, ObbyTask.ShopRe)
 
     ; Closes it by its X and checks that it went. -> 1 closed | 0 not up |
@@ -932,6 +1009,10 @@ class ObbyTask {
 
     _SetAuraOnce(c, aura, equip, ctx, &was) {
         this._opened := false, this._closed := false, this._abort := false
+        ; below 1440p the chat lies over the storage's button (and more):
+        ; hidden first, shown again after the task (ChatGuard, App._Tidy)
+        if (ChatGuard.ClearFor(this._env.io, ctx, ObbyTask._Spots(c, "aura_open", "aura_search", "aura_equip", "aura_close", "aura_tile_rect")*) < 0)
+            return -1
         try {
             r := this._SetAuraIn(c, aura, equip, ctx, &was)
             return this._abort ? 0 : r
@@ -959,6 +1040,7 @@ class ObbyTask {
         env := this._env
         io := env.io
         tries := 0, waited := 0, toggled := false
+        ChatGuard.ClearFor(io, ctx, ObbyTask._Spots(c, "aura_open", "aura_close")*)
         Loop ObbyTask.CloseTries + 8 + ObbyTask.TitleWaitMs // ObbyTask.TitlePollMs {
             if env.BuyPrompt("obby")
                 continue
@@ -1065,11 +1147,22 @@ class ObbyTask {
         return false
     }
 
+    ; settings.ini [Auras] equipFirst: swaps equip the first search result
+    ; without reading names or the button (EQUIP FIRST above).
+    static EquipFirst(cfg) {
+        v := 0
+        if IsObject(cfg)
+            try v := cfg.Get("Auras.equipFirst", 0)
+        return v ? true : false
+    }
+
     _SetAuraIn(c, aura, equip, ctx, &was) {
         env := this._env
         io := env.io
         this._why := ""
         was := ""
+        if ObbyTask.EquipFirst(env.cfg)
+            return this._SetAuraFirst(c, aura, equip, ctx, &was)
         ; left open (a halted run): no click on its button (it would close it);
         ; its panel up with the title hidden (a banner) counts as open
         if !this._Open(c) && !this._Panel(c) {
@@ -1188,6 +1281,112 @@ class ObbyTask {
         ; the opposite of what the click did (2026-10-27 review)
         this._why := "the button never turned to " (equip ? "Unequip" : "Equip") " after the click"
         return 0
+    }
+
+    ; [Auras] equipFirst: the first search result equipped (or unequipped),
+    ; no name or button read (EQUIP FIRST above). -> as _SetAuraIn; was =
+    ; "on" | "off" from the log / the last swap ("" unknown and not clicked).
+    _SetAuraFirst(c, aura, equip, ctx, &was) {
+        env := this._env
+        io := env.io
+        cur := this._Aura()
+        on := (cur.known && ObbyTask.SameAura(cur.name, aura)) ? true : false
+        if (cur.known && on = (equip ? true : false)) {
+            ; already as wanted: a click on Equip would toggle it back
+            was := on ? "on" : "off"
+            return 1
+        }
+        ; left open (a halted run): no click on its button (it would close it)
+        if !this._Open(c) && !this._Panel(c) {
+            if !this._Click(c.aura_open, ctx)
+                return -1
+            if !env.Wait(ObbyTask.MenuMs, ctx)
+                return -1
+        }
+        this._opened := true
+        if !this._OpenWait(c) {
+            this._empty := true
+            this._why := "the Aura Storage window did not open (its title did not read)"
+            return 0
+        }
+        text := ObbyTask.SearchText(aura)
+        tile := "", tabName := "", done := false
+        ; Regular, Special, Regular, ... (Eden is under Special). When
+        ; equipping, the Roblox log says which aura went on: a first result
+        ; that is another aura (live 2026-11-11: "Eden" listed something on
+        ; the Regular tab) sends the search on to the other tab; no log line
+        ; at all keeps the click (nothing better to go by).
+        Loop ObbyTask.SearchTries {
+            if (ctx.ShouldStop() || done)
+                break
+            this._tab := Mod(A_Index - 1, ObbyTask.Tabs.Length) + 1
+            tab := ObbyTask.Tabs[this._tab]
+            tabName := (this._tab = 2 ? "Special" : "Regular")
+            if !this._Click({x: c.aura_search.x + tab.dx, y: c.aura_search.y + tab.dy}, ctx, c)
+                return -1
+            if !env.Wait(ObbyTask.SelectMs, ctx)
+                return -1
+            if !this._Click(c.aura_search, ctx, c)
+                return -1
+            Input.ClearText(io)
+            Input.TypeText(text, io)
+            if !env.Wait(ObbyTask.MenuMs, ctx)
+                return -1
+            r := ObbyTask.TileRect(c.aura_tile_rect, 1)
+            if !this._TileHere(r) {                     ; never a click on an empty slot
+                env.Log("obby: no result for '" text "' on the " tabName " tab")
+                continue
+            }
+            tile := r
+            if !this._Click({x: tile.x + tile.w // 2, y: tile.y + tile.h // 2}, ctx, c)
+                return -1
+            if !env.Wait(ObbyTask.PickMs, ctx)
+                return -1
+            ; Equip at its calibrated point only, the mouse resting on it first
+            io.MoveTo(c.aura_equip.x, c.aura_equip.y)
+            if !env.Wait(ObbyTask.HoverMs, ctx)
+                return -1
+            if this._Refused(c)
+                return -1
+            Auras.Quiet(Auras.QuietMs)
+            io.ClickHere()
+            was := equip ? "off" : "on"
+            if !equip {
+                done := true
+                env.Log("obby: equip first: the first result for '" text "' on the " tabName " tab unequipped as " aura " (names not read)")
+                break
+            }
+            got := "", waited := 0
+            Loop {
+                if !env.Wait(250, ctx)
+                    return -1
+                waited += 250
+                got := this._LogAura()
+                if (got != "?" || waited >= ObbyTask.LogPickMs)
+                    break
+            }
+            ; the searched text in its name counts (the option takes what the
+            ; search lists first: "Sailor: Admiral" for Sailor), anything else not
+            if (got = "?" || ObbyTask.SameAura(got, aura) || InStr(GameLists.Fold(got), GameLists.Fold(text))) {
+                done := true
+                env.Log("obby: equip first: the first result for '" text "' on the " tabName " tab equipped as " aura (got = "?" ? " (names not read, no log line)" : " (the log agrees)"))
+                break
+            }
+            env.Log("obby: equip first: the first result on the " tabName " tab is " got ", not " aura ": trying the other tab")
+        }
+        if (!done && !IsObject(tile)) {
+            this._empty := true
+            this._why := "no '" aura "' in the aura storage search (no result tile showed)"
+        } else if !done
+            this._why := "the first results were other auras (the log named them)"
+        this._closed := this._ShutStorage(c, ctx)
+        if !env.Wait(ObbyTask.SelectMs, ctx)
+            return -1
+        env.BuyPrompt("obby")                   ; after the last click: a prompt is closed and reported
+        if !done
+            return 0
+        this._set := {name: equip ? aura : "", at: env.Now()}
+        return 1
     }
 
     ; The button around aura_equip -> "on" (Unequip: the selected aura is

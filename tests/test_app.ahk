@@ -771,3 +771,30 @@ Test_App_StatusFeedsDashStats() {
     AssertTrue(IsObject(ui.status), "SetStatus still called")
     AssertEq(t.ui.status.state, "Stopped", "a ui without SetStats still gets SetStatus")
 }
+
+; 1920x1080 (and smaller): the open chat covers the left menu, so Mari /
+; Jester can't be done - warned once in the log while Merchants is on
+; the old "Mari and Jester can't be done" warning is gone: ChatGuard moves
+; the chat out of the way below 1440p (2026-11-11)
+Test_App_NoChatWarningBelow1440() {
+    for on in [1, 0] {
+        t := AppTestMake(Map("cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0, "merchant.enabled", on)))
+        t.app.roblox := {Describe: (this) => "Roblox client 1920x1080", Verified: (this) => false, SizeText: (this) => "1920x1080 (x0.75)"}
+        try {
+            Screen.SetClient(0, 0, 1920, 1080)
+            t.app._DisplayCheck()
+            t.app._DisplayCheck()
+        } finally
+            Screen.Reset()
+        n := 0
+        for l in t.ui.logs
+            n += InStr(l, "Mari and Jester can't be done") ? 1 : 0
+        AssertEq(n, 0, "merchant.enabled=" on ": no warning")
+        AssertTrue(!InStr(t.app._display, "Mari / Jester"), "no status note")
+    }
+    t := AppTestMake(Map("cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0, "merchant.enabled", 1)))
+    t.app.roblox := {Describe: (this) => "Roblox client 2560x1440", Verified: (this) => true, SizeText: (this) => "2560x1440"}
+    t.app._DisplayCheck()
+    for l in t.ui.logs
+        AssertTrue(!InStr(l, "Mari and Jester"), "no warning at 2560x1440")
+}

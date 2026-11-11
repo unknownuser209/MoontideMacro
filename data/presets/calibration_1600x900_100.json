@@ -1,0 +1,449 @@
+{
+  "stepList": [
+    {
+      "id": "notify_rect",
+      "kind": "rect",
+      "prompt": "Wait for an in-game notification (let auto craft make something, or press E at an EMPTY quest board). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the area where notification text shows (make it a bit bigger than one notification)."
+    },
+    {
+      "id": "fisher_open_shop",
+      "kind": "point",
+      "prompt": "Talk to Captain Flarg so his two buttons show. Hover the Open Shop button (not Sell Fish)."
+    },
+    {
+      "id": "fisher_item_lucky_potion",
+      "kind": "point",
+      "prompt": "Fisher shop open (Open Shop). Hover the Lucky Potion tile in the shop list (the tile that picks it)."
+    },
+    {
+      "id": "fisher_buy_button",
+      "kind": "point",
+      "prompt": "Fisher shop open, a potion picked. Hover the Buy button (the same spot for every potion)."
+    },
+    {
+      "id": "fisher_picked_name",
+      "kind": "rect",
+      "prompt": "Fisher shop open, a potion picked. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the picked item's big NAME in the left panel (make it wide enough for the longest name, e.g. 'Fortune Potion III'). The macro reads it so it never buys the wrong item."
+    },
+    {
+      "id": "fisher_qty",
+      "kind": "point",
+      "prompt": "Stand at the Fisher shop with a potion selected. Hover the quantity box."
+    },
+    {
+      "id": "fisher_confirm",
+      "kind": "point",
+      "prompt": "Stand at the Fisher shop. Hover the final Confirm / Purchase button."
+    },
+    {
+      "id": "fisher_purchase_close",
+      "kind": "point",
+      "prompt": "Fisher shop, the purchase window still open after buying. Hover the button that closes the purchase window (its X)."
+    },
+    {
+      "id": "fisher_shop_close",
+      "kind": "point",
+      "prompt": "Fisher shop open (purchase window closed). Hover the X that closes the whole shop."
+    },
+    {
+      "id": "fisher_leave",
+      "kind": "point",
+      "prompt": "Talk to Captain Flarg so his three buttons show (Open Shop, Sell Fish, Leave). Hover the Leave button."
+    },
+    {
+      "id": "cauldron_gui",
+      "kind": "rect",
+      "prompt": "Open Stella's cauldron (Stella's Workshop). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of its title text 'Stella's Workshop'."
+    },
+    {
+      "id": "cauldron_search",
+      "kind": "point",
+      "prompt": "Stella's cauldron open. Hover the recipe search box."
+    },
+    {
+      "id": "cauldron_result",
+      "kind": "rect",
+      "prompt": "Type a recipe name in the search box. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result card (its name and the line under it)."
+    },
+    {
+      "id": "cauldron_result_2",
+      "kind": "rect",
+      "prompt": "Type Godly Potion in the search box (three results). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the SECOND result card, the same parts as the first. Only needed for the Godly Potions."
+    },
+    {
+      "id": "cauldron_open_recipe",
+      "kind": "point",
+      "prompt": "Recipe selected. Hover the Open Recipe button."
+    },
+    {
+      "id": "cauldron_add_all",
+      "kind": "point",
+      "prompt": "Recipe open. Hover the Add All button."
+    },
+    {
+      "id": "cauldron_close",
+      "kind": "point",
+      "prompt": "Hover the button that closes the cauldron window."
+    },
+    {
+      "id": "stella_dialog",
+      "kind": "rect",
+      "prompt": "Walk into Stella so her dialog shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of her NAME ('Stella') at the top of the dialog."
+    },
+    {
+      "id": "inv_open",
+      "kind": "point",
+      "prompt": "Stand anywhere with the inventory closed. Hover the inventory button."
+    },
+    {
+      "id": "inv_items_tab",
+      "kind": "point",
+      "prompt": "Open the inventory (it opens on the Gears tab). Hover the Items tab button (do not press it)."
+    },
+    {
+      "id": "inv_search",
+      "kind": "point",
+      "prompt": "Inventory open on the Items tab. Hover the item search box."
+    },
+    {
+      "id": "inv_tile1_rect",
+      "kind": "rect",
+      "prompt": "Search 'Potion' so a full row of results shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result tile's NAME text (both lines of it)."
+    },
+    {
+      "id": "inv_tile2_rect",
+      "kind": "rect",
+      "prompt": "Same results. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the SECOND result tile's NAME text, the same way as the first (this sets the tile spacing)."
+    },
+    {
+      "id": "inv_count_rect",
+      "kind": "rect",
+      "prompt": "Same results. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result tile's count text (e.g. x12)."
+    },
+    {
+      "id": "inv_use",
+      "kind": "point",
+      "prompt": "Select a potion tile yourself. Hover the Use button (do not press it)."
+    },
+    {
+      "id": "inv_desc_rect",
+      "kind": "rect",
+      "prompt": "Potion selected. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the description text under Use (the first two lines, e.g. 'Gives you ... of [Lucky]')."
+    },
+    {
+      "id": "inv_amount_box",
+      "kind": "rect",
+      "prompt": "Potion selected. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the INSIDE of the amount box next to Use (where the number goes)."
+    },
+    {
+      "id": "quest_board_rect",
+      "kind": "rect",
+      "prompt": "Stand at the quest board with it open. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the quest text area."
+    },
+    {
+      "id": "quest_accept",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the Accept button (Claim Rewards shows in the same spot)."
+    },
+    {
+      "id": "quest_dismiss",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the Dismiss / Abandon button."
+    },
+    {
+      "id": "quest_close",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the button that exits / closes the board."
+    },
+    {
+      "id": "quest_next",
+      "kind": "point",
+      "prompt": "Quest board open. Hover the > arrow to the right of the board (next quest)."
+    },
+    {
+      "id": "aura_open",
+      "kind": "point",
+      "prompt": "Stand anywhere with every menu closed. Hover the Aura Storage button (the one that opens your auras)."
+    },
+    {
+      "id": "aura_search",
+      "kind": "point",
+      "prompt": "Aura Storage open. Hover its search box."
+    },
+    {
+      "id": "aura_tile_rect",
+      "kind": "rect",
+      "prompt": "Aura Storage open, type Sailor in the search box. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the FIRST result's NAME text."
+    },
+    {
+      "id": "aura_equip",
+      "kind": "point",
+      "prompt": "Aura Storage open, select the Sailor tile yourself. Hover the Equip button (do NOT press it; never a Delete button). The macro reads Equip / Unequip on it before it ever presses it."
+    },
+    {
+      "id": "aura_close",
+      "kind": "point",
+      "prompt": "Aura Storage open. Hover the X that closes it."
+    },
+    {
+      "id": "buff_expand",
+      "kind": "point",
+      "prompt": "Hover the arrow / button that expands your buff list so every buff shows (the same button collapses it)."
+    },
+    {
+      "id": "obby_blessing",
+      "kind": "point",
+      "prompt": "Touch the obby's star so the Basic Blessing shows, expand the buff list, then hover the Basic Blessing icon (the macro checks its colour after each obby run)."
+    },
+    {
+      "id": "selector_list_rect",
+      "kind": "rect",
+      "prompt": "Use the Biome Selector so its list of Drives shows. Hover the TOP-LEFT corner of the first Drive (Radiant Star), then the BOTTOM-RIGHT corner of the last one you can see. The macro reads the list, so the slow bobbing does not matter."
+    },
+    {
+      "id": "selector_confirm",
+      "kind": "point",
+      "prompt": "Biome Selector open, a Drive selected. Hover the button that confirms / uses it (do not press it)."
+    },
+    {
+      "id": "chat_rect",
+      "kind": "rect",
+      "prompt": "Open the chat. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the chat message area."
+    }
+  ],
+  "steps": {
+    "aura_close": {
+      "color": "0xFFFFFF",
+      "x": 1886,
+      "y": 393
+    },
+    "aura_equip": {
+      "color": "0xB8FFDD",
+      "x": 840,
+      "y": 843
+    },
+    "aura_open": {
+      "color": "0xFFFFFF",
+      "x": 35,
+      "y": 534
+    },
+    "aura_search": {
+      "color": "0x656165",
+      "x": 1146,
+      "y": 490
+    },
+    "aura_tile_rect": {
+      "h": 70,
+      "w": 77,
+      "x": 1054,
+      "y": 544
+    },
+    "buff_expand": {
+      "color": "0xFFFFFF",
+      "x": 1997,
+      "y": 1400
+    },
+    "cauldron_add_all": {
+      "color": "0x100E03",
+      "x": 1104,
+      "y": 911
+    },
+    "cauldron_close": {
+      "color": "0x21231E",
+      "x": 2468,
+      "y": 232
+    },
+    "cauldron_gui": {
+      "h": 35,
+      "w": 586,
+      "x": 1861,
+      "y": 222
+    },
+    "cauldron_open_recipe": {
+      "color": "0x000000",
+      "x": 311,
+      "y": 1107
+    },
+    "cauldron_result": {
+      "h": 138,
+      "w": 572,
+      "x": 1890,
+      "y": 402
+    },
+    "cauldron_result_2": {
+      "h": 141,
+      "w": 576,
+      "x": 1885,
+      "y": 580
+    },
+    "cauldron_search": {
+      "color": "0x282820",
+      "x": 2140,
+      "y": 359
+    },
+    "chat_rect": {
+      "h": 349,
+      "w": 741,
+      "x": 21,
+      "y": 163
+    },
+    "fisher_buy_button": {
+      "color": "0x17372B",
+      "x": 783,
+      "y": 1033
+    },
+    "fisher_confirm": {
+      "color": "0x00FFFF",
+      "x": 1499,
+      "y": 821
+    },
+    "fisher_item_lucky_potion": {
+      "color": "0x151311",
+      "x": 1116,
+      "y": 587
+    },
+    "fisher_leave": {
+      "color": "0x57915F",
+      "x": 1676,
+      "y": 1260
+    },
+    "fisher_open_shop": {
+      "color": "0x0D370B",
+      "x": 865,
+      "y": 1257
+    },
+    "fisher_picked_name": {
+      "h": 54,
+      "w": 391,
+      "x": 589,
+      "y": 833
+    },
+    "fisher_purchase_close": {
+      "color": "0xFFFFFF",
+      "x": 1679,
+      "y": 520
+    },
+    "fisher_qty": {
+      "color": "0x000000",
+      "x": 1487,
+      "y": 675
+    },
+    "fisher_shop_close": {
+      "color": "0xFFFFFF",
+      "x": 1947,
+      "y": 358
+    },
+    "inv_amount_box": {
+      "h": 21,
+      "w": 128,
+      "x": 688,
+      "y": 760
+    },
+    "inv_amount_empty": {
+      "h": 27,
+      "sig": "s1:16x6:170:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "w": 134,
+      "x": 688,
+      "y": 756
+    },
+    "inv_count_rect": {
+      "h": 23,
+      "w": 114,
+      "x": 1075,
+      "y": 661
+    },
+    "inv_desc_rect": {
+      "h": 243,
+      "w": 367,
+      "x": 648,
+      "y": 812
+    },
+    "inv_items_tab": {
+      "color": "0xFFFFFF",
+      "x": 1684,
+      "y": 445
+    },
+    "inv_open": {
+      "color": "0xFFFFFF",
+      "x": 45,
+      "y": 674
+    },
+    "inv_search": {
+      "color": "0x000B10",
+      "x": 1434,
+      "y": 487
+    },
+    "inv_tile1_rect": {
+      "h": 112,
+      "w": 110,
+      "x": 1076,
+      "y": 578
+    },
+    "inv_tile2_rect": {
+      "h": 111,
+      "w": 114,
+      "x": 1209,
+      "y": 578
+    },
+    "inv_use": {
+      "color": "0x49423F",
+      "x": 913,
+      "y": 770
+    },
+    "notify_rect": {
+      "h": 136,
+      "w": 497,
+      "x": 2041,
+      "y": 1080
+    },
+    "obby_blessing": {
+      "color": "0xD4FFFF",
+      "x": 1696,
+      "y": 1402
+    },
+    "quest_accept": {
+      "color": "0x1F1B17",
+      "x": 2169,
+      "y": 1081
+    },
+    "quest_board_rect": {
+      "h": 326,
+      "w": 458,
+      "x": 2024,
+      "y": 489
+    },
+    "quest_close": {
+      "color": "0x553F2A",
+      "x": 1278,
+      "y": 1263
+    },
+    "quest_dismiss": {
+      "color": "0x241F19",
+      "x": 2371,
+      "y": 1086
+    },
+    "quest_next": {
+      "color": "0x1A1A1A",
+      "x": 1815,
+      "y": 721
+    },
+    "selector_confirm": {
+      "color": "0x99DBEA",
+      "x": 1034,
+      "y": 802
+    },
+    "selector_list_rect": {
+      "h": 416,
+      "w": 672,
+      "x": 822,
+      "y": 515
+    },
+    "stella_dialog": {
+      "h": 38,
+      "w": 139,
+      "x": 979,
+      "y": 927
+    }
+  },
+  "version": 1
+}

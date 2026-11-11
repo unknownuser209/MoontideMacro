@@ -309,7 +309,17 @@ class BiomeItemsTask {
     }
 
     ; -> 1 used, 0 refused / not found (inventory closed), -1 stopped.
+    ; the inventory scales evenly, centred (16:10): mode "C" around it
     _Use(it, c, ctx) {
+        old := Screen.Mode
+        Screen.Mode := "C"
+        try
+            return this._UseM(it, c, ctx)
+        finally
+            Screen.Mode := old
+    }
+
+    _UseM(it, c, ctx) {
         env := this._env
         io := env.io
         ; the Daily Rewards popup covers it too (live 2026-11-03): closed

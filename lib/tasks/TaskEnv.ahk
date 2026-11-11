@@ -51,6 +51,12 @@ class TaskEnv {
         this.cal := TaskEnv.Dep(deps, "cal", "")
         if !IsObject(this.cal)
             this.cal := Calibrate
+        ; ink reads (Ocr.ReadInk): a faked ocr (tests) gets a faked ink read
+        ; too ("" unless deps "ink"), never the real screen
+        this.inkFn := TaskEnv.Dep(deps, "ink", "")
+        if !IsObject(this.inkFn)
+            this.inkFn := IsObject(TaskEnv.Dep(deps, "ocr", "")) ? ((x, y, w, h, scale := 1, ink := 0) => "")
+                : ((x, y, w, h, scale := 1, ink := 0) => Ocr.ReadInk(x, y, w, h, scale, ink))
         this.ocrFn := TaskEnv.Dep(deps, "ocr", "")
         if !IsObject(this.ocrFn)
             this.ocrFn := (x, y, w, h, scale := 1) => Ocr.Read(x, y, w, h, scale)

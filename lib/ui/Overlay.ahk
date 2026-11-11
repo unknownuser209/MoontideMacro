@@ -73,6 +73,11 @@ class Overlay {
             NumPut("UInt", Theme.BGR(Theme.PanelC), v)
             DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", g.Hwnd, "UInt", 34, "Ptr", v, "UInt", 4)
         }
+        ; WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+): you see it, screen grabs
+        ; do not. Dragged over the quest panel (2253,497 at 2560x1440, live
+        ; 2026-11-11) the board read 'Moontide Macro'; it also sat on the
+        ; merchant's item list. Older Windows: no effect, same as before.
+        try DllCall("SetWindowDisplayAffinity", "Ptr", g.Hwnd, "UInt", 0x11)
         OnMessage(0x0201, ObjBindMethod(this, "_OnLButton"))      ; WM_LBUTTONDOWN
         OnMessage(0x0232, ObjBindMethod(this, "_OnMoved"))        ; WM_EXITSIZEMOVE
     }

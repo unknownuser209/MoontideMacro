@@ -95,7 +95,7 @@ class Config {
         ; Which potions the craft/fisher tasks buy: comma list of full names,
         ; each must match a name in data\potions.json.
         cr := Config._CIMap()
-        cr["potions"] := "Lucky Potion,Speed Potion"
+        cr["potions"] := "Lucky Potion"
         cr["enabled"] := "1"          ; craft task on/off
         cr["qty"] := "1"              ; units bought per potion per visit (1..999)
         cr["minIntervalMin"] := "10"  ; minutes between notification-triggered craft runs
@@ -154,6 +154,11 @@ class Config {
         mn["shiftLock"] := "1"        ; 1 = shift lock on in fights (Roblox's Shift Lock Switch setting on)
         mn["boss"] := "1"             ; 1 = look for (and fight) the boss once per GRAVEYARD start
         d["Minions"] := mn
+        ; Aura swaps (ObbyTask's storage swap: Sailor for the obby, the
+        ; Minions combat aura, putting the aura from before back).
+        au := Config._CIMap()
+        au["equipFirst"] := "0"       ; 1 = equip the first search result, no name / button reads (low resolutions)
+        d["Auras"] := au
         m := Config._CIMap()
         m["enabled"] := "0"
         m["clipHotkey"] := "F8"

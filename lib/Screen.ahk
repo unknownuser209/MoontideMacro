@@ -45,35 +45,101 @@ class Screen {
     static cy := 0
     static cw := 2560
     static ch := 1440
-    static s := 1
+    static s := 1                ; min(sx, sy): lengths, OCR upscale
+    ; Sol's RNG sizes its UI by the client's width AND height separately:
+    ; live 1440x900 (2026-11-11) the Fishing Shop was W/2560 wide and H/1440
+    ; tall, the left menu and Roll at H/1440 heights. So x maps by sx, y by
+    ; sy (the same number at 16:9); no letterbox box. Anchors are kept in
+    ; the signatures for old callers but no longer move anything.
+    static sx := 1
+    static sy := 1
+    ; Not every panel stretches (live 1440x900, 2026-11-11): the Aura
+    ; Storage and the inventory scale evenly by min(sx, sy), centred ("C");
+    ; the quest panel scales evenly too, centred up / down but on the right
+    ; edge ("RH"; its Claim button measured at 1137..1261 x 640..672); the
+    ; Fishing Shop, Flarg's dialog and the rest stretch ("S"). The code that
+    ; works such a panel sets the mode around it (WithMode); at 16:9 all
+    ; three give the same pixel.
+    static Mode := "S"
+    ; A design point of a panel drawn under mode `from` -> the design point
+    ; that lands on the same pixel under mode `to` (a stretched button used
+    ; inside a WithMode block of another panel). -> {x, y}
+    static Convert(pt, from, to) {
+        if (Screen.IsIdentity() || from = to)
+            return {x: pt.x, y: pt.y}
+        old := Screen.Mode
+        try {
+            Screen.Mode := from
+            sx := Screen.X(pt.x), sy := Screen.Y(pt.y)
+            Screen.Mode := to
+            return Screen.Inv(sx, sy)
+        } finally
+            Screen.Mode := old
+    }
+
+    static WithMode(mode, fn) {
+        old := Screen.Mode
+        Screen.Mode := mode
+        try
+            return fn()
+        finally
+            Screen.Mode := old
+    }
     static dpi := 0              ; the Roblox window's DPI at the last Refresh (0 = unknown)
     static dpiSet := ""          ; how InitDpi made the thread aware ("" = not called)
 
     static SetClient(x, y, w, h) {
         Screen.cx := Integer(x), Screen.cy := Integer(y)
         Screen.cw := Max(1, Integer(w)), Screen.ch := Max(1, Integer(h))
-        Screen.s := Screen.IsIdentity() ? 1 : Min(Screen.ch / Screen.DesignH, Screen.cw / Screen.DesignW)
+        Screen.sx := Screen.IsIdentity() ? 1 : Screen.cw / Screen.DesignW
+        Screen.sy := Screen.IsIdentity() ? 1 : Screen.ch / Screen.DesignH
+        Screen.s := Min(Screen.sx, Screen.sy)
     }
 
     static Reset() => Screen.SetClient(0, 0, Screen.DesignW, Screen.DesignH)
 
     static IsIdentity() => (Screen.cx = 0 && Screen.cy = 0 && Screen.cw = Screen.DesignW && Screen.ch = Screen.DesignH)
 
-    ; true at the one size checked in game so far
-    static Verified() => (Screen.cw = Screen.DesignW && Screen.ch = Screen.DesignH)
-
-    ; design box origin for an anchor
-    static _Ox(anchor) {
-        bw := Screen.DesignW * Screen.s
-        return InStr(anchor, "L") ? Screen.cx : InStr(anchor, "R") ? Screen.cx + Screen.cw - bw : Screen.cx + (Screen.cw - bw) / 2
+    ; Sizes checked in game (live, windowed at that client size, 2026-11-11):
+    ; fishing, sell, aura swaps, quests, the chat moved out of the way
+    static Tested := ["2560x1440", "1920x1080", "1920x1200", "1680x1050", "1600x900"
+        , "1536x864", "1440x900", "1366x768", "1280x800", "1280x720"]
+    static Verified() {
+        k := Screen.cw "x" Screen.ch
+        for t in Screen.Tested
+            if (t = k)
+                return true
+        return false
     }
-    static _Oy(anchor) {
-        bh := Screen.DesignH * Screen.s
-        return InStr(anchor, "T") ? Screen.cy : InStr(anchor, "B") ? Screen.cy + Screen.ch - bh : Screen.cy + (Screen.ch - bh) / 2
+    static TestedText() {
+        s := ""
+        for t in Screen.Tested
+            s .= (s = "" ? "" : ", ") t
+        return s
     }
+    static NotTestedNote := "not tested at this size yet (tested: see the README); it may still work"
 
-    static X(px, anchor := "C") => Screen.IsIdentity() ? px : Round(Screen._Ox(anchor) + px * Screen.s)
-    static Y(py, anchor := "C") => Screen.IsIdentity() ? py : Round(Screen._Oy(anchor) + py * Screen.s)
+
+    ; design box origin (the client's: the UI stretches to it)
+    static _Ox(anchor) => Screen.cx
+    static _Oy(anchor) => Screen.cy
+
+    static X(px, anchor := "C") {
+        if Screen.IsIdentity()
+            return px
+        switch Screen.Mode {
+            case "C": return Round(Screen.cx + (Screen.cw - Screen.DesignW * Screen.s) / 2 + px * Screen.s)
+            case "RH": return Round(Screen.cx + Screen.cw - (Screen.DesignW - px) * Screen.s)
+        }
+        return Round(Screen.cx + px * Screen.sx)
+    }
+    static Y(py, anchor := "C") {
+        if Screen.IsIdentity()
+            return py
+        if (Screen.Mode = "C" || Screen.Mode = "RH")
+            return Round(Screen.cy + (Screen.ch - Screen.DesignH * Screen.s) / 2 + py * Screen.s)
+        return Round(Screen.cy + py * Screen.sy)
+    }
 
     static Pt(x, y, anchor := "C") => {x: Screen.X(x, anchor), y: Screen.Y(y, anchor)}
 
@@ -105,7 +171,15 @@ class Screen {
     static Inv(sx, sy, anchor := "C") {
         if Screen.IsIdentity()
             return {x: sx, y: sy}
-        return {x: Round((sx - Screen._Ox(anchor)) / Screen.s), y: Round((sy - Screen._Oy(anchor)) / Screen.s)}
+        switch Screen.Mode {
+            case "C":
+                return {x: Round((sx - Screen.cx - (Screen.cw - Screen.DesignW * Screen.s) / 2) / Screen.s)
+                    , y: Round((sy - Screen.cy - (Screen.ch - Screen.DesignH * Screen.s) / 2) / Screen.s)}
+            case "RH":
+                return {x: Round(Screen.DesignW - (Screen.cx + Screen.cw - sx) / Screen.s)
+                    , y: Round((sy - Screen.cy - (Screen.ch - Screen.DesignH * Screen.s) / 2) / Screen.s)}
+        }
+        return {x: Round((sx - Screen.cx) / Screen.sx), y: Round((sy - Screen.cy) / Screen.sy)}
     }
 
     static InvRect(r, anchor := "C") {
@@ -181,10 +255,10 @@ class Screen {
         aw := Map(0, "unaware", 1, "system aware", 2, "per-monitor aware")
         a := Screen.Awareness()
         dpiTxt := Screen.dpi ? Screen.dpi " dpi (" Round(Screen.dpi * 100 / 96) "%)" : "dpi unknown"
-        box := Screen.IsIdentity() ? "identity" : Format("x{:.4f}, design box {}x{} at {},{}", Screen.s
-            , Round(Screen.DesignW * Screen.s), Round(Screen.DesignH * Screen.s), Round(Screen._Ox("C")), Round(Screen._Oy("C")))
+        box := Screen.IsIdentity() ? "identity" : (Abs(Screen.sx - Screen.sy) < 0.002
+            ? Format("x{:.4f}", Screen.s) : Format("x{:.4f} wide, x{:.4f} high", Screen.sx, Screen.sy))
         return "Roblox client " Screen.cw "x" Screen.ch " at " Screen.cx "," Screen.cy ", " dpiTxt
             . ", mapping " box ", macro " (aw.Has(a) ? aw[a] : "awareness unknown")
-            . (Screen.Verified() ? "" : "; only 2560x1440 is verified so far")
+            . (Screen.Verified() ? "" : "; " Screen.NotTestedNote)
     }
 }

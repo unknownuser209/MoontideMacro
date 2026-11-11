@@ -208,6 +208,15 @@ class MmIO {
         this.y := 0
     }
     Down(k) {
+        if (StrLower(k) = "e") {
+            this.b.es := (this.b.HasOwnProp("es") ? this.b.es : 0) + 1
+            if (this.b.HasOwnProp("missFirst") && this.b.es <= this.b.missFirst)
+                return                      ; this walk missed the board
+            if (this.b.HasOwnProp("readyFirst") && this.b.es <= this.b.readyFirst)
+                this.b.cooldown := "Available after Ready!", this.b.ready := false
+            else if this.b.HasOwnProp("readyFirst")
+                this.b.ready := true
+        }
         if (StrLower(k) = "e" && !this.b.noNotify && !this.b.started)
             this.b.notify := true
     }
@@ -543,6 +552,37 @@ Test_MM_StateSurvivesNewInstance() {
         AssertEq(m.t.Run(SchedCtx()), 1, "played")
         m2 := MemoryMatchTask({cfg: QmCfg(Map("MemoryMatch.enabled", "1"), MmRoutes()), clock: () => m.clock.t, statePath: m.path})
         AssertTrue(!m2.Due(), "a new instance (macro restart) remembers the 12 h")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; live 2026-11-11: about 1 in 10 walks missed the board; one more walk
+Test_MM_MissedWalkIsWalkedOnceMore() {
+    b := MmStd()
+    b.ready := false
+    b.missFirst := 1
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 0, "on cooldown")
+        AssertEq(b.es, 2, "E on two walks")
+        AssertEq(m.t.NextTry(), DateAdd(m.clock.t, 43140 + 60, "Seconds"), "the second walk read the cooldown")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; live 2026-11-11: "Available after Ready!" for hours; the notification is
+; closed and E pressed again: when it reads Start then, the round starts
+Test_MM_ReadyIsOpenedAgain() {
+    b := MmStd()
+    b.readyFirst := 1
+    m := MmMake(b)
+    try {
+        m.t.Run(SchedCtx())
+        AssertEq(b.Count("notifyX"), 1, "the Ready notification closed")
+        AssertEq(b.Count("start"), 1, "Start clicked after E again")
+        AssertTrue(b.started, "the round started")
     } finally {
         MmClean(m)
     }

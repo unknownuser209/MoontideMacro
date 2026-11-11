@@ -386,7 +386,7 @@ Test_Input_TypeTextPerCharWithGap() {
 
 Test_Craft_ConfigDefaultsRegistered() {
     cr := Config.IniDefaults()["Craft"]
-    AssertEq(cr["potions"], "Lucky Potion,Speed Potion", "potions default kept")
+    AssertEq(cr["potions"], "Lucky Potion", "potions default kept")
     AssertEq(cr["enabled"], "1", "enabled default")
     AssertEq(cr["qty"], "1", "qty default")
     AssertEq(cr["cauldron"], "0", "cauldron toggle default off")
@@ -1387,4 +1387,13 @@ Test_Craft_CauldronClicksOnlyWithTheWorkshopOpen() {
     AssertTrue(m3.io.Idx("down Esc", m3.io.Idx("move 900,100")) > 0, "closed with Esc")
     AssertEq(m3.io.Count("move 1000,100"), 0, "Add All never clicked after the prompt")
     AssertTrue(CrPromptReported(m3.wh), "reported")
+}
+
+; live 2026-11-10: 'Open Slpep' was not taken for his Open Shop button,
+; nothing was bought and the craft walked a whole trip back to buy
+Test_Craft_OpenShopButtonReadsWhenMisread() {
+    for t in ["Open Shop", "[ Open Shop ]", "Open Slpep", "Open Sh0p", "0pen Shop", "open$hop", "Open $hop"]
+        AssertTrue(CraftTask.OpenShopUp(t), "'" t "' is his Open Shop button")
+    for t in ["Sell Fish", "Open Shop Sell Fish", "Leave", "", "Opened"]
+        AssertTrue(!CraftTask.OpenShopUp(t), "'" t "' is not")
 }

@@ -382,6 +382,8 @@ class QmBoard {
         this.closed := false     ; Exit clicked (or the board went away): nothing reads
         this.promptOnExit := false   ; the Exit click opens a Roblox purchase prompt
         this.prompt := false     ; that prompt is up (Esc closes it)
+        this.toast := 0          ; button reads left covered (the game's "Potion Auto Added" toast)
+        this.cards := ""         ; QuestsTask dep "cards": closes a catch card, -> true closed
     }
     Cur() => (this.q.Length ? this.q[this.i] : "")
     Click(x, y) {
@@ -434,8 +436,14 @@ class QmBoard {
             this.reads++
             return IsObject(c) ? c.text (this.noise ? "`n" Chr(65 + Mod(this.reads, 26)) "x*" this.reads : "") : ""
         }
-        if (r = this.btn)
+        if (r = this.btn) {
+            this.btnReads := (this.HasOwnProp("btnReads") ? this.btnReads : 0) + 1
+            if (this.toast > 0) {
+                this.toast--
+                return ""
+            }
             return IsObject(c) ? c.button : ""
+        }
         if (r = "1,2,30,40")
             return this.notify
         return ""
@@ -460,6 +468,8 @@ class QmBoardIO extends QmIO {
         super.Down(k)
         if (k = "Esc")
             this.board.prompt := false
+        if (k = "e" && this.board.HasOwnProp("opensOnE") && --this.board.opensOnE = 0)
+            this.board.closed := false      ; the board opens on this E (an earlier walk missed it)
     }
 }
 
@@ -470,7 +480,9 @@ QmBoardTask(board, gets := "", cal := "", logs := "") {
     t := QuestsTask({
         cfg: QmCfg(gets, Map("quests", QmQuestsCfg(), "routes", QmRoutesData())),
         io: io, webhook: wh, cal: IsObject(cal) ? cal : QmBoardCal(), log: (s) => lg.Push(s),
-        ocr: (x, y, w, h, scale := 1) => board.Read(x, y, w, h)
+        ocr: (x, y, w, h, scale := 1) => board.Read(x, y, w, h),
+        cards: IsObject(board.cards) ? board.cards : "",
+        ink: (x, y, w, h, scale := 1, ink := 0) => (board.HasOwnProp("green") ? board.green : "")
     })
     return {t: t, io: io, wh: wh, logs: lg, board: board}
 }
@@ -1316,6 +1328,8 @@ Test_Merchant_ShopTitleReadsWhenCut() {
     AssertTrue(RegExMatch("Jester's Shap", MerchantTask.ShopRe) > 0, "a for o")
     AssertTrue(RegExMatch("Mori's stin", MerchantTask.ShopRe) > 0, "h read as t")
     AssertTrue(RegExMatch("Mori•s$hop", MerchantTask.ShopRe) > 0, "S read as $")
+    AssertTrue(RegExMatch("Morl s stib", MerchantTask.ShopRe) > 0, "apostrophe lost (live 2026-11-10 18:33)")
+    AssertEq(RegExMatch("Open", MerchantTask.ShopRe), 0, "dialog Open button")
     AssertEq(RegExMatch("Mari", MerchantTask.ShopRe), 0, "no shop word")
     AssertEq(RegExMatch("Leave", MerchantTask.ShopRe), 0, "dialog button")
 }
@@ -1341,4 +1355,146 @@ Test_ChatWatch_LongGapWithoutReadsIsNoAbsence() {
     clock.t += 5000, cw.Check()
     text := "Mari has arrived", clock.t += 130000
     AssertEq(cw.Check().Length, 1, "really gone, then back: reported")
+}
+
+; live 2026-11-11: an hour-old "Mari has arrived" in the chat sent the macro
+; to Mari (a Merchant Teleporter used) at every start
+Test_ChatWatch_OldLineAtStartIsNotVisited() {
+    clock := QmClock(0)
+    text := "Mari has arrived"
+    cw := ChatWatch({io: QmIO(), cal: QmCal(, Map("chat_rect", {x: 10, y: 20, w: 400, h: 200})), ocr: (*) => text, now: () => clock.Now(), startOld: true})
+    text := "[Tip]: nothing yet"
+    AssertEq(cw.Check().Length, 0, "the first read misses the line")
+    text := "Mari has arrived"
+    clock.t += 10000
+    AssertEq(cw.Check().Length, 0, "a later read sees the old line: still not visited")
+    clock.t += 10000
+    AssertEq(cw.Check().Length, 0, "still the same line")
+    ; she leaves the chat, then really arrives again
+    text := "[Tip]: something else"
+    Loop 3 {
+        clock.t += 60000
+        cw.Check()
+    }
+    text := "Mari has arrived"
+    clock.t += 10000
+    AssertEq(cw.Check().Length, 1, "a new arrival after it: visited")
+    ; Rebase (a new Start): the line on screen now is old again
+    cw.Rebase()
+    clock.t += 300000
+    AssertEq(cw.Check().Length, 0, "after a restart: old again")
+}
+
+; 1366x768 (live 2026-11-11): the game's "Potion Auto Added" toast (fixed
+; px, bottom right) sat over the Accept button for a few seconds: every
+; button read "", so unticked quests were never dismissed. The button is
+; read again until the toast goes.
+Test_Quests_ButtonCoveredByAToastIsReadAgain() {
+    board := QmBoard([["River Angler`nCatch fish", "Accept"]])
+    board.toast := 3
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    AssertEq(m.t.Run(SchedCtx()), 1, "dismissed once the toast went")
+    AssertEq(board.q.Length, 0, "off the board")
+    found := false
+    for l in m.logs
+        found := found || InStr(l, "button: accept")
+    AssertTrue(found, "the button read in the end")
+}
+
+; 2026-11-11 06:58 (1920x1080): a fishing line left out when the macro was
+; stopped and started again: its Fishing Failed card came up during the walk,
+; E did nothing under it, and an E after it closed cast Eden's dash. The card
+; is closed before E.
+Test_Quests_CardOverTheBoardIsClosedBeforeE() {
+    board := QmBoard([["River Angler`nCatch fish", "Accept"]])
+    board.closed := true
+    cleared := 0
+    m := ""
+    board.cards := (ctx) => (board.closed ? (cleared++, board.closed := false, true) : false)
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    AssertEq(m.t.Run(SchedCtx()), 1, "the board read")
+    AssertEq(cleared, 1, "the card closed once")
+    AssertEq(QmCountLog(m.io, "down e"), 1, "E once")
+    AssertTrue(m.io.Index("down e") > 0, "E pressed")
+}
+
+QmCountLog(io, entry) {
+    n := 0
+    for e in io.log
+        n += (e = entry)
+    return n
+}
+
+; 2560x1440 (live 2026-11-11): Eden's skill list lies over the buttons for
+; good; the toast re-read waited 4 s on every quest. A read of the skill
+; names stops the re-reads.
+Test_Quests_SkillListOverTheButtonIsNotReadAgain() {
+    board := QmBoard([["River Angler`nCatch fish", "Taunt Darkmatter Barrage"]])
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    m.t.Run(SchedCtx())
+    AssertEq(board.btnReads, 1, "the button read once")
+    AssertEq(board.q.Length, 1, "never dismissed blind")
+}
+
+Test_Quests_EmptyButtonIsStillReadAgain() {
+    board := QmBoard([["River Angler`nCatch fish", ""]])
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    m.t.Run(SchedCtx())
+    AssertEq(board.btnReads, 1 + QuestsTask.ButtonTries, "nothing read: read again (a toast)")
+}
+
+; 2560x1440 (live 2026-11-11): under Eden's skill list the button read
+; 'Accep t': an unticked quest was never dismissed
+Test_Quests_AcceptSplitByTheSkillList() {
+    board := QmBoard([["River Angler`nCatch fish", "Accep t"]])
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    AssertEq(m.t.Run(SchedCtx()), 1, "read as Accept: dismissed")
+    AssertEq(board.q.Length, 0, "off the board")
+}
+
+; 2026-11-11 (live, several sizes): a walk missed the board (another
+; player's boat, a card after a stop mid-cast) and quests waited 30 minutes.
+; The board not open gets one more respawn + walk + E.
+Test_Quests_MissedBoardIsWalkedToOnceMore() {
+    board := QmBoard([["River Angler`nCatch fish", "Accept"]])
+    board.closed := true
+    board.opensOnE := 2
+    logs := []
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1), , logs)
+    AssertEq(m.t.Run(SchedCtx()), 1, "the board read on the second walk")
+    AssertEq(QmCountLog(m.io, "down e"), 2, "E twice")
+    found := false
+    for l in logs
+        found := found || InStr(l, "walking there once more")
+    AssertTrue(found, "logged")
+    ; never opens: two walks, then it gives up
+    board2 := QmBoard([["River Angler`nCatch fish", "Accept"]])
+    board2.closed := true
+    m2 := QmBoardTask(board2, Map("quests.dismissDisabled", 1))
+    AssertEq(m2.t.Run(SchedCtx()), 0, "nothing done")
+    AssertEq(QmCountLog(m2.io, "down e"), 2, "two tries only")
+}
+
+Test_Quests_SkillListFragmentsStopTheReReads() {
+    for t in ["rkmot", "vugrkmot Re", "Taunt", "Darkmatter Barrage"]
+        AssertTrue(RegExMatch(t, QuestsTask.SkillRe) > 0, "'" t "' is the skill list (live 2560x1440)")
+    for t in ["", "Accep t", "Claim Rewards"]
+        AssertTrue(!RegExMatch(t, QuestsTask.SkillRe), "'" t "' is not")
+}
+
+; 2560x1440 (live 2026-11-11): Eden's skill list over the button read
+; 'rkmot'; its green word alone read 'Accevi'
+Test_Quests_GreenWordUnderTheSkillList() {
+    board := QmBoard([["River Angler`nCatch fish", "rkmot"]])
+    board.green := "Accevi"
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    AssertEq(m.t.Run(SchedCtx()), 1, "read as Accept: dismissed")
+    board2 := QmBoard([["Mythic Aura Hunt`nRoll 1 Mythic aura", "rkmot"]])
+    board2.green := "Cloim Re"
+    m2 := QmBoardTask(board2, Map("quests.dismissDisabled", 1))
+    m2.t.Run(SchedCtx())
+    AssertTrue(InStr(m2.wh.sent.Length ? m2.wh.sent[1].desc : "", "claimed"), "read as Claim: claimed, never dismissed")
+    board3 := QmBoard([["River Angler`nCatch fish", "rkmot"]])
+    m3 := QmBoardTask(board3, Map("quests.dismissDisabled", 1))
+    AssertEq(m3.t.Run(SchedCtx()), 0, "no green word: never dismissed blind")
 }

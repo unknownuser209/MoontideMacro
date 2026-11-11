@@ -22,7 +22,7 @@
 ;
 ; SETTINGS (settings.ini [Craft]; defaults in Config.IniDefaults)
 ;   enabled      1                       task on/off
-;   potions      Lucky Potion,Speed Potion   comma list of full names, each must be
+;   potions      Lucky Potion                comma list of full names, each must be
 ;                                        sold in the Fisher shop (GameLists.Shop;
 ;                                        Calibrate.Potions()
 ;                                        validates it: the app must have called
@@ -166,6 +166,11 @@ class CraftTask {
     static DialogWaitMs := 2500    ; his dialog must read within this before the dialog clicks (as SellTask.FisherCheck)
     static ShopPollMs := 250
     static ShopBox := {dx: -150, dy: -35, w: 300, h: 70}   ; OCR box around fisher_open_shop
+    ; his "Open Shop" button reads in that box (not "Sell Fish"): live misreads
+    ; 'Open Slpep' (2026-11-10: nothing bought, a whole extra trip to buy)
+    ; S read as $ (live 1920x1080, 2026-11-11: 'open$hop')
+    static OpenShopRe := "i)[s$]h[o0]p|\bopen\s*[s$][a-z]"
+    static OpenShopUp(t) => RegExMatch(t, CraftTask.OpenShopRe) && !RegExMatch(t, "i)sell")
     static ScrollTopNotches := 10  ; wheel up over the grid: back to its top row
     static ScrollTries := 8        ; then one notch down at a time to find a potion
     static ScrollMs := 250
@@ -793,12 +798,16 @@ class CraftTask {
     _ShopButtonUp(plan) {
         b := CraftTask.ShopBox, pt := plan.shopPt
         t := (this._env.ocrFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h)
-        return RegExMatch(t, "i)shop") && !RegExMatch(t, "i)sell")
+        return CraftTask.OpenShopUp(t)
     }
 
     ; Purchase window (fisher_confirm pixel) closed? Clicks fisher_purchase_close
     ; while it is still up. -> 1 closed, 0 still open, -1 stopped.
-    _ClosePurchase(ctx, plan) {
+    ; The purchase window is a centred popup like the Sell Confirm one (even
+    ; scale at 16:10 where the shop stretches): its checks and clicks map in
+    ; Screen mode "C" (the same pixels at 16:9).
+    _ClosePurchase(ctx, plan) => Screen.WithMode("C", () => this._ClosePurchaseM(ctx, plan))
+    _ClosePurchaseM(ctx, plan) {
         env := this._env
         conf := plan.confPt
         gap := plan.coords["craft"]["stepMs"]
@@ -813,7 +822,8 @@ class CraftTask {
     }
 
     ; The purchase window is up: fisher_confirm pixel, or its title.
-    _PurchaseUp(plan) {
+    _PurchaseUp(plan) => Screen.WithMode("C", () => this._PurchaseUpM(plan))
+    _PurchaseUpM(plan) {
         env := this._env
         conf := plan.confPt
         if (env.pixelFn)(conf.x, conf.y, conf.color, CraftTask.PixelTol)
@@ -947,7 +957,7 @@ class CraftTask {
             t := Trim(RegExReplace((env.ocrFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h), "\s+", " "))
             if (t != "")
                 this._shopText := SubStr(t, 1, 60)
-            if (RegExMatch(t, "i)shop") && !RegExMatch(t, "i)sell"))
+            if CraftTask.OpenShopUp(t)
                 return 1
             if (waited >= CraftTask.ShopWaitMs)
                 return 0
@@ -997,7 +1007,7 @@ class CraftTask {
                     return ""
                 continue
             }
-            env.Click(plan.qtyPt)
+            Screen.WithMode("C", () => env.Click(plan.qtyPt))
             if !env.Wait(gap, ctx)
                 return ""
             ; End first: the box keeps its old number and the click can put
@@ -1008,7 +1018,7 @@ class CraftTask {
             if !env.Wait(CraftTask.TypeSettleMs, ctx)
                 return ""
             if this._PurchaseUp(plan) {
-                env.Click(conf)
+                Screen.WithMode("C", () => env.Click(conf))
                 if !env.Wait(gap, ctx)
                     return ""
                 if (this._ClosePurchase(ctx, plan) < 0)      ; it stays open after a purchase

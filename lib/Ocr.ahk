@@ -5,6 +5,11 @@
 ; Roblox client and the crop is stretched to the size the design read had
 ; (scale / Screen.s), so a small client is OCR'd larger; FindText returns
 ; design px. At 2560x1440 nothing changes.
+; Off 2560x1440 one stretch reads small text unreliably (1080p frames: each
+; filter / factor misreads some box: "Sturt", "Cloge", "Auro Gtornge"), so a
+; read there tries OffVariants in turn: FindText until a line matches its
+; regex, Read until every word is a known one (Lexicon: the UI's words and
+; the data files' names), else the read with the most known words.
 ; Ocr: Windows.Media.Ocr (WinRT, built into Windows 10/11) on a small screen
 ; region. Original code: raw RoGetActivationFactory + vtable ComCall.
 ;
@@ -47,8 +52,26 @@ class Ocr {
     static Langs := ["en-US", "en"]
     static MaxScale := 4
     static InkMaxScale := 8      ; ReadInk: no smoothing, a bigger upscale is cheap
+    static GreenInkDiff := 25   ; ReadInk "g": green above red and blue by this (25: 'Accevi' through Eden's skill list)
     static InkPad := 24          ; ReadInk: white px around (the recognizer needs a margin)
     static TimeoutMs := 5000
+    ; off 2560x1440 (not ReadInk): [factor of Screen.OcrScale, filter] tried
+    ; in order; "b" GDI+ high-quality bicubic, "h" GDI HALFTONE (the one
+    ; filter before). Measured on 1080p frames (tests\test_resample.ahk):
+    ; bicubic misses fewest, x1.5 reads most of the rest, x2 the 768p ones.
+    ; x2 before the HALFTONE one: small text (Mari's name in her dialog at
+    ; 1366x768) reads only at x2, and an empty box stops after three tries
+    static OffVariants := [[1, "b"], [1.5, "b"], [2, "b"], [1, "h"]]
+    static Lexicon := ""         ; Map of known lowercase words (built on first use)
+    static UiWords := "aura auro storage equip equipped remove unlock delete inventory inventorv items item "
+        . "shop shoo ugc close start stort memory match available after left location sol world fish fishing "
+        . "exit purchase buy robux daily rewards reward claim collections quest quests objects board see leave "
+        . "sell confirm cancel mari jester jock merchant craft crafting workshop stella open play change logs "
+        . "information success caught you difficulty select raid limbo crack void contract failed gone "
+        . "completed turn ready skip who are hide respawn resume cutscene settings menu "
+        . "roll rolls auto quick player captain flarg fisher island main tool gears search regular special "
+        . "rolled luck time discovered unknown lucky potion speed gear selected weight sells for here friends "
+        . "server message tip merchants periodically appear arrived taunt impale deadeye voidrush nothing common"
 
     static IID := Map(
         "OcrEngineStatics", "{5BFFA85A-3384-3540-9940-699120D428A8}",
@@ -82,7 +105,7 @@ class Ocr {
 
     static ReadInk(x, y, w, h, scale, ink) {
         try {
-            return IsNumber(ink) && ink > 0 ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
+            return ((IsNumber(ink) && ink > 0) || ink == "g") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
         } catch Any {
             return ""
         }
@@ -95,6 +118,18 @@ class Ocr {
         } catch Any {
             return ""
         }
+    }
+
+    ; FindText, but {x, y} is the centre of the words matching wordRe in that
+    ; line (the whole line when none does): "[Exit]" at the end of "Aura
+    ; Collections [Exit]" is clicked on the word, not the title's middle.
+    static _wordRe := ""
+    static FindWord(x, y, w, h, re, wordRe, scale := 1) {
+        Ocr._wordRe := wordRe
+        try
+            return Ocr.FindText(x, y, w, h, re, scale)
+        finally
+            Ocr._wordRe := ""
     }
 
     ; find = "": the text. find = a regex: {x, y, text} of the first matching
@@ -113,6 +148,66 @@ class Ocr {
             r := Screen.Rect(x, y, w, h)
             x := r.x, y := r.y, w := r.w, h := r.h, k := Screen.s
         }
+        if (k = 1 || ink)
+            return Ocr._Once(x, y, w, h, scale, find, ink, k)
+        ; off 2560x1440: OffVariants until one reads (see the header)
+        base := Screen.OcrScale(Max(1, Integer(scale))), tried := Map()
+        best := "", bestN := -1, empties := 0
+        for v in Ocr.OffVariants {
+            key := Min(base * v[1], Ocr.MaxScale) "|" v[2]
+            if tried.Has(key)
+                continue
+            tried[key] := 1
+            try
+                got := Ocr._Once(x, y, w, h, scale, find, 0, k, v)
+            catch Any
+                continue
+            if (find != "") {
+                if IsObject(got)
+                    return got
+                continue
+            }
+            known := Ocr._Known(got, &words)
+            n := known * 2 + (got != "")             ; more known words, then any text
+            if (n > bestN)
+                best := got, bestN := n
+            ; speed (every variant cost ~60 ms: ~250 ms a read at 1080p): stop
+            ; at a read whose words are mostly known, and at an empty box
+            ; (three variants with no text at all: a poll for a popup not up)
+            if (words > 0 && known * 2 >= words + 1)
+                break
+            empties := (Trim(got) = "") ? empties + 1 : 0
+            if (empties >= 3 && best = "")
+                break
+        }
+        return (find != "") ? "" : best
+    }
+
+    ; text -> how many of its words (3+ letters) are in Lexicon; words = all
+    static _Known(text, &words := 0) {
+        lex := Ocr._Lexicon(), known := 0, words := 0, p := 1
+        while (p := RegExMatch(text, "[A-Za-z]{3,}", &m, p)) {
+            words++, known += lex.Has(StrLower(m[0])), p += m.Len
+        }
+        return known
+    }
+
+    static _Lexicon() {
+        if IsObject(Ocr.Lexicon)
+            return Ocr.Lexicon
+        txt := Ocr.UiWords, lex := Map()
+        for f in ["auras", "biomes", "merchants", "potions", "quests"]
+            try txt .= " " FileRead(A_LineFile "\..\..\data\" f ".json", "UTF-8")
+        p := 1
+        while (p := RegExMatch(txt, "[A-Za-z]{3,}", &m, p))
+            lex[StrLower(m[0])] := 1, p += m.Len
+        return Ocr.Lexicon := lex
+    }
+
+    ; One read of the SCREEN rect (k = screen px per design px; 1 at
+    ; 2560x1440). v = [factor, filter] off 2560x1440 ("" = [1, "h"]).
+    static _Once(x, y, w, h, scale, find, ink, k, v := "") {
+        f := IsObject(v) ? v[1] : 1, smooth := IsObject(v) && v[2] = "b"
         objs := []      ; WinRT/COM pointers to Release
         hstrs := []     ; HSTRINGs to delete
         gdi := ""       ; capture handles
@@ -128,7 +223,7 @@ class Ocr {
             } else {
                 ; off 2560x1440: stretch the screen crop to the size the
                 ; design read had (Screen.OcrScale: up when smaller, down on 4K)
-                s := Min(Screen.OcrScale(Max(1, Integer(scale))), maxS)
+                s := Min(Screen.OcrScale(Max(1, Integer(scale))) * f, maxS)
                 while (s > 1 && (Round(w * s) + 2 * pad > maxDim || Round(h * s) + 2 * pad > maxDim))
                     s := Max(1, s - 1)
             }
@@ -145,7 +240,7 @@ class Ocr {
                 gdi := Ocr._Capture(x, y, w, h, w, h)
                 gdi := Ocr._Ink(gdi, w, h, ink, iw, ih, pad)
             } else
-                gdi := Ocr._Capture(x, y, w, h, sw, sh)
+                gdi := Ocr._Capture(x, y, w, h, sw, sh, smooth)
 
             bufFactory := Ocr._Factory("Windows.Storage.Streams.Buffer", "BufferFactory", objs, hstrs)
             ComCall(6, bufFactory, "UInt", size, "Ptr*", &pBuf := 0)   ; Create(capacity)
@@ -230,7 +325,7 @@ class Ocr {
         if (n = 0)
             return ""
         rc := Buffer(16, 0)
-        b := ""
+        b := "", bw := ""
         Loop n {
             ComCall(6, pWords, "UInt", A_Index - 1, "Ptr*", &pWord := 0)
             objs.Push(pWord)
@@ -241,8 +336,22 @@ class Ocr {
                 b := {x1: wx, y1: wy, x2: wx + ww, y2: wy + wh}
             else
                 b.x1 := Min(b.x1, wx), b.y1 := Min(b.y1, wy), b.x2 := Max(b.x2, wx + ww), b.y2 := Max(b.y2, wy + wh)
+            if (Ocr._wordRe != "") {
+                wt := ""
+                try {
+                    ComCall(7, pWord, "Ptr*", &hw := 0)             ; IOcrWord.get_Text
+                    wt := Ocr._HStrText(hw)
+                    DllCall("combase\WindowsDeleteString", "Ptr", hw)
+                }
+                if RegExMatch(wt, Ocr._wordRe) {
+                    if !IsObject(bw)
+                        bw := {x1: wx, y1: wy, x2: wx + ww, y2: wy + wh}
+                    else
+                        bw.x1 := Min(bw.x1, wx), bw.y1 := Min(bw.y1, wy), bw.x2 := Max(bw.x2, wx + ww), bw.y2 := Max(bw.y2, wy + wh)
+                }
+            }
         }
-        return b
+        return IsObject(bw) ? bw : b
     }
 
     ; English recognizer or 0. The engine pointer is added to objs.
@@ -296,7 +405,8 @@ class Ocr {
     }
 
     ; Screen rect -> 32bpp top-down DIB of sw x sh. -> {hdcScreen, hdcMem, hbm, old, bits}
-    static _Capture(x, y, w, h, sw, sh) {
+    ; smooth: a stretch is GDI+ high-quality bicubic, not HALFTONE.
+    static _Capture(x, y, w, h, sw, sh, smooth := false) {
         g := {hdcScreen: 0, hdcMem: 0, hbm: 0, old: 0, bits: 0, hdcSrc: 0, hbmSrc: 0, oldSrc: 0, gdip: 0}
         try {
             g.hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
@@ -321,6 +431,8 @@ class Ocr {
             if (sw = w && sh = h) {
                 ok := DllCall("BitBlt", "Ptr", g.hdcMem, "Int", 0, "Int", 0, "Int", sw, "Int", sh
                     , "Ptr", src, "Int", x, "Int", y, "UInt", SRCCOPY)
+            } else if smooth {
+                ok := Ocr._Bicubic(g, src, x, y, w, h, sw, sh)
             } else {
                 DllCall("SetStretchBltMode", "Ptr", g.hdcMem, "Int", 4)          ; HALFTONE
                 DllCall("SetBrushOrgEx", "Ptr", g.hdcMem, "Int", 0, "Int", 0, "Ptr", 0)
@@ -343,9 +455,19 @@ class Ocr {
     static _Ink(g, w, h, ink, iw, ih, pad) {
         try {
             p := g.bits
-            Loop w * h {
-                NumPut("UInt", NumGet(p, 2, "UChar") < ink ? 0xFF000000 : 0xFFFFFFFF, p)
-                p += 4
+            if (ink == "g") {
+                ; green ink: the quest board's Accept / Claim words, read
+                ; through the white skill names an aura lays over them
+                Loop w * h {
+                    bl := NumGet(p, 0, "UChar"), gr := NumGet(p, 1, "UChar"), rd := NumGet(p, 2, "UChar")
+                    NumPut("UInt", (gr - Max(rd, bl) > Ocr.GreenInkDiff) ? 0xFF000000 : 0xFFFFFFFF, p)
+                    p += 4
+                }
+            } else {
+                Loop w * h {
+                    NumPut("UInt", NumGet(p, 2, "UChar") < ink ? 0xFF000000 : 0xFFFFFFFF, p)
+                    p += 4
+                }
             }
             sw := iw + 2 * pad, sh := ih + 2 * pad
             n := {hdcScreen: 0, hdcMem: 0, hbm: 0, old: 0, bits: 0}
@@ -373,6 +495,58 @@ class Ocr {
             }
         } finally {
             Ocr._FreeCapture(g)
+        }
+    }
+
+    ; The w x h rect of DC src at x, y -> g's DIB (sw x sh), GDI+ high-quality
+    ; bicubic (edges mirrored, so the border is not darkened). -> success
+    static _Bicubic(g, src, x, y, w, h, sw, sh) {
+        hdc := 0, hbm := 0, old := 0, tok := 0, b1 := 0, b2 := 0, gr := 0, ia := 0
+        try {
+            hdc := DllCall("CreateCompatibleDC", "Ptr", g.hdcScreen, "Ptr")
+            bi := Buffer(40, 0)
+            NumPut("UInt", 40, bi, 0), NumPut("Int", w, bi, 4), NumPut("Int", -h, bi, 8)
+            NumPut("UShort", 1, bi, 12), NumPut("UShort", 32, bi, 14)
+            hbm := DllCall("CreateDIBSection", "Ptr", hdc, "Ptr", bi, "UInt", 0, "Ptr*", &bits := 0, "Ptr", 0, "UInt", 0, "Ptr")
+            if (!hbm || !bits)
+                return false
+            old := DllCall("SelectObject", "Ptr", hdc, "Ptr", hbm, "Ptr")
+            if !DllCall("BitBlt", "Ptr", hdc, "Int", 0, "Int", 0, "Int", w, "Int", h, "Ptr", src, "Int", x, "Int", y, "UInt", 0x00CC0020)
+                return false
+            DllCall("GdiFlush")
+            DllCall("LoadLibrary", "Str", "gdiplus", "Ptr")
+            si := Buffer(24, 0), NumPut("UInt", 1, si, 0)
+            if DllCall("gdiplus\GdiplusStartup", "Ptr*", &tok, "Ptr", si, "Ptr", 0)
+                return false
+            ; PixelFormat32bppRGB over both DIBs' bits (no copies)
+            DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", w, "Int", h, "Int", w * 4, "Int", 0x22009, "Ptr", bits, "Ptr*", &b1)
+            DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", sw, "Int", sh, "Int", sw * 4, "Int", 0x22009, "Ptr", g.bits, "Ptr*", &b2)
+            if (!b1 || !b2)
+                return false
+            DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", b2, "Ptr*", &gr)
+            DllCall("gdiplus\GdipSetInterpolationMode", "Ptr", gr, "Int", 7)        ; HighQualityBicubic
+            DllCall("gdiplus\GdipSetPixelOffsetMode", "Ptr", gr, "Int", 4)          ; HighQuality
+            DllCall("gdiplus\GdipCreateImageAttributes", "Ptr*", &ia)
+            DllCall("gdiplus\GdipSetImageAttributesWrapMode", "Ptr", ia, "Int", 3, "UInt", 0, "Int", 0)   ; TileFlipXY
+            return !DllCall("gdiplus\GdipDrawImageRectRectI", "Ptr", gr, "Ptr", b1, "Int", 0, "Int", 0, "Int", sw, "Int", sh
+                , "Int", 0, "Int", 0, "Int", w, "Int", h, "Int", 2, "Ptr", ia, "Ptr", 0, "Ptr", 0)   ; UnitPixel
+        } finally {
+            if ia
+                DllCall("gdiplus\GdipDisposeImageAttributes", "Ptr", ia)
+            if gr
+                DllCall("gdiplus\GdipDeleteGraphics", "Ptr", gr)
+            if b2
+                DllCall("gdiplus\GdipDisposeImage", "Ptr", b2)
+            if b1
+                DllCall("gdiplus\GdipDisposeImage", "Ptr", b1)
+            if tok
+                DllCall("gdiplus\GdiplusShutdown", "Ptr", tok)
+            if old
+                DllCall("SelectObject", "Ptr", hdc, "Ptr", old)
+            if hbm
+                DllCall("DeleteObject", "Ptr", hbm)
+            if hdc
+                DllCall("DeleteDC", "Ptr", hdc)
         }
     }
 

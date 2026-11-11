@@ -169,6 +169,26 @@ class RouteRecorder {
         return {steps: out, dropped: dropped}
     }
 
+    ; The sell walks the macro uses while sell_to_fisher / fisher_to_fishing
+    ; are not recorded: the shipped vip / nonvip toShop / back (the creator's
+    ; recording; toShop without its closing E). -> {steps, label} or "" (any
+    ; other name, or no such walk). A fresh install showed "not recorded"
+    ; while it walked the shipped one (2026-11-10).
+    static Builtin := Map("sell_to_fisher", "toShop", "fisher_to_fishing", "back")
+    static BuiltinWalk(routes, name, vip := true) {
+        if !(RouteRecorder.Builtin.Has(name) && routes is Map)
+            return ""
+        variant := vip ? "vip" : "nonvip"
+        if !(routes.Has(variant) && routes[variant] is Map && routes[variant].Has(RouteRecorder.Builtin[name]))
+            return ""
+        steps := routes[variant][RouteRecorder.Builtin[name]]
+        if !(steps is Array && steps.Length > 0)
+            return ""
+        if (name = "sell_to_fisher")
+            steps := RouteRecorder.TrimInteract(steps).steps
+        return {steps: steps, label: "built-in " (vip ? "VIP" : "non-VIP") " walk"}
+    }
+
     static Merge(routes, name, steps, stamp := "") {
         if !(routes is Map)
             throw ValueError("RouteRecorder: routes must be a Map")

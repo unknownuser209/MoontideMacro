@@ -230,7 +230,9 @@ Test_Calibrate_steplist_default_potions() {
         Calibrate.Use(d "\cal.json")
         ids := CalIds(Calibrate.Steps())
         AssertTrue(CalHas(ids, "fisher_item_lucky_potion"), "lucky")
-        AssertTrue(CalHas(ids, "fisher_item_speed_potion"), "speed")
+        ; 2026-11-11: Lucky only (a fresh copy asked a friend for a Speed
+        ; Potion tile no preset has)
+        AssertTrue(!CalHas(ids, "fisher_item_speed_potion"), "no speed step by default")
     } finally {
         CalCleanup(d)
     }
@@ -316,7 +318,7 @@ Test_Calibrate_craft_potions_in_ini_defaults() {
     d := CalTempDir()
     try {
         cfg := Config.Load(d)
-        AssertEq(cfg.Get("Craft.potions", "x"), "Lucky Potion,Speed Potion", "default registered")
+        AssertEq(cfg.Get("Craft.potions", "x"), "Lucky Potion", "default registered")
         AssertTrue(InStr(FileRead(d "\settings.ini", "UTF-8"), "[Craft]"), "written to new ini")
     } finally {
         CalCleanup(d)

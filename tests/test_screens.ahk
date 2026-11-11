@@ -421,3 +421,148 @@ Test_Screens_FishingStatusLineReadsUnderEden() {
     for f in ["fish_status_waiting_eden", "fish_status_anyminute_eden"]
         AssertEq(RegExMatch(ScrRead(f, r), FishingTask.ReadyRe), 0, f ": line out, not ready")
 }
+
+; ---- fishing at 1920x1080 (live 2026-11-10) ------------------------------
+; Native 1080p frames, cropped (fish1080_<what>_x<ox>_y<oy>.png = the crop's
+; top left on the 1920x1080 screen): the panel idle, the reel, the catch
+; card. The fishing panel / reel / card scale x0.84, not x0.75, and their
+; text keeps its pixel size (FishingTask.MapFishing). Every read goes
+; through the task's own mapping, as in the game.
+
+; Screen at 1920x1080 for a crop taken at ox, oy (callers Reset in finally)
+ScrAt1080(ox, oy) => Screen.SetClient(-ox, -oy, 1920, 1080)
+
+ScrFish1080(name) => A_ScriptDir "\screens\fish1080_" name ".png"
+
+ScrFishMapped() {
+    c := Json.Parse(FileRead(A_ScriptDir "\..\data\coords.json", "UTF-8"))
+    return FishingTask.MapFishing(c["fishing"])
+}
+
+Test_Screens_Fishing1080PanelReads() {
+    p := ScrFish1080("idle_x700_y600")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt1080(700, 600)
+        fc := ScrFishMapped()
+        s := FishingTask.MapRect(FishingTask.StatusRect)
+        AssertTrue(RegExMatch(Ocr.ReadFile(p, s*), FishingTask.ReadyRe) > 0, "status line reads Location")
+        old := FishingTask.StatusRect     ; the x0.75 box cut the L off
+        AssertEq(RegExMatch(Ocr.ReadFile(p, old*), FishingTask.ReadyRe), 0, "x0.75 status box misses it (why the mapping)")
+        t := fc["panelTitle"]
+        AssertTrue(InStr(StrLower(Ocr.ReadFile(p, t["rect"]*)), t["word"]), "panel title reads Fishing")
+        b := fc["fishButton"]
+        AssertTrue(InStr(StrLower(Ocr.ReadFile(p, b["rect"]*)), b["word"]), "button reads Fish")
+        ; the rod click lands on the Fish button (crop 65..235, 222..247;
+        ; Screen maps to the crop's px here)
+        r := Screen.Pt(fc["rod"][1], fc["rod"][2])
+        AssertTrue(r.x >= 70 && r.x <= 230 && r.y >= 224 && r.y <= 245, "rod click on the button (" r.x "," r.y ")")
+    } finally
+        Screen.Reset()
+}
+
+Test_Screens_Fishing1080ReelSeen() {
+    p := ScrFish1080("reel_x700_y600")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt1080(700, 600)
+        rc := ScrFishMapped()["reel"]
+        g := MatchFileGrab(p)
+        grab := (x1, x2, ys, stride) => ScrStripRows(g, x1, x2, ys, stride)
+        ys := [rc["arrowY"], rc["barY"]]
+        for y in rc["borderYs"]
+            ys.Push(y)
+        rows := grab(rc["x1"], rc["x2"], ys, rc["stride"])
+        s := FishLogic.ReelScan(rows[1], rows[2], rc["x1"], rc["stride"])
+        AssertTrue(s.m > 0, "arrow found")
+        AssertTrue(s.fill != "", "bar colour found")
+        ; the arrow sits over the cyan bar's end (screen ~910 = crop 210)
+        ax := Screen.X(s.m)
+        AssertTrue(ax >= 195 && ax <= 225, "arrow at crop x " ax)
+        ; a border row is the bar's white frame (_ReelUp's 90 %). This frame
+        ; is a JPEG capture: over the cyan fill its chroma tints the line
+        ; (193,244,245), so only the part past the fill (crop x > 270, where
+        ; the line is 228,228,228) is counted here.
+        white := false
+        Loop rows.Length - 2 {
+            n := 0, all := 0
+            for c in rows[A_Index + 2] {
+                if (Screen.X(rc["x1"] + (A_Index - 1) * rc["stride"]) <= 270)
+                    continue
+                all++, n += FishLogic.ReelWhite(c) ? 1 : 0
+            }
+            white := white || (all > 50 && n * 10 >= all * 9)
+        }
+        AssertTrue(white, "a border row is the bar's white frame (_ReelUp)")
+    } finally
+        Screen.Reset()
+}
+
+Test_Screens_Fishing1080CatchCard() {
+    p := ScrFish1080("card_x600_y180")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt1080(600, 180)
+        fc := ScrFishMapped()
+        r := fc["result"]["rect"]
+        t := Ocr.ReadFile(p, r[1], r[2], r[3], r[4], FishingTask.CardScale)
+        AssertTrue(RegExMatch(t, FishingTask.CardRe) > 0, "card reads Fish Caught (" t ")")
+        AssertEq(RegExMatch(t, FishingTask.FailRe), 0, "not a miss")
+        ; the close click on the card's X (crop 503..521, 153..171)
+        c := Screen.Pt(fc["close"][1], fc["close"][2])
+        AssertTrue(Abs(c.x - 512) <= 10 && Abs(c.y - 162) <= 10, "close click on the X (" c.x "," c.y ")")
+    } finally
+        Screen.Reset()
+}
+
+Test_Screens_FishingMappingOnlyOff1440() {
+    c := Json.Parse(FileRead(A_ScriptDir "\..\data\coords.json", "UTF-8"))["fishing"]
+    m := FishingTask.MapFishing(c)
+    AssertEq(Json.Stringify(m), Json.Stringify(c), "identity at 2560x1440")
+    AssertEq(Json.Stringify(FishingTask.MapRect(FishingTask.StatusRect)), Json.Stringify(FishingTask.StatusRect), "status box unchanged at 2560x1440")
+}
+
+; grab(x1, x2, ys, stride) over a frame in design px, each sample at its
+; Screen-mapped pixel (nearest), like StripGrab.Rows
+ScrStripRows(g, x1, x2, ys, stride) {
+    out := []
+    for y in ys {
+        sy := Screen.Y(y), row := []
+        x := x1
+        while (x <= x2) {
+            DllCall("gdiplus\GdipBitmapGetPixel", "Ptr", g._bmp, "Int", Screen.X(x), "Int", sy, "UInt*", &col := 0)
+            row.Push(col & 0xFFFFFF)
+            x += stride
+        }
+        out.Push(row)
+    }
+    return out
+}
+
+; the fishing panel / card scale, measured per size (live windowed, 2026-11-11)
+Test_Screens_FishingUiScaleMeasured() {
+    AssertTrue(Abs(FishingTask.UiK(1.0) - 1.0) < 0.001, "2560x1440")
+    AssertTrue(Abs(FishingTask.UiK(0.75) - 0.84) < 0.001, "1920x1080")
+    AssertTrue(Abs(FishingTask.UiK(0.5333) - 0.726) < 0.001, "1366x768")
+    k := FishingTask.UiK(0.625)
+    AssertTrue(k > 0.726 && k < 0.84, "1600x900 between 768p and 1080p: " k)
+    AssertTrue(FishingTask.UiK(0.5) < 0.726, "1280x720 below 768p")
+    AssertTrue(FishingTask.UiK(1.5) > 1, "4K above 1")
+    ; 1366x768: the reel bar lands where it was measured (client 510..855)
+    try {
+        Screen.SetClient(0, 0, 1366, 768)
+        a := FishingTask.PanelPt(1042, 1044), b := FishingTask.PanelPt(1517, 1044)
+        AssertTrue(Abs(Screen.X(a.x) - 510) <= 3 && Abs(Screen.X(b.x) - 855) <= 3, "reel bar x " Screen.X(a.x) ".." Screen.X(b.x))
+    } finally Screen.Reset()
+}
+
+; 1366x768 (live, 2026-11-11): Mari's name in her dialog is small text that
+; reads only at the x2 variant; the name check read '' and nothing was bought
+Test_Screens_MariName768() {
+    try {
+        Screen.SetClient(0, 0, 1366, 768)
+        b := MerchantTask.Layout.dialogName
+        t := Ocr.ReadFile(A_ScriptDir "\screens\mari_dialog_768.jpg", b.x, b.y, b.w, b.h, MerchantTask.NameScale)
+        AssertTrue(RegExMatch(t, MerchantTask.NameRe["Mari"]) > 0, "her name reads at 768: '" t "'")
+    } finally Screen.Reset()
+}

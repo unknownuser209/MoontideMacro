@@ -889,3 +889,68 @@ Test_Reset_RealPromptReads() {
     ; Eden's title alone (no question, no buttons) is no prompt
     AssertTrue(!Input._Has("", "prompt", (x, y, w, h) => "Eden`nThe Void Contractor"), "the title alone is no prompt")
 }
+
+; Roblox's own respawn prompt does not scale like the game's UI: at
+; 1366x768 it sat out of both boxes and every respawn failed (live
+; 2026-11-11). Below 1440p a wide box right of the chat is read too.
+class RcWideIO {
+    __New(hit) => (this.hit := hit, this.reads := [])
+    Ocr(x, y, w, h, scale := 1) {
+        this.reads.Push(x "," y)
+        return (x = this.hit.x && y = this.hit.y) ? "Are you sure you want to respawn your character? Respawn Don't Respawn" : ""
+    }
+}
+Test_Reset_PromptWideBoxBelow1440() {
+    w := Input.ResetChecks["prompt"].wide
+    io := RcWideIO(w)
+    AssertEq(Input._Has(io, "prompt"), false, "2560x1440: the wide box is not read")
+    try {
+        Screen.SetClient(0, 0, 1366, 768)
+        AssertEq(Input._Has(io, "prompt"), true, "1366x768: the prompt reads in the wide box")
+        ; it starts right of the chat (client x >= 483 at 768p): the chat's
+        ; "[Respawn]: You can reset after 2s." line is never in it
+        AssertTrue(Screen.X(w.x) - Screen.cx > 483, "the wide box starts right of the chat")
+    } finally Screen.Reset()
+}
+
+; Below 1440p the Collections screen's [Exit] is looked for by its text and
+; clicked there (1366x768: 24 px under the scaled point, live 2026-11-11)
+class RcExitIO {
+    __New() => (this.calls := 0)
+    FindWord(x, y, w, h, re, wordRe, scale := 1) {
+        this.calls++
+        return {x: 513, y: 203, text: "Aura Collections [Exit]"}
+    }
+}
+Test_Reset_ExitFoundByItsTextBelow1440() {
+    io := RcExitIO()
+    AssertEq(Input._ExitAt(io), "", "2560x1440: the calibrated point (no text search)")
+    AssertEq(io.calls, 0, "no search at 2560x1440")
+    try {
+        Screen.SetClient(0, 0, 1366, 768)
+        p := Input._ExitAt(io)
+        AssertTrue(IsObject(p) && p.x = 513 && p.y = 203, "1366x768: where [Exit] reads (design px)")
+        AssertEq(Input._ExitAt({}), "", "an io that cannot find text: none")
+    } finally Screen.Reset()
+}
+
+; 5:4 (live 1280x1024): "[Exit]" squeezed into the title, only "Aura" reads:
+; placed a fixed design offset right of the "Common" row (the list keeps its shape)
+class RcSqueezeIO {
+    FindWord(x, y, w, h, re, wordRe, scale := 1) {
+        if InStr(re, "exit")
+            return ""
+        if InStr(re, "aur")
+            return {x: 140, y: 177, text: "Aura"}
+        if InStr(re, "common")
+            return {x: 300, y: 300, text: "Common"}
+        return ""
+    }
+}
+Test_Reset_ExitPlacedFromTheTitleWhenSqueezed() {
+    try {
+        Screen.SetClient(0, 0, 1280, 1024)
+        p := Input._ExitAt(RcSqueezeIO())
+        AssertTrue(IsObject(p) && p.x = 300 + Input.ExitFromCommon && p.y = 177, "right of Common by the list's fixed offset, on the title's row: " (IsObject(p) ? p.x "," p.y : "none"))
+    } finally Screen.Reset()
+}

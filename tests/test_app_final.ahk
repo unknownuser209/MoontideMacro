@@ -423,6 +423,31 @@ Test_App_LogGoesToAFile() {
     }
 }
 
+; a reader that holds macro.log without write sharing (Git Bash tail -F,
+; 2026-11-10) made every FileAppend fail: 36 minutes of lines were lost.
+; Lines that could not be written are kept and written with the next line.
+Test_App_LogKeepsLinesWhileTheFileIsLocked() {
+    t := AppTestMake(Map("cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0)))
+    dir := A_Temp "\vesper_loglock_" A_TickCount
+    DirCreate(dir "\logs")
+    try {
+        t.app.root := dir
+        t.app.Log("first line")
+        f := FileOpen(dir "\logs\macro.log", "r -w")   ; deny write sharing
+        t.app.Log("written while locked 1")
+        t.app.Log("written while locked 2")
+        f.Close()
+        t.app.Log("after the lock")
+        txt := FileRead(dir "\logs\macro.log", "UTF-8")
+        p1 := InStr(txt, "written while locked 1"), p2 := InStr(txt, "written while locked 2"), p3 := InStr(txt, "after the lock")
+        AssertTrue(p1 && p2 && p3, "no line lost")
+        AssertTrue(p1 < p2 && p2 < p3, "in order")
+        AssertTrue(InStr(txt, "first line") && InStr(txt, "first line") < p1, "the earlier line is still first")
+    } finally {
+        try DirDelete(dir, true)
+    }
+}
+
 Test_App_HasObbyAndMemoryMatch() {
     t := AppTestMake(Map("defaultTasks", 1))
     AssertTrue(t.app._taskMap.Has("obby"), "obby task built")

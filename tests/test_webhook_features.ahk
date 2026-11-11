@@ -446,7 +446,7 @@ Test_Wf_StartFieldsReflectConfig() {
         s .= f["name"] ": " f["value"] "`n"
     AssertEq(App.StartFields(AppFakeCfg(Map())).Length, 9, "9 inline status fields (three clean rows of three); the Discord link is in the description")
     for need in ["Fishing: " Emoji.Check " On`nsells every 15 catches"
-        , "Auto-craft: " Emoji.Check " On`nLucky Potion, Speed Potion"
+        , "Auto-craft: " Emoji.Check " On`nLucky Potion"
         , "Quests: " Emoji.Check " On", "Merchants: " Emoji.Check " On`nMari, Jester"
         , "Potions: " Emoji.Shield " Dry run (none used)"
         , "@everyone: " Emoji.Check " On`nDreamspace " Chr(0xB7) " Glitched " Chr(0xB7) " Cyberspace"

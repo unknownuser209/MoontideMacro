@@ -364,3 +364,19 @@ Test_RouteRec_NamesIncludeObbyAndMemoryMatch() {
         has[n] := 1
     AssertTrue(has.Has("obby") && has.Has("memory_match"), "obby and memory_match are recordable")
 }
+
+; a fresh install shows the shipped sell walks, not "not recorded" (they are
+; the vip / nonvip toShop / back the macro walks while none is recorded)
+Test_RouteRec_BuiltinSellWalks() {
+    routes := Map("vip", Map("toShop", [["w", "down", 0], ["w", "up", 500], ["e", "down", 300], ["e", "up", 300]], "back", [["a", "down", 0], ["a", "up", 900]])
+        , "nonvip", Map("toShop", [["w", "down", 0], ["w", "up", 600], ["e", "down", 300], ["e", "up", 300]], "back", [["a", "down", 0], ["a", "up", 1100]]))
+    b := RouteRecorder.BuiltinWalk(routes, "sell_to_fisher", true)
+    AssertTrue(IsObject(b), "sell_to_fisher has a built-in walk")
+    AssertEq(b.steps.Length, 2, "its closing E is left out (the walk test presses it)")
+    AssertEq(b.label, "built-in VIP walk", "label")
+    b := RouteRecorder.BuiltinWalk(routes, "fisher_to_fishing", false)
+    AssertEq(b.steps[2][3], 1100, "non-VIP back walk")
+    AssertEq(b.label, "built-in non-VIP walk", "non-VIP label")
+    AssertEq(RouteRecorder.BuiltinWalk(routes, "quest_board", true), "", "other routes have none")
+    AssertEq(RouteRecorder.BuiltinWalk(Map(), "sell_to_fisher", true), "", "no shipped walk: none")
+}

@@ -440,7 +440,7 @@ Test_Obby_NameReadIsExactAfterNormalising() {
     AssertEq(ObbyTask.NameRead("Sailor:", "Sailor"), "other", "'Sailor:' goes on past Sailor")
     AssertEq(ObbyTask.NameRead("Sailor:", "Sailor_Admiral"), "unread", "'Sailor:' may be Admiral cut short")
     AssertEq(ObbyTask.NameRead("Sailor", "Sailor_Admiral"), "unread", "Sailor is never Sailor: Admiral")
-    AssertEq(ObbyTask.NameRead("Saibr", "Sailor"), "unread", "a garbled read could still be Sailor")
+    AssertEq(ObbyTask.NameRead("Saibr", "Sailor"), "same", "two letters off plain Sailor (no colon: not a Sailor: variant)")
     AssertEq(ObbyTask.NameRead("Glock", "Sailor"), "other", "another name")
     AssertEq(ObbyTask.NameRead("Sailor Flying Dutchman`ni in", "Sailor_Flying_Dutchman"), "same", "3x's 'i in' rarity line left out")
     AssertEq(ObbyTask.NameRead("", "Sailor"), "unread", "nothing")
@@ -1084,4 +1084,170 @@ Test_Obby_StorageThatWillNotCloseIsReported() {
     AssertEq(QmClicksAt(o.io, "400,400"), ObbyTask.CloseTries, "the X CloseTries times")
     AssertEq(QmClicksAt(o.io, "10,10"), 0, "no sidebar click while the title reads")
     AssertEq(o.wh.Count("errors"), 1, "reported")
+}
+
+; ---- [Auras] equipFirst: the first search result, no name / button reads ----
+
+; QmObbyTask with Auras.equipFirst = on (1) / off (0); every OCR box read
+; lands in o.reads ("x,y")
+QmObbyEqFirst(initial := "Glock", owned := "", on := 1) {
+    o := QmObbyTask(initial, Map("Auras.equipFirst", on), , , owned)
+    reads := [], s := o.s
+    o.t._env.ocrFn := (x, y, w, h, scale := 1) => (reads.Push(x "," y), s.Ocr(x, y, w, h))
+    o.reads := reads
+    return o
+}
+
+; reads of the name panel / the button / the info lines (from aura_equip 300,300)
+QmObbyAuraReads(reads) {
+    n := ObbyTask.NameBox, b := ObbyTask.ButtonBox, i := ObbyTask.InfoBox
+    boxes := Map((300 + n.dx) "," (300 + n.dy), 1, (300 + b.dx) "," (300 + b.dy), 1, (300 + i.dx) "," (300 + i.dy), 1)
+    k := 0
+    for r in reads
+        k += boxes.Has(r) ? 1 : 0
+    return k
+}
+
+Test_Obby_EquipFirstClicksTheFirstTileThenEquipWithoutReads() {
+    o := QmObbyEqFirst("Glock")
+    o.s.logo := ["Sailor", "Glock"]              ; names unreadable: no matter
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(sw.ok, "Sailor on")
+    AssertTrue(!sw.had, "was not on")
+    AssertEq(sw.prev, "Glock", "Glock to put back")
+    AssertEq(o.s.State().eq, "Sailor", "Sailor worn")
+    iTile := QmObbyFirst(o.io, "move 200,125"), iEq := QmObbyFirst(o.io, "move 300,300")
+    AssertTrue(iTile > 0 && iTile < iEq, "the first result tile clicked, then Equip")
+    AssertEq(QmClicksAt(o.io, "300,300"), 1, "Equip clicked once")
+    AssertTrue(QmObbyLast(o.io, "move 400,400") > iEq, "then the X")
+    AssertTrue(!o.s.State().open, "storage closed")
+    AssertEq(QmObbyAuraReads(o.reads), 0, "no name / button read")
+    ; the put back: the same mode
+    AssertTrue(o.t.PutBack(SchedCtx(), sw), "put back")
+    AssertEq(o.s.State().eq, "Glock", "Glock equipped again")
+    AssertTrue(!o.s.State().open, "storage closed again")
+    AssertEq(QmObbyAuraReads(o.reads), 0, "still no name / button read")
+    AssertEq(o.wh.Count("errors"), 0, "no error")
+}
+
+Test_Obby_EquipFirstRunsTheObbyAndUnequipsAfter() {
+    o := QmObbyEqFirst("")
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+    AssertTrue(QmObbyFirst(o.io, "move 300,300") < QmObbyFirst(o.io, "down w"), "Sailor equipped before the route")
+    AssertEq(QmClicksAt(o.io, "300,300"), 2, "Equip, then Unequip after (the same spot)")
+    AssertEq(o.s.State().eq, "", "Sailor off again: no aura, as before")
+    AssertEq(QmObbyAuraReads(o.reads), 0, "no name / button read")
+    AssertEq(o.wh.Count("errors"), 0, "no error")
+}
+
+Test_Obby_EquipFirstTakesWhatTheSearchListsFirst() {
+    ; on: whatever the search lists first goes on (the user's choice);
+    ; off: unchanged, the names are read and plain Sailor is found
+    owned := ["Sailor: Admiral", "Sailor", "Glock"]
+    o := QmObbyEqFirst("Glock", owned)
+    AssertTrue(o.t.PutOnSailor(SchedCtx()).ok, "on: swapped")
+    AssertEq(o.s.State().eq, "Sailor: Admiral", "on: the first result equipped")
+    AssertEq(QmObbyAuraReads(o.reads), 0, "on: no name / button read")
+    off := QmObbyEqFirst("Glock", owned, 0)
+    AssertTrue(off.t.PutOnSailor(SchedCtx()).ok, "off: swapped")
+    AssertEq(off.s.State().eq, "Sailor", "off: plain Sailor, found by its name")
+    AssertTrue(QmObbyAuraReads(off.reads) > 0, "off: the name and button are read as before")
+    AssertTrue(!off.s.State().open, "off: storage closed")
+}
+
+Test_Obby_EquipFirstAuraOnAlreadyOpensNothing() {
+    ; an Equip click would take it off: the log says it is on, nothing done
+    o := QmObbyEqFirst("Sailor")
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(sw.ok && sw.had, "already on")
+    AssertEq(o.io.Clicks(), 0, "nothing clicked")
+    AssertEq(o.s.State().eq, "Sailor", "Sailor kept")
+    AssertTrue(o.t.PutBack(SchedCtx(), sw), "nothing to put back")
+    AssertEq(o.io.Clicks(), 0, "still nothing clicked")
+}
+
+Test_Obby_EquipFirstNoResultClicksNoTileNorEquip() {
+    o := QmObbyEqFirst("Glock", ["Glock"])
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(!sw.ok, "no Sailor owned")
+    AssertTrue(InStr(sw.why, "no result tile"), "says why")
+    AssertEq(QmClicksAt(o.io, "300,300"), 0, "Equip never clicked")
+    AssertEq(QmClicksAt(o.io, "200,125"), 0, "the empty first slot never clicked")
+    AssertTrue(!o.s.State().prompt, "no click through into the world")
+    AssertEq(QmCountMoves(o.io, "move 567,-25"), ObbyTask.SearchTries // 2, "the Special tab tried too")
+    AssertTrue(!o.s.State().open, "storage closed")
+    AssertEq(o.s.State().eq, "Glock", "aura unchanged")
+}
+
+Test_Obby_EquipFirstStorageNotOpenNothingClicked() {
+    o := QmObbyEqFirst("Glock")
+    o.s.closed := true
+    AssertTrue(!o.t.PutOnSailor(SchedCtx()).ok, "not swapped")
+    AssertEq(QmClicksAt(o.io, "200,125"), 0, "no tile clicked")
+    AssertEq(QmClicksAt(o.io, "300,300"), 0, "Equip never clicked")
+    AssertEq(QmObbyFirst(o.io, "type S"), 0, "nothing typed")
+}
+
+; 16:10 at 1440x900 (live 2026-11-11): plain Sailor read 'Sanor'
+Test_Obby_NameReadTwoLettersOffAShortName() {
+    AssertEq(ObbyTask.NameRead("Sanor", "Sailor"), "same", "Sanor = Sailor (2 letters off)")
+    AssertEq(ObbyTask.NameRead("Sailor: Admiral", "Sailor"), "other", "the colon still means another aura")
+    AssertEq(ObbyTask.NameRead("Sa", "Sailor"), "unread", "too short to tell")
+    AssertTrue(ObbyTask.NameRead("Eden", "Sailor") != "same", "another name is never Sailor")
+}
+
+; 1366x768 (live 2026-11-11): 'Sanor' is one letter off Solar too, so the
+; known-name guard refused it; a Sailor search lists only names holding
+; "Sailor", so only those can be the other aura on screen
+Test_Obby_NameReadSanorWithSolarKnown() {
+    old := ObbyTask.Known
+    try {
+        m := Map()
+        for n in ["Sailor", "Solar", "Sailor: Admiral", "Sailor: Flying Dutchman", "Eden"]
+            m[GameLists.Fold(n)] := true
+        ObbyTask.Known := m
+        AssertEq(ObbyTask.NameRead("Sanor", "Sailor"), "same", "Solar cannot be in a Sailor search")
+        AssertEq(ObbyTask.NameRead("Sailor: Admiral", "Sailor"), "other", "the Admiral is still another aura")
+        AssertTrue(ObbyTask.NameRead("Solar", "Sailor") != "same", "a clean Solar read is not Sailor")
+    } finally ObbyTask.Known := old
+}
+
+; 1600x900 (live 2026-11-11): the rarity "1 in 100,000" on the name's line
+; read 'npoo,ooo' and Sailor was taken for another aura
+Test_Obby_NameReadRarityOnTheSameLine() {
+    AssertEq(ObbyTask.NameRead("Sailor npoo,ooo", "Sailor"), "same", "rarity cut off")
+    AssertEq(ObbyTask.NameRead("Sailor`nnpoo,ooo", "Sailor"), "same", "rarity on its own line (live, two lines)")
+    AssertEq(ObbyTask.NameRead("Sailor`nupoo,ooo", "Sailor"), "same", "and upoo")
+    AssertEq(ObbyTask.NameRead("Sailor 12poopoo", "Sailor"), "same", "digits, no comma (live 2560x1440)")
+    AssertEq(ObbyTask.NameRead("Sailor npoopoo", "Sailor"), "same", "no digit, no comma (live 2560x1440)")
+    AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor in", "Sailor in '2,000`""], "Sailor"), "same", "a bare 'in' left of the rarity (live 2560x1440)")
+    AssertEq(ObbyTask.NameVerdict(["Sailor 12poopoo", "Sailor in 12,ooopoa", "Sailor"], "Sailor"), "same", "live 11:48:57 triple")
+    AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor npoopoo", "Sailor"], "Sailor"), "same", "one scale with the rarity no longer vetoes")
+    AssertEq(ObbyTask.NameRead("Poseidon", "Poseidon"), "same", "a real name with po is kept")
+    AssertTrue(ObbyTask.NameRead("Sailor: Admiral 12poopoo", "Sailor") = "other", "the Admiral with its rarity")
+    AssertEq(ObbyTask.NameRead("Sailor 1 in 100,000", "Sailor"), "same", "rarity with digits")
+    AssertEq(ObbyTask.NameRead("Sailor : Flying Putchman", "Sailor"), "other", "the Dutchman is still another aura")
+    AssertEq(ObbyTask.NameRead("Sailor: Admiral npoo,ooo", "Sailor"), "other", "the Admiral too")
+}
+
+; 2560x1440 (live 2026-11-11 11:10): no tile read as Sailor, the log pick put
+; on Sailor: Admiral, the swap failed and the obby skipped with the Admiral
+; still on (the player's Eden lost until the next hunt). A failed swap that
+; left another aura on puts the one from before back.
+Test_Obby_FailedSwapPutsTheAuraBack() {
+    o := QmObbyTask("Glock")
+    calls := []
+    o.t.DefineProp("PutOnSailor", {Call: (this, ctx) => (o.s.logName := "Celestial", {ok: false, had: false, prev: "Glock", unknown: false, why: "no Sailor"})})
+    o.t.DefineProp("PutBack", {Call: (this, ctx, info) => (calls.Push(info.prev), true)})
+    o.t.Run(SchedCtx())
+    AssertEq(calls.Length, 1, "put back once")
+    AssertEq(calls.Length ? calls[1] : "", "Glock", "the aura from before")
+    AssertTrue(QmObbyLogHas(o.logs, "put back"), "logged")
+    ; nothing changed: no put-back
+    o2 := QmObbyTask("Glock")
+    calls2 := []
+    o2.t.DefineProp("PutOnSailor", {Call: (this, ctx) => {ok: false, had: false, prev: "Glock", unknown: false, why: "no Sailor"}})
+    o2.t.DefineProp("PutBack", {Call: (this, ctx, info) => (calls2.Push(info.prev), true)})
+    o2.t.Run(SchedCtx())
+    AssertEq(calls2.Length, 0, "Glock still on: nothing to put back")
 }

@@ -6831,3 +6831,16 @@ Test_Minions_DeathEndsTheBackOff() {
         n += (i > st.at && e = "down s") ? 1 : 0
     AssertEq(n, 0, "no s after the respawn")
 }
+
+Test_Minions_EquipFirstFindsEdenUnderTheSpecialTab() {
+    m := MnTask([[]], Map("Minions.putBack", 1, "Auras.equipFirst", 1))
+    m.s.special := ["Eden"], m.s.logo := ["Eden"]
+    reads := [], s := m.s
+    m.t._swap._env.ocrFn := (x, y, w, h, scale := 1) => (reads.Push(x "," y), s.Ocr(x, y, w, h))
+    m.t.Run(SchedCtx())
+    AssertTrue(QmCountMoves(m.io, "move 567,-25") >= 1, "the Special tab opened after an empty Regular search")
+    AssertTrue(QmObbyFirst(m.io, "down Left") > 0, "the hunt ran")
+    AssertEq(m.wh.Count("errors"), 0, "Eden equipped")
+    AssertEq(m.s.State().eq, "Glock", "Glock back on after")
+    AssertEq(QmObbyAuraReads(reads), 0, "no name / button read")
+}

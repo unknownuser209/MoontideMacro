@@ -85,28 +85,31 @@ Test_Screen_1366x768() {
     ))
 }
 
+; Sol's RNG stretches its UI to the client (x by W/2560, y by H/1440;
+; live 1440x900, 2026-11-11): no letterbox, anchors move nothing
 Test_Screen_Ultrawide3440x1440() {
     ScrnAt(0, 0, 3440, 1440, () => (
-        AssertTrue(Screen.s = 1, "scale 1 (height)"),
-        ScrnPtIs(Screen.Pt(1280, 720), 1720, 720, "centred box"),
-        ScrnPtIs(Screen.Pt(100, 50, "L"), 100, 50, "L: pinned left"),
-        ScrnPtIs(Screen.Pt(2500, 50, "R"), 3380, 50, "R: pinned right"),
-        ScrnRectIs(Screen.Rect({x: 2020, y: 1010, w: 514, h: 40}, "R"), 2900, 1010, 514, 40, "R rect"),
-        ScrnPtIs(Screen.Inv(1720, 720), 1280, 720, "inverse C"),
-        ScrnPtIs(Screen.Inv(3380, 50, "R"), 2500, 50, "inverse R"),
+        AssertTrue(Screen.s = 1, "lengths at the smaller scale (height)"),
+        ScrnPtIs(Screen.Pt(1280, 720), 1720, 720, "centre"),
+        ScrnPtIs(Screen.Pt(100, 50, "L"), 134, 50, "x stretched (anchor ignored)"),
+        ScrnPtIs(Screen.Pt(2560, 1440), 3440, 1440, "corner to corner"),
+        ScrnPtIs(Screen.Inv(1720, 720), 1280, 720, "inverse"),
         AssertTrue(Screen.OcrScale(2) = 2, "same OCR scale")
     ))
 }
 
-Test_Screen_2560x1600() {
-    ; 16:10: scale by width (1), box centred vertically (80 px bars)
+Test_Screen_16by10() {
+    ScrnAt(0, 0, 1440, 900, () => (
+        AssertTrue(Abs(Screen.sx - 0.5625) < 0.0001, "x by width"),
+        AssertTrue(Abs(Screen.sy - 0.625) < 0.0001, "y by height"),
+        ; the Fishing Shop measured live: design 576..1984 x 322..1113
+        ScrnRectIs(Screen.Rect({x: 576, y: 322, w: 1408, h: 791}), 324, 201, 792, 495, "the shop as measured (323..1116 x 202..697)"),
+        ScrnPtIs(Screen.Inv(720, 450), 1280, 720, "inverse centre")
+    ))
     ScrnAt(0, 0, 2560, 1600, () => (
-        AssertTrue(Screen.s = 1, "scale by width"),
-        ScrnPtIs(Screen.Pt(1280, 720), 1280, 800, "centred"),
-        ScrnPtIs(Screen.Pt(10, 10, "T"), 10, 10, "T: pinned top"),
-        ScrnPtIs(Screen.Pt(10, 1430, "B"), 10, 1590, "B: pinned bottom"),
-        ScrnPtIs(Screen.Pt(2550, 1430, "BR"), 2550, 1590, "BR"),
-        ScrnPtIs(Screen.Inv(1280, 800), 1280, 720, "inverse")
+        AssertTrue(Screen.s = 1, "lengths by width"),
+        ScrnPtIs(Screen.Pt(1280, 720), 1280, 800, "centre"),
+        ScrnPtIs(Screen.Pt(10, 1430, "B"), 10, 1589, "y stretched (anchor ignored)")
     ))
 }
 
@@ -115,7 +118,7 @@ Test_Screen_SecondMonitorOrigin() {
     ScrnAt(-1920, 0, 1920, 1080, () => (
         ScrnPtIs(Screen.Pt(1000, 400), -1170, 300, "point"),
         ScrnPtIs(Screen.Inv(-1170, 300), 1000, 400, "inverse"),
-        AssertEq(Screen.Verified(), false, "not the verified size")
+        AssertEq(Screen.Verified(), true, "1920x1080 is a tested size")
     ))
     ; 2560x1440 on a second monitor: same size, so no scaling, only the shift
     ScrnAt(2560, 0, 2560, 1440, () => (
@@ -128,7 +131,7 @@ Test_Screen_RoundTripEveryDesignPointAt1080() {
     ; screen -> design -> screen lands on the same screen pixel (calibration)
     ScrnAt(0, 0, 1920, 1080, () => ScrnRoundTrip())
     ScrnAt(0, 0, 1366, 768, () => ScrnRoundTrip())
-    ScrnAt(0, 0, 3440, 1440, () => ScrnRoundTrip())
+    ScrnAt(0, 0, 1440, 900, () => ScrnRoundTrip())    ; (above 1:1 not every screen px has a design px)
 }
 
 ScrnRoundTrip() {
@@ -145,7 +148,7 @@ Test_Screen_DescribeNamesSizeAndVerified() {
     AssertTrue(!InStr(Screen.Describe(), "verified"), "no warning at 2560x1440")
     ScrnAt(0, 0, 1920, 1080, () => (
         AssertTrue(InStr(Screen.Describe(), "1920x1080"), "size"),
-        AssertTrue(InStr(Screen.Describe(), "only 2560x1440 is verified"), "warning"),
+        AssertTrue(!InStr(Screen.Describe(), "not tested"), "a tested size: no warning"),
         AssertEq(Screen.SizeText(), "1920x1080 (x0.75)", "size text")
     ))
 }
@@ -277,7 +280,7 @@ Test_App_OtherFullscreenSizeRunsWithNote() {
     t.app.roblox := ScrnFakeRoblox("1920x1080 (x0.75)", false)
     t.app.Start()
     AssertEq(t.ui.status.state, "Running", "a fullscreen 1080p client runs")
-    AssertTrue(InStr(t.ui.status.task, "1920x1080") && InStr(t.ui.status.task, "only 2560x1440 is verified"), "status names the size and the verified one")
+    AssertTrue(InStr(t.ui.status.task, "1920x1080") && InStr(t.ui.status.task, "not tested at this size"), "status names the size and that it is untested")
     t.app.Tick()
     n := 0
     for l in t.ui.logs
@@ -302,4 +305,23 @@ Test_App_WindowedPausesNeedsFullscreen() {
     for l in t.ui.logs
         found := found || InStr(l, "Moontide needs Roblox fullscreen")
     AssertTrue(found, "the log says what to do")
+}
+
+; panel modes at 16:10, as measured live at 1440x900 (2026-11-11)
+Test_Screen_PanelModes16by10() {
+    ScrnAt(0, 0, 1440, 900, () => (
+        ; Aura Storage: design 640..1920 x 369..1071 -> 360..1080 x 252..646 (centred, even)
+        Screen.WithMode("C", () => ScrnRectIs(Screen.Rect({x: 640, y: 369, w: 1280, h: 702}), 360, 253, 720, 394, "C: the storage")),
+        ; the quest panel's Claim button (design 2169,1081) -> inside 1137..1261 x 640..672
+        Screen.WithMode("RH", () => (p := Screen.Pt(2169, 1081), AssertTrue(p.x >= 1137 && p.x <= 1261 && p.y >= 640 && p.y <= 680, "RH: Claim at " p.x "," p.y))),
+        ScrnPtIs(Screen.Pt(1000, 400), 563, 250, "back to S after WithMode"),
+        Screen.WithMode("C", () => ScrnPtIs(Screen.Inv(720, 450), 1280, 720, "C inverse")),
+        Screen.WithMode("RH", () => (q := Screen.Inv(Screen.X(2300), Screen.Y(900)), AssertTrue(Abs(q.x - 2300) <= 1 && Abs(q.y - 900) <= 1, "RH round trip")))
+    ))
+    ; 16:9: every mode is the same pixel
+    ScrnAt(0, 0, 1920, 1080, () => (
+        Screen.WithMode("C", () => ScrnPtIs(Screen.Pt(2169, 1081), 1627, 811, "C at 16:9")),
+        Screen.WithMode("RH", () => ScrnPtIs(Screen.Pt(2169, 1081), 1627, 811, "RH at 16:9")),
+        ScrnPtIs(Screen.Pt(2169, 1081), 1627, 811, "S at 16:9")
+    ))
 }

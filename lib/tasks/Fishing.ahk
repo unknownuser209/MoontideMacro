@@ -51,6 +51,138 @@ class FishingTask {
         this._coords := FishLogic.Require("FishingTask", cfg)
         this._logged := false
         this._nonBites := 0         ; consecutive "no reel bar" catches
+        this._fcKey := ""           ; _Fc: client rect of the cached mapping
+        this._fcMapped := ""
+    }
+
+    ; ---- off 2560x1440 ---------------------------------------------------
+    ; The fishing panel, its reel bar and the catch card do not scale x0.75
+    ; with the rest of the UI. Live 1920x1080 (2026-11-10, frames measured):
+    ; they scale x0.84 about a fixed share of the client (the panel / reel
+    ; about 0.5 / 0.804, the card about the centre) and their TEXT keeps its
+    ; 1440p pixel size. Under x0.75 the status box cut the L off "Location"
+    ; and fishing never started; the reel strip ran past the bar. Their
+    ; coords are moved there (MapFishing) and handed on as the design px
+    ; that Screen maps onto them. At 2560x1440 nothing changes.
+    ; Their scale off 1440 is not a power of Screen.s: measured (live,
+    ; windowed) 1920x1080 s 0.75 -> 0.84 (reel / card), 1366x768 s 0.533 ->
+    ; 0.726 (reel bar 345 of 475 px, card 312 of 430). UiK interpolates
+    ; between the measured sizes (UiPoints, s ascending) and extends the end
+    ; segments past them.
+    static PanelAnchor := [0.5, 0.804]
+    static CardAnchor := [0.5, 0.5]
+    static UiPoints := [[0.5333, 0.726], [0.75, 0.84], [1.0, 1.0]]
+    static UiK(s) {
+        p := FishingTask.UiPoints
+        i := 1
+        while (i < p.Length - 1 && s > p[i + 1][1])
+            i++
+        a := p[i], b := p[i + 1]
+        return a[2] + (s - a[1]) * (b[2] - a[2]) / (b[1] - a[1])
+    }
+
+    ; data\coords.json's fishing section for the current client (cached per
+    ; client rect); the whole coords Map with it for FishLogic.Settings.
+    _Fc() {
+        fc := this._coords["fishing"]
+        if Screen.IsIdentity()
+            return fc
+        key := Screen.cx "," Screen.cy "," Screen.cw "," Screen.ch
+        if (this._fcKey != key)
+            this._fcMapped := FishingTask.MapFishing(fc), this._fcKey := key
+        return this._fcMapped
+    }
+
+    _CoordsNow() {
+        if Screen.IsIdentity()
+            return this._coords
+        c := this._coords.Clone()
+        c["fishing"] := this._Fc()
+        return c
+    }
+
+    ; A design point on the panel (or, a = CardAnchor, the card) -> the
+    ; design point Screen maps onto where the game draws it now -> {x, y}
+    static PanelPt(x, y, a := "") {
+        if Screen.IsIdentity()
+            return {x: x, y: y}
+        a := IsObject(a) ? a : FishingTask.PanelAnchor
+        k := FishingTask.UiK(Screen.s)
+        sx := Screen.cx + a[1] * Screen.cw + k * (x - a[1] * Screen.DesignW)
+        sy := Screen.cy + a[2] * Screen.ch + k * (y - a[2] * Screen.DesignH)
+        return Screen.Inv(Round(sx), Round(sy))
+    }
+
+    static MapPt(v, a := "") {
+        p := FishingTask.PanelPt(v[1], v[2], a)
+        return [p.x, p.y]
+    }
+
+    static MapRect(v, a := "") {
+        p := FishingTask.PanelPt(v[1], v[2], a), q := FishingTask.PanelPt(v[1] + v[3], v[2] + v[4], a)
+        return [p.x, p.y, q.x - p.x, q.y - p.y]
+    }
+
+    static MapX(x) => FishingTask.PanelPt(x, 1440).x
+    static MapY(y) => FishingTask.PanelPt(1280, y).y
+
+    static MapYs(ys) {
+        out := []
+        for y in ys
+            out.Push(FishingTask.MapY(y))
+        return out
+    }
+
+    ; fishing section -> a copy with every panel and card coord moved (the
+    ; other failsafe clicks keep the x0.75 mapping)
+    static MapFishing(fc) {
+        m := FishingTask._Copy(fc)
+        m["rod"] := FishingTask.MapPt(m["rod"])
+        m["bite"]["pixel"] := FishingTask.MapPt(m["bite"]["pixel"])
+        m["parkMouse"] := FishingTask.MapPt(m["parkMouse"])
+        m["barSample"] := FishingTask.MapPt(m["barSample"])
+        for k in ["strip", "advanced", "reel"] {
+            r := m[k]
+            r["x1"] := FishingTask.MapX(r["x1"]), r["x2"] := FishingTask.MapX(r["x2"])
+        }
+        m["strip"]["rows"] := FishingTask.MapYs(m["strip"]["rows"])
+        m["advanced"]["y"] := FishingTask.MapY(m["advanced"]["y"])
+        r := m["reel"]
+        r["arrowY"] := FishingTask.MapY(r["arrowY"]), r["barY"] := FishingTask.MapY(r["barY"])
+        r["borderYs"] := FishingTask.MapYs(r["borderYs"])
+        m["panelTitle"]["rect"] := FishingTask.MapRect(m["panelTitle"]["rect"])
+        m["fishButton"]["rect"] := FishingTask.MapRect(m["fishButton"]["rect"])
+        card := FishingTask.CardAnchor
+        close := fc["close"]
+        m["close"] := FishingTask.MapPt(close, card)
+        m["result"]["rect"] := FishingTask.MapRect(m["result"]["rect"], card)
+        clicks := m["failsafe"]["clicks"]
+        for i, c in clicks {
+            if FishingTask._OnPanel(c)
+                clicks[i] := FishingTask.MapPt(c)
+            else if (c[1] = close[1] && c[2] = close[2])
+                clicks[i] := FishingTask.MapPt(c, card)
+        }
+        return m
+    }
+
+    ; a design point inside the panel's 1440 box (title to button row)
+    static _OnPanel(c) => c[1] >= 1000 && c[1] <= 1560 && c[2] >= 960 && c[2] <= 1180
+
+    static _Copy(v) {
+        if (Type(v) = "Map") {
+            m := Map()
+            for k, x in v
+                m[k] := FishingTask._Copy(x)
+            return m
+        }
+        if (Type(v) = "Array") {
+            a := []
+            for x in v
+                a.Push(FishingTask._Copy(x))
+            return a
+        }
+        return v
     }
 
     ; Extra wait before deciding "no fishing panel" (it can come back late
@@ -120,12 +252,12 @@ class FishingTask {
     ; -> "ok" | "stopped" | "repath" | "nobite" (no reel bar, nothing clicked)
     ;    | "error" (bad strip capture)
     CatchOnce(ctx) {
-        fc := this._coords["fishing"]
+        fc := this._Fc()
         io := this.deps.io
         now := this.deps.now
         bite := fc["bite"]
         bx := bite["pixel"][1], by := bite["pixel"][2]
-        opt := FishLogic.Settings(this.cfg, this._coords)
+        opt := FishLogic.Settings(this.cfg, this._CoordsNow())
         tStart := now.Call()               ; per-catch timing line (speed work)
 
         ; ---- cast: the panel's button must read Fish --------------------------
@@ -171,8 +303,10 @@ class FishingTask {
             }
             cast := (panel != "exit")
         }
-        if cast && !FishLogic.ClickAt(io, ctx, fc["rod"], fc["rodPreMs"], fc["rodSettleMs"])
+        if cast && !FishLogic.ClickAt(io, ctx, fc["rod"], fc["rodPreMs"], fc["rodSettleMs"]) {
+            this._LineInForNext(ctx, opt, FishingTask.LineOutWaitMs)    ; the line may be going out
             return "stopped"
+        }
         tCast := now.Call()
 
         ; ---- baseline (legacy reel only): no bite can be up yet -----------------
@@ -213,6 +347,8 @@ class FishingTask {
         ; ---- wait for the bite ----------------------------------------------
         if !quick {
             r := this._WaitBite(ctx, opt)
+            if (r = "stopped")
+                this._LineInForNext(ctx, opt, FishingTask.LineInReadMs, false, true)
             if (r != "bite")
                 return r
         }
@@ -269,7 +405,7 @@ class FishingTask {
         io := this.deps.io
         if !HasMethod(io, "Ocr")
             return "caught"
-        rc := this._coords["fishing"]["result"]
+        rc := this._Fc()["result"]
         waited := 0
         Loop {
             txt := this._CardText()
@@ -287,14 +423,14 @@ class FishingTask {
     }
 
     _CardText() {
-        r := this._coords["fishing"]["result"]["rect"]
+        r := this._Fc()["result"]["rect"]
         return this.deps.io.Ocr(r[1], r[2], r[3], r[4], FishingTask.CardScale)
     }
 
     ; -> "failed" | "caught" | "" (no catch card in this text)
     _CardKind(txt) {
         txt := StrLower(txt)
-        for w in this._coords["fishing"]["result"]["failWords"]
+        for w in this._Fc()["result"]["failWords"]
             if InStr(txt, w)
                 return "failed"
         if RegExMatch(txt, FishingTask.FailRe)
@@ -332,7 +468,7 @@ class FishingTask {
     ; CloseTries clicks. -> 1 closed | 0 still up (logged) | -1 stopped.
     ; No io.Ocr: one click, 1.
     _CloseCard(ctx) {
-        fc := this._coords["fishing"]
+        fc := this._Fc()
         io := this.deps.io
         pollMs := fc["result"]["pollMs"]
         Loop FishingTask.CloseTries {
@@ -359,19 +495,65 @@ class FishingTask {
     ; bar's solid white top border (>= 90 % of its width) on one of the
     ; borderYs rows (it sits a few px off y 1030 while the panel slides in).
     ; The waiting panel's title underline reaches ~70 %, never 90 %.
+    ; Below 1440p the arrow's wide base line is a few px off the mapped
+    ; arrowY (1366x768, live 2026-11-11: base at client 524..525, mapped row
+    ; 521 = its 3 px stem, so the marker was never seen and every reel
+    ; failed). There the rows ArrowTries (design px from arrowY) are tried
+    ; and the one that shows the marker is kept (this._arrowRow) for the reel.
+    ; At 2560x1440: arrowY alone, as before.
+    static ArrowTries := [0, 2, 4, 6, 8, 10, -2, -4]
+    _arrowRow := ""
+    _ArrowY(rc) => (this._arrowRow != "" && !Screen.IsIdentity()) ? this._arrowRow : rc["arrowY"]
+
+    ; The reel's [arrow row, bar row]. Below 1440p every ArrowTries row is
+    ; grabbed and the first that shows the arrow is used: the row found at
+    ; the bite (the panel still sliding in) was a few px off once it settled.
+    _ReelRows(rc) {
+        if Screen.IsIdentity()
+            return this.deps.grab.Call(rc["x1"], rc["x2"], [rc["arrowY"], rc["barY"]], rc["stride"])
+        ys := []
+        for d in FishingTask.ArrowTries
+            ys.Push(rc["arrowY"] + d)
+        ys.Push(rc["barY"])
+        all := this.deps.grab.Call(rc["x1"], rc["x2"], ys, rc["stride"])
+        n := FishingTask.ArrowTries.Length
+        for i, d in FishingTask.ArrowTries
+            if FishLogic.ReelArrow(all[i], rc["x1"], rc["stride"]) {
+                this._arrowRow := rc["arrowY"] + d
+                return [all[i], all[n + 1]]
+            }
+        return [all[1], all[n + 1]]
+    }
+
     _ReelUp() {
-        rc := this._coords["fishing"]["reel"]
-        ys := [rc["arrowY"], rc["barY"]]
+        rc := this._Fc()["reel"]
+        tries := Screen.IsIdentity() ? [0] : FishingTask.ArrowTries
+        nt := tries.Length
+        ys := []
+        for d in tries
+            ys.Push(rc["arrowY"] + d)
+        ys.Push(rc["barY"])
         for y in rc["borderYs"]
             ys.Push(y)
         try {
-            rows := this.deps.grab.Call(rc["x1"], rc["x2"], ys, rc["stride"])
+            all := this.deps.grab.Call(rc["x1"], rc["x2"], ys, rc["stride"])
         } catch {
             return false
         }
-        s := FishLogic.ReelScan(rows[1], rows[2], rc["x1"], rc["stride"])
-        if !(s.m && (s.p2 || s.fill != ""))
+        found := false
+        for i, d in tries {
+            s := FishLogic.ReelScan(all[i], all[nt + 1], rc["x1"], rc["stride"])
+            if (s.m && (s.p2 || s.fill != "")) {
+                found := true
+                this._arrowRow := rc["arrowY"] + d
+                break
+            }
+        }
+        if !found
             return false
+        rows := [all[1], all[nt + 1]]               ; rows[3..] = the border rows, as before
+        Loop all.Length - nt - 1
+            rows.Push(all[nt + 1 + A_Index])
         Loop rows.Length - 2 {
             row := rows[A_Index + 2]
             n := 0
@@ -389,7 +571,7 @@ class FishingTask {
     ; failsafe clicks and the pathing failsafe.
     ; -> "bite" | "stopped" | "repath"
     _WaitBite(ctx, opt) {
-        fc := this._coords["fishing"]
+        fc := this._Fc()
         io := this.deps.io
         now := this.deps.now
         fs := fc["failsafe"]
@@ -459,10 +641,10 @@ class FishingTask {
         io := this.deps.io
         if !HasMethod(io, "Ocr")
             return 1
-        fb := this._coords["fishing"]["fishButton"]
+        fb := this._Fc()["fishButton"]
         r := fb["rect"]
         waited := 0
-        s := FishingTask.StatusRect
+        s := FishingTask.MapRect(FishingTask.StatusRect)
         Loop {
             if InStr(StrLower(io.Ocr(r[1], r[2], r[3], r[4])), fb["word"])
                 return io.Wait(fb["settleMs"], ctx) ? 1 : -1
@@ -481,9 +663,70 @@ class FishingTask {
     ; The fishing panel right now (io.Ocr): "exit" (button reads Exit: the
     ; line is out) | "panel" (the "Fishing" title is there) | "" (no panel:
     ; not at the fishing spot).
+    ; Another task takes over (a preempt, not a halt) while the line is out:
+    ; reel it in (the panel's button reads Exit) so no fish bites during that
+    ; task and leaves its "Fishing Failed" card over it (1366x768 soak,
+    ; 2026-11-11: it covered the Aura Storage title and the Memory Match
+    ; notification).
+    ; waitMs: right after the rod click the button may still read Fish for a
+    ; moment: wait up to that long for Exit.
+    static LineOutWaitMs := 1500
+    static LineInReadMs := 1000      ; in the bite wait: a missed Exit read gets this long (06:50, 1080p)
+    ; Start: a line left out by a stop mid-cast (the button reads Exit) is
+    ; reeled in before the first task: its catch card came up during the
+    ; quest walk and the board never opened (live 1920x1080, 2026-11-11).
+    ; Not at the fishing spot: nothing reads, nothing clicked.
+    LineInAtStart(ctx) {
+        try {
+            opt := FishLogic.Settings(this.cfg, this._CoordsNow())
+            io := this.deps.io
+            ; the fish already gone: its card hides the panel (live 1600x900)
+            if (this._CloseLeftoverCard(CleanupCtx(ctx)) < 0)
+                return
+            if (!opt.legacyReel && HasMethod(io, "Ocr")) {
+                t := Trim(RegExReplace(String(io.Ocr(this._Fc()["fishButton"]["rect"]*)), "\s+", " "))
+                if (t != "" && !InStr(StrLower(t), "fish"))     ; nothing / Fish: nothing to say
+                    this.deps.log.Call("fishing: at Start the panel button reads '" SubStr(t, 1, 30) "'")
+            }
+            this._LineInForNext(ctx, opt, 0, true)
+        }
+    }
+
+    ; blind: the line is out for sure (cast, waiting for the bite): when the
+    ; button reads neither Exit nor Fish it is clicked anyway. At 2560x1440
+    ; the waiting panel shows no readable button ("It's quiet... too quiet."),
+    ; the line stayed out and its card covered the next obby (live
+    ; 2026-11-11 12:12). A button that reads Fish = the line is in: no click.
+    _LineInForNext(ctx, opt, waitMs := 0, quiet := false, blind := false) {
+        io := this.deps.io
+        if (opt.legacyReel || !HasMethod(io, "Ocr"))
+            return
+        cctx := CleanupCtx(ctx)
+        if cctx.ShouldStop()
+            return
+        b := this._Fc()["fishButton"]["rect"]
+        waited := 0
+        while ((st := this._PanelState()) != "exit") {
+            if (waited >= waitMs || !io.Wait(250, cctx)) {
+                t := Trim(RegExReplace(String(io.Ocr(b*)), "\s+", " "))
+                if InStr(StrLower(t), "fish")
+                    return                      ; the line is in
+                if blind {
+                    this.deps.log.Call("fishing: next task: the button reads '" SubStr(t, 1, 30) "', not Exit - clicked once to reel the line in")
+                    FishLogic.ClickAt(io, cctx, [b[1] + b[3] // 2, b[2] + b[4] // 2], 80, 300)
+                } else if !quiet
+                    this.deps.log.Call("fishing: next task: the button did not read Exit ('" SubStr(t, 1, 30) "'): line left as it is")
+                return
+            }
+            waited += 250
+        }
+        this.deps.log.Call("fishing: line in before the next task")
+        FishLogic.ClickAt(io, cctx, [b[1] + b[3] // 2, b[2] + b[4] // 2], 80, 300)
+    }
+
     _PanelState() {
         io := this.deps.io
-        fc := this._coords["fishing"]
+        fc := this._Fc()
         b := fc["fishButton"]["rect"]
         if InStr(StrLower(io.Ocr(b[1], b[2], b[3], b[4])), "exit")
             return "exit"
@@ -497,7 +740,7 @@ class FishingTask {
     ; fish within FishLogic.ReelSeenMs: not a real bite, nothing clicked; a
     ; screenshot is saved when the io can take one)
     _Reel(ctx, opt) {
-        fc := this._coords["fishing"]
+        fc := this._Fc()
         rc := fc["reel"]
         io := this.deps.io
         now := this.deps.now
@@ -510,7 +753,7 @@ class FishingTask {
             if ctx.ShouldStop()
                 return "stopped"
             try {
-                rows := this.deps.grab.Call(rc["x1"], rc["x2"], [rc["arrowY"], rc["barY"]], rc["stride"])
+                rows := this._ReelRows(rc)
             } catch as e {
                 this._LogOnce("fishing: strip capture failed (" e.Message "); abandoning this catch")
                 return "error"
@@ -554,7 +797,7 @@ class FishingTask {
     ; "nobar": the bar color never showed in the strip within
     ; FishLogic.BarSeenMs; nothing was clicked (not a real bite).
     _Minigame(ctx, bar, opt) {
-        fc := this._coords["fishing"]
+        fc := this._Fc()
         io := this.deps.io
         now := this.deps.now
         adv := opt.advanced

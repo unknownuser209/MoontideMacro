@@ -39,7 +39,11 @@
 
 class Pixel {
     static _getter := (x, y) => Pixel._ScreenColor(x, y)
-    static _grabber := (x, y, w, h) => Pixel._ScreenGrab(x, y, w, h)
+    ; dw, dh: off 2560x1440 Grab passes the design size to stretch to. The
+    ; 4-parameter form threw there (swallowed by callers): every rect read
+    ; came back empty below 1440p, so no aura result tile ever "showed" at
+    ; 1920x1080 (live 2026-11-10)
+    static _grabber := (x, y, w, h, dw := "", dh := "") => Pixel._ScreenGrab(x, y, w, h, dw, dh)
 
     ; ---- rect signature ------------------------------------------------------
 

@@ -138,3 +138,24 @@ Test_Presets_ApplyBacksUp() {
         AssertTrue(Calibrate.ApplyPreset(d "\presets\nope.json") != "", "a missing preset is refused"),
         AssertEq(Calibrate.Point("inv_open").x, 100, "refused: nothing changed")))
 }
+
+; The shipped 1920x1080 / 100% preset (2026-11-10): Sol's RNG's UI measured
+; at a 1920x1080 view sits at 0.75x its 2560x1440 place (left menu, skills,
+; Roll, hotbar, inventory), so every value equals the 2560x1440 preset's;
+; only Roblox's chat box keeps its pixel size: message area x 13..476,
+; y 102..367 at 1080p, stored in design units (px / 0.75).
+Test_Presets_Shipped1080MatchesThe1440OneButTheChat() {
+    dir := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "") "\data\presets"
+    a := Json.Parse(FileRead(dir "\calibration_2560x1440_100.json", "UTF-8"))["steps"]
+    b := Json.Parse(FileRead(dir "\calibration_1920x1080_100.json", "UTF-8"))["steps"]
+    AssertEq(b.Count, a.Count, "same steps")
+    for id, e in a
+        if (id != "chat_rect")
+            AssertEq(Json.Stringify(b[id], 0), Json.Stringify(e, 0), id " unchanged")
+    c := b["chat_rect"]
+    try {
+        Screen.SetClient(0, 0, 1920, 1080)
+        r := Screen.Rect(c["x"], c["y"], c["w"], c["h"])
+        AssertEq(r.x " " r.y " " (r.x + r.w) " " (r.y + r.h), "13 102 476 367", "chat box at its 1080p pixels")
+    } finally Screen.Reset()
+}

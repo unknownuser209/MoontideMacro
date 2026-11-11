@@ -66,7 +66,7 @@
       "confirm": [1002, 831],
       "confirmPreMs": 200,
       "confirmPostMs": 1000,
-      "more": {"rect": [1027, 595, 1183, 604], "rows": [595, 599, 604], "stride": 8, "color": "0xFFFFFF", "tol": 3}
+      "more": {"_note": "white of the first tile (its name / picture). Rows 568..612: at 16:10 the shop stretches but its tiles stay square, so the name sat above the old rows 595..604 and every sell read the list as empty (live 1920x1200, 2026-11-11)", "rect": [1027, 568, 1183, 612], "rows": [568, 576, 584, 592, 595, 599, 604, 612], "stride": 8, "color": "0xFFFFFF", "tol": 3}
     },
     "close": [1958, 361],
     "closePreMs": 200,

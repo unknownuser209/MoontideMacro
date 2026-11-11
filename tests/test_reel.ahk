@@ -636,3 +636,16 @@ Test_Reel_EndsWhenTheReelCloses() {
         FsClean(t.dir)
     }
 }
+
+; live 1080p SNOWY 2026-11-10 (frame f0870, mapped to design px): bar
+; 0x42DAFF to 1429, fish 0x01FFFF under it 1171..1250, and the bar's empty
+; see-through part a dim grey 0x3E4750 over the bright scene. That grey
+; (brightest channel 80) counted as fish: the arrow chased it to the end.
+Test_Reel_ScanDimGreyEmptyPartIsNotTheFish() {
+    bar := RlRow(1042, 1517, 2, (x) => (x >= 1171 && x <= 1250) ? 0x01FFFF
+        : (x <= 1429) ? (Mod(x, 10) < 5 ? 0x42DAFF : 0x3DD4FF) : (Mod(x, 6) < 3 ? 0x3E4750 : 0x3C464F))
+    s := FishLogic.ReelScan(RlArrowRow(1429), bar, 1042, 2)
+    AssertTrue(Abs(s.p1 - 1171) <= 2 && Abs(s.p2 - 1250) <= 2, "fish under the bar, not the grey " s.p1 ".." s.p2)
+    AssertTrue(FishLogic.ReelDark(0x3E4750) && FishLogic.ReelDark(0x221919), "dim grey / black are empty")
+    AssertTrue(!FishLogic.ReelDark(0x8489FF) && !FishLogic.ReelDark(0x4B9CFF) && !FishLogic.ReelDark(0x01FFFF), "fish colours are not")
+}

@@ -259,6 +259,8 @@ class Dashboard {
         this._confirmDry := () => Theme.Confirm(this._gui, "Turn off dry run?"
             , "Unlocked potions will REALLY be used during rare biomes.`n`nLocked potions stay locked. You can turn dry run back on at any time."
             , "Turn off", "Keep dry run")
+        ; a switch for a part still known to be buggy: a warning before it goes on
+        this._confirmBuggy := (title, text) => Theme.Confirm(this._gui, title, text, "Turn on", "Keep off")
         this._Build()
         ; animations: gated on this window, switched by UI.animations (live)
         hwnd := this._gui.Hwnd
@@ -1017,6 +1019,12 @@ class Dashboard {
     }
 
     ; Pill switch bound to key. help: a "?" after the label.
+    ; Turning the switch ON asks first (title / text); "Keep off" leaves it off.
+    _WarnOn(c, title, text) {
+        c._fn := (ctl) => (ctl.Value && this._confirmBuggy.Call(title, text) != true) ? (ctl.Value := 0) : 0
+        return c
+    }
+
     _BoolField(x, y, label, key, def, w := 310, help := "") {
         c := Theme.Check(this._gui, x, y, label, 0, "", "pill", help != "" ? -1 : w)
         this._Bind("bool", key, def, c)
@@ -2420,6 +2428,7 @@ class Dashboard {
         this._Panel(616, 152, 396, 220, "Memory Match", "Plays the Memory Match board (20 tiles, 10 turns, every 12 hours) and keeps the best pairs. "
             . "Record the memory_match route (to the board) on Setup > Routes. It stays off until the board layout is added from a clip of one round.")
         this._memSwitch := this._BoolField(632, 186, "Play Memory Match", "MemoryMatch.enabled", 0)
+        this._WarnOn(this._memSwitch, "Memory Match is not perfect", "Memory Match works better at some screen sizes than others, and it can miss the board or skip a round. Keep an eye on it the first times.")
         if !MemoryMatchTask.LayoutKnown {
             ; no layout yet: the switch cannot be turned on
             this._memSwitch.DefineProp("Flip", {Call: (*) => 0})
@@ -2433,13 +2442,17 @@ class Dashboard {
             . "Needs the aura storage steps calibrated (as the obby). Auto roll can equip a new aura mid-hunt; the skills then do nothing until the next hunt. "
             . "Shift lock keeps the character facing the target in fights; it needs Roblox's Shift Lock Switch setting on. "
             . "Graveyard boss: once per GRAVEYARD start it looks around ~20 s for the boss (before any aura swap) and fights it up to 10 min.")
-        this._BoolField(220, 422, "Hunt orbs and minions", "Minions.enabled", 0)
+        this._WarnOn(this._BoolField(220, 422, "Hunt orbs and minions", "Minions.enabled", 0), "Minion hunting is buggy", "Hunting orbs and minions is still very buggy at every screen size: it can get stuck, miss targets or walk off. Watch it when you use it.")
         this._StrField(220, 460, "Combat aura", "Minions.aura", "Eden", 160)
         this._IntField(220, 498, "Hunt at most", "Minions.maxSec", 120, "seconds", 170, 60)
         this._BoolField(632, 422, "Put my aura back after", "Minions.putBack", 0)
         this._BoolField(632, 460, "Use shift lock in fights", "Minions.shiftLock", 1)
         this._BoolField(632, 498, "Fight the Graveyard boss", "Minions.boss", 1)
         this._BoolField(632, 536, "Hunt in NORMAL too", "Minions.normal", 0)
+        ; every aura swap (the obby's Sailor too): ObbyTask EQUIP FIRST
+        this._BoolField(220, 536, "Equip the first search result", "Auras.equipFirst", 0, , "Equip the first search result (no name reading): use this if aura swaps fail at your resolution. "
+            . "Make sure the search finds only the aura you want. Used for every aura swap: Sailor for the obby, the combat aura, and putting your aura back.")
+        Theme.Label(this._gui, "x220 y568 w380 h20", "For aura swaps that fail at your resolution (obby too).", "muted")
         p.load := ObjBindMethod(this, "_ObbyMemoryLoad")
         p.validate := ObjBindMethod(this, "_ObbyMemoryCheck")
         this._SaveBar(p)
@@ -2540,8 +2553,10 @@ class Dashboard {
         try r := this.cfg.Data("routes")
         if (r is Map && r.Has("routes") && r["routes"] is Map)
             r := r["routes"]
-        if !(r is Map && r.Has(name))
-            return "not recorded"
+        if !(r is Map && r.Has(name)) {
+            b := RouteRecorder.BuiltinWalk(r, name, this.cfg.Get("General.vip", 1) != 0)
+            return IsObject(b) ? b.label ", " b.steps.Length " steps" : "not recorded"
+        }
         e := r[name]
         steps := (e is Array) ? e : (e is Map && e.Has("steps") && e["steps"] is Array) ? e["steps"] : []
         if (steps.Length = 0)

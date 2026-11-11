@@ -3,6 +3,8 @@
 #Include %A_LineFile%\..\Ocr.ahk
 #Include %A_LineFile%\..\Screenshot.ahk
 #Include %A_LineFile%\..\Screen.ahk
+#Include %A_LineFile%\..\Pixel.ahk
+#Include %A_LineFile%\..\ChatGuard.ahk
 ; ---------------------------------------------------------------------------
 ; Input: keyboard/mouse helpers and the timed route player.
 ; DESIGN coordinates (2560x1440); the real io (InputScreenIO) maps them to
@@ -55,6 +57,10 @@
 ;   MouseAt(x, y) MousePos() -> {x, y} KeyEvent(keys)
 ;                                      optional; Input.ShiftLock only (absolute
 ;                                      move, no nudge; SendEvent)
+;   GrabScreen(sx, sy, w, h) -> Array  optional; colours of a SCREEN px rect
+;                                      (ChatGuard reads Roblox's fixed-size
+;                                      chat button; without it the chat is
+;                                      never hidden)
 ; Input._io is the real one (InputScreenIO); tests pass a recorder.
 ;
 ;   Input.TypeText(s, io, gap)   types literal text (SendText) one char per
@@ -125,6 +131,15 @@ class InputScreenIO {
     KeyEvent(keys) {
         SendEvent(keys)
     }
+    ; Colours of a SCREEN px rect (not design px: Roblox's own top bar and
+    ; chat keep their pixel size at every resolution; ChatGuard) -> Array
+    ; of w*h 0xRRGGBB, or "".
+    GrabScreen(sx, sy, w, h) => Pixel._ScreenGrab(sx, sy, w, h)
+    ; First text line matching re in a DESIGN rect -> {x, y, text} (SCREEN
+    ; px of its centre) or "" (Ocr.FindText).
+    FindText(x, y, w, h, re, scale := 1) => Ocr.FindText(x, y, w, h, re, scale)
+    ; ... the matching words' centre (Ocr.FindWord), in DESIGN px
+    FindWord(x, y, w, h, re, wordRe, scale := 1) => Ocr.FindWord(x, y, w, h, re, wordRe, scale)
     ; Types literal text (SendText: no hotkey/modifier parsing).
     Type(text) {
         SendText(text)
@@ -205,6 +220,7 @@ class Input {
 
     static Click(x, y, io := "") {
         io := Input._Backend(io)
+        ChatGuard.ClearFor(io, "", [x, y])       ; the chat over it (below 1440p): hidden first
         Input.Sent++
         io.MoveTo(x, y)
         io.Wait(Input.ClickSettleMs)
@@ -472,7 +488,13 @@ class Input {
     ;               itself reads (title or tight box: _ExitSeen). Real
     ;               frames: tests\screens\collections_*
     static ResetChecks := Map(
-        "prompt", {x: 900, y: 500, w: 800, h: 80, text: "respawn", alt: {x: 1050, y: 625, w: 460, h: 80}},
+        "prompt", {x: 900, y: 500, w: 800, h: 80, text: "respawn", alt: {x: 1050, y: 625, w: 460, h: 80}
+            ; Roblox draws this prompt itself and it does not scale like the
+            ; game's UI: at 1366x768 the question sat at y 246, the buttons at
+            ; 369 (client px), out of both boxes (live 2026-11-11). Below 1440p
+            ; only: one wide box from just right of the chat (x >= 490 px at
+            ; 768p, so its "[Respawn]: You can reset" line is never read)
+            , wide: {x: 920, y: 250, w: 1100, h: 700}},
         "collection", {x: 60, y: 115, w: 560, h: 75, text: "exit", marks: [
             {x: 455, y: 120, w: 130, h: 65, text: "exit"},
             {x: 560, y: 1305, w: 420, h: 80, text: "cutscene"},
@@ -636,6 +658,10 @@ class Input {
     static ReAim(ctx := "", io := "", blind := false) {
         io := Input._Backend(io)
         Input.LastResetError := ""
+        ; below 1440p the chat lies over the close (and its "[Exit]"): hidden
+        ; first, shown again after the task (ChatGuard, App._Tidy)
+        if (ChatGuard.ClearFor(io, ctx, Input.ResetCoords["menuOpen"], Input.ResetCoords["menuClose"]) < 0)
+            return false
         if (blind || !HasMethod(io, "Ocr")) {
             for name in ["menuOpen", "menuClose"]
                 if (Input._ClickPoint(io, ctx, name) <= 0)
@@ -672,8 +698,8 @@ class Input {
 
     ; One click on ResetCoords[name], ClickGuard first. -> 1 clicked | 0
     ; refused (shift lock stuck on, no click) | -1 stopped
-    static _ClickPoint(io, ctx, name) {
-        pt := Input.ResetCoords[name]
+    static _ClickPoint(io, ctx, name, at := "") {
+        pt := IsObject(at) ? [at.x, at.y] : Input.ResetCoords[name]
         t := Input._Timing()
         if (IsObject(ctx) && ctx.ShouldStop())
             return -1
@@ -707,6 +733,8 @@ class Input {
         io := Input._Backend(io)
         if !Input._Has(io, "collection", ocr)
             return 0
+        if (ChatGuard.ClearFor(io, ctx, Input.ResetCoords["menuClose"]) < 0)
+            return -1
         r := Input._ClickUntil(io, ctx, "menuClose", false, ocr)
         return (r = 0) ? 2 : r
     }
@@ -1008,7 +1036,8 @@ class Input {
                 if (r = 2)
                     return 1                             ; gone meanwhile
             }
-            r := Input._ClickPoint(io, ctx, name)
+            ; the close below 1440p: where "[Exit]" reads (_ExitAt)
+            r := Input._ClickPoint(io, ctx, name, (!want && name = "menuClose") ? Input._ExitAt(io) : "")
             if (r <= 0)
                 return r
             r := Input._See(io, ctx, "collection", want, ocr)
@@ -1047,6 +1076,8 @@ class Input {
             return true
         if (c.HasOwnProp("alt") && InStr(StrLower(Input._Read(io, c.alt, ocr)), c.text))
             return true
+        if (c.HasOwnProp("wide") && !Screen.IsIdentity() && InStr(StrLower(Input._Read(io, c.wide, ocr)), c.text))
+            return true
         if c.HasOwnProp("marks")
             for m in c.marks
                 if InStr(StrLower(Input._Read(io, m, ocr)), m.text)
@@ -1061,7 +1092,43 @@ class Input {
         c := Input.ResetChecks["collection"]
         if InStr(StrLower(Input._Read(io, c, ocr)), "exit")
             return true
-        return InStr(StrLower(Input._Read(io, c.marks[1], ocr)), "exit") > 0
+        if InStr(StrLower(Input._Read(io, c.marks[1], ocr)), "exit")
+            return true
+        return IsObject(Input._ExitAt(io))
+    }
+
+    ; Below 1440p the Collections screen does not scale like the rest of the
+    ; UI: at 1366x768 its "[Exit]" sat at client 277,108, about 24 px under
+    ; the scaled close point and out of both "[Exit]" boxes, so it was never
+    ; closed (live 2026-11-11). There "[Exit]" is looked for in a wide box at
+    ; the top left and clicked where it reads. -> DESIGN {x, y} or "" (at
+    ; 2560x1440, or an io that cannot find text).
+    static ExitWide := {x: 0, y: 40, w: 1300, h: 380}
+    static ExitFromCommon := 206      ; design px, [Exit]'s centre right of "Common"'s
+    static TitleAboveCommon := 123    ; design px, the title row above "Common"
+    static _ExitAt(io) {
+        if (Screen.IsIdentity() || !HasMethod(io, "FindWord"))
+            return ""
+        b := Input.ExitWide
+        r := ""
+        try r := io.FindWord(b.x, b.y, b.w, b.h, "i)\bexit\b", "i)exit", 2)
+        if IsObject(r)
+            return {x: r.x, y: r.y}                     ; FindText gives DESIGN px off 1440p
+        ; 5:4 (1280x1024, live 2026-11-11): the narrow title squeezes
+        ; "[Exit]" into "Collections" and only "Aura" reads. The title spans
+        ; the list's width: its "Aura" sits at the left end, the rows'
+        ; "Common" at the centre, so "[Exit]" is as far right of the centre
+        ; (x1.15: its middle, not the frame). The close is checked after.
+        a := "", c := ""
+        try a := io.FindWord(b.x, b.y, b.w, b.h, "i)^\W*aur[aou]\b", "i)aur[aou]", 2)     ; "Auru" at 1280x800
+        try c := io.FindWord(b.x, b.y, b.w, b.h, "i)^\W*common\W*$", "i)common", 2)
+        ; the title text sits differently at 5:4 and 1280x800, the list does
+        ; not: "[Exit]" is centred ExitFromCommon design px right of the
+        ; "Common" row's centre (both sizes measured live), on the title row
+        if !IsObject(c)
+            return ""
+        y := (IsObject(a) && a.y < c.y) ? a.y : c.y - Input.TitleAboveCommon
+        return {x: c.x + Input.ExitFromCommon, y: y}
     }
 
     ; Check rect c read by ocr (fn), else by io.Ocr.

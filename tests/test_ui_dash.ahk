@@ -1308,6 +1308,9 @@ Test_ObbyMemory_Page() {
         AssertEq(d.PageOf(d.Ctrl("MemoryMatch.enabled")), "Obby & Memory", "Memory Match switch on the page")
         AssertEq(d.PageOf(d.Ctrl("Minions.normal")), "Obby & Memory", "NORMAL hunt switch on the page")
         AssertEq(d.Ctrl("Minions.normal").Value, 0, "NORMAL not hunted by default")
+        AssertEq(d.PageOf(d.Ctrl("Auras.equipFirst")), "Obby & Memory", "equip-first switch on the page")
+        AssertEq(d.Ctrl("Auras.equipFirst").Value, 0, "equip first off by default")
+        AssertEq(Config.IniDefaults()["Auras"]["equipFirst"], "0", "Auras.equipFirst default 0 in settings.ini")
         AssertEq(d.Ctrl("Obby.intervalMin").Value, "10", "interval default shown")
         AssertTrue(InStr(d.Ctrl("obbyBlessingNote").Text, "obby_blessing"), "blessing note names the calibration step")
         AssertTrue(InStr(d.Ctrl("memoryNote").Text, "next try: "), "next try note")
@@ -1333,6 +1336,38 @@ Test_ObbyMemory_Page() {
         AssertEq(c2.Get("Obby.intervalMin", 0), 15, "interval persisted")
         AssertEq(c2.Get("Obby.retries", -1), 2, "retries persisted")
         AssertEq(c2.Get("Obby.enabled", 0), 1, "Obby.enabled persisted")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; 2026-11-11 (the owner's ask): Minion hunting and Memory Match are still
+; buggy; turning either on warns first, and "Keep off" leaves it off
+Test_Dashboard_BuggyPartsWarnBeforeTheyGoOn() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg, Map())
+        sw := ""
+        for b in d._binds
+            if (b.key = "Minions.enabled")
+                sw := b.ctrl
+        AssertTrue(IsObject(sw), "the minions switch")
+        asked := []
+        d._confirmBuggy := (title, text) => (asked.Push(title), false)
+        sw.Value := 0
+        sw.Flip()
+        AssertEq(asked.Length, 1, "turning on asks")
+        AssertTrue(InStr(asked[1], "buggy"), "says it is buggy")
+        AssertEq(sw.Value, 0, "declined: still off")
+        d._confirmBuggy := (title, text) => (asked.Push(title), true)
+        sw.Flip()
+        AssertEq(sw.Value, 1, "accepted: on")
+        sw.Flip()
+        AssertEq(asked.Length, 2, "turning off never asks")
+        AssertEq(sw.Value, 0, "off")
     } finally {
         UiDashClose(d)
         try DirDelete(dir, true)

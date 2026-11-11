@@ -84,8 +84,11 @@ class MemoryMatchTask {
     ; the notification also counts as up when its button reads (NotifyUp)
     static NotifyRe := "i)st[ao]rt\s*mem"
     static ButtonRe := "i)st[ao]rt\s*mem"
-    static StartRe := "i)st[ao]rt"
+    static StartRe := "i)st[aou]rt"   ; "Sturt" at 1080p / 900p
     static CooldownRe := "i)avail|after|left"
+    static ReadyRe := "i)re[ao]d[yv]"           ; "Available after Ready!" ("Reodv", "Readvt" in the game font)
+    static ReadyAgainMs := 1500    ; after closing the Ready notification, before E again
+    static WalkTries := 2          ; respawn + walk + E when no notification shows
     static TitleRe := "i)mem[ao]ry"
     static CloseRe := "i)cl[o0]se"
     static OpenWaitMs := 4000
@@ -226,20 +229,28 @@ class MemoryMatchTask {
         won := []
         cctx := CleanupCtx(ctx)
         try {
-            if !Input.ResetToSpawn(ctx, io) {
-                ; 2026-10-27 review: a respawn that failed (no stop) wrote no
-                ; nextTry, so the task ran again on every tick ahead of fishing
-                if !ctx.ShouldStop() {
-                    env.Log("memory match: respawn failed (" Input.LastResetError "): next try in " MemoryMatchTask.RetryMin " min")
-                    this._Write(MemoryMatchTask.RetryMin * 60)
+            ; a walk that missed the board gets one more respawn + walk
+            ; (about 1 in 10 at 2560x1440, live 2026-11-11)
+            Loop MemoryMatchTask.WalkTries {
+                if (A_Index > 1)
+                    env.Log("memory match: no notification after E - walking there once more")
+                if !Input.ResetToSpawn(ctx, io) {
+                    ; 2026-10-27 review: a respawn that failed (no stop) wrote no
+                    ; nextTry, so the task ran again on every tick ahead of fishing
+                    if !ctx.ShouldStop() {
+                        env.Log("memory match: respawn failed (" Input.LastResetError "): next try in " MemoryMatchTask.RetryMin " min")
+                        this._Write(MemoryMatchTask.RetryMin * 60)
+                    }
+                    return 0
                 }
-                return 0
+                if !Input.PlayRoute(steps, ctx, io)
+                    return 0
+                entered := true
+                Input.Key(MemoryMatchTask.OpenKey, 80, io)
+                r := this._WaitNotify(MemoryMatchTask.OpenWaitMs, ctx)
+                if (r != 0)
+                    break
             }
-            if !Input.PlayRoute(steps, ctx, io)
-                return 0
-            entered := true
-            Input.Key(MemoryMatchTask.OpenKey, 80, io)
-            r := this._WaitNotify(MemoryMatchTask.OpenWaitMs, ctx)
             if (r < 0)
                 return 0
             if !r {
@@ -250,6 +261,24 @@ class MemoryMatchTask {
             }
             this._notify := true
             btn := this._Read(L.startBox)
+            ; "Available after Ready!": the countdown ran out but the button
+            ; did not turn into Start (live, for hours; clicking it does
+            ; nothing). The notification closed and E again: it is built anew.
+            if RegExMatch(btn, MemoryMatchTask.ReadyRe) {
+                this._CloseNotify(ctx)
+                this._notify := false
+                if !env.Wait(MemoryMatchTask.ReadyAgainMs, ctx)
+                    return 0
+                Input.Key(MemoryMatchTask.OpenKey, 80, io)
+                r := this._WaitNotify(MemoryMatchTask.OpenWaitMs, ctx)
+                if (r < 0)
+                    return 0
+                this._notify := r ? true : false
+                btn2 := r ? this._Read(L.startBox) : ""
+                env.Log("memory match: the button read '" Trim(btn) "'; after E again: '" Trim(btn2) "'")
+                if r
+                    btn := btn2
+            }
             if RegExMatch(btn, MemoryMatchTask.CooldownRe) {
                 secs := MemoryMatchTask.ParseCooldown(btn)
                 this._Write((secs >= 0) ? secs + 60 : MemoryMatchTask.RetryMin * 60)

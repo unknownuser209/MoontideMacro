@@ -16,11 +16,6 @@
       "prompt": "Fisher shop open (Open Shop). Hover the Lucky Potion tile in the shop list (the tile that picks it)."
     },
     {
-      "id": "fisher_item_speed_potion",
-      "kind": "point",
-      "prompt": "Fisher shop open (Open Shop). Hover the Speed Potion tile in the shop list (the tile that picks it)."
-    },
-    {
       "id": "fisher_buy_button",
       "kind": "point",
       "prompt": "Fisher shop open, a potion picked. Hover the Buy button (the same spot for every potion)."

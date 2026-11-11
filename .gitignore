@@ -19,3 +19,4 @@ backup/
 update_tmp/
 data/*.bak
 clips_for_user/
+logs/

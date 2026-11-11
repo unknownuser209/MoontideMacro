@@ -114,9 +114,10 @@ class SellTask {
             last := (A_Index = SellTask.WalkTries)
             if (A_Index > 1)
                 d.log.Call("sell: walking again from spawn (try " A_Index "/" SellTask.WalkTries ")")
-            ; first try with the quick waits (the same screen checks, used by
-            ; every hunt); a retry uses the full ones
-            if !(A_Index = 1 ? Input.QuickReset(ctx, io) : Input.ResetToSpawn(ctx, io)) {
+            ; the full waits: with the quick ones (hunts) the camera re-aim's
+            ; clicks came too fast and the walk sometimes went off toward the
+            ; portal (live 2026-11-10); every walk test used these
+            if !Input.ResetToSpawn(ctx, io) {
                 if ctx.ShouldStop()
                     return
                 d.log.Call("sell: reset failed: " Input.LastResetError)
@@ -399,7 +400,10 @@ class SellTask {
                 return -1
             if !FishLogic.ClickAt(io, ctx, option, lp["optionPreMs"], 0)
                 return -1
-            r := this._WaitText(ctx, sc.popup, true, sc.popupMs)
+            ; the Sell Confirm popup scales evenly and stays centred where the
+            ; shop stretches (16:10, live 1440x900): its reads and clicks map
+            ; in Screen mode "C" (the same pixels at 16:9)
+            r := Screen.WithMode("C", () => this._WaitText(ctx, sc.popup, true, sc.popupMs))
             if (r < 0)
                 return -1
             if (r = 0) {
@@ -416,11 +420,11 @@ class SellTask {
             Loop sc.confirmTries {
                 if (A_Index > 1) {
                     d.log.Call("sell: the Sell Confirm popup is still open - pressing Sell again")
-                    io.MoveTo(lp["confirm"][1] + 4, lp["confirm"][2] + 3)    ; a small move first
+                    Screen.WithMode("C", () => io.MoveTo(lp["confirm"][1] + 4, lp["confirm"][2] + 3))    ; a small move first
                     if !io.Wait(80, ctx)
                         return -1
                 }
-                if !FishLogic.ClickAt(io, ctx, lp["confirm"], lp["confirmPreMs"], 0)
+                if !Screen.WithMode("C", () => FishLogic.ClickAt(io, ctx, lp["confirm"], lp["confirmPreMs"], 0))
                     return -1
                 r := this._WaitPopupGone(ctx)
                 if (r < 0)
@@ -434,7 +438,7 @@ class SellTask {
                 ; never leave it open: everything after the sell (the buy, the
                 ; walk back) would click under it
                 d.log.Call("sell: the Sell Confirm popup did not close after " sc.confirmTries " presses - Cancel, stopping the sell")
-                if !FishLogic.ClickAt(io, ctx, sc.cancel, lp["confirmPreMs"], 0)
+                if !Screen.WithMode("C", () => FishLogic.ClickAt(io, ctx, sc.cancel, lp["confirmPreMs"], 0))
                     return -1
                 if (this._WaitPopupGone(ctx) < 0)
                     return -1
@@ -450,7 +454,8 @@ class SellTask {
     }
 
     ; The Sell Confirm popup is up: its text at 1x, else the second look.
-    _PopupUp() {
+    _PopupUp() => Screen.WithMode("C", () => this._PopupUpM())
+    _PopupUpM() {
         c := SellTask.ShopChecks.popup
         if SellTask.Seen(c, this.deps.io.Ocr(c.x, c.y, c.w, c.h))
             return true
@@ -458,7 +463,8 @@ class SellTask {
     }
 
     ; Its text at scale 2 (the game font misreads at 1x) or its Cancel label.
-    _PopupSecondLook() {
+    _PopupSecondLook() => Screen.WithMode("C", () => this._PopupSecondLookM())
+    _PopupSecondLookM() {
         io := this.deps.io
         sc := SellTask.ShopChecks
         c := sc.popup, b := sc.cancelBox

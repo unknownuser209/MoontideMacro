@@ -45,6 +45,25 @@ class ChatWatch {
         this._lastPoll := ""
         this._seen := Map()          ; name -> ms of last sighting
         this._absent := Map()        ; name -> reads in a row without it since
+        ; startOld (the App): at Start every merchant counts as seen just
+        ; now, so an arrival line already in the chat is not visited until it
+        ; has left the chat (the usual dedupe: AbsentReads reads, DedupeSec)
+        ; and shows again. Live 2026-11-11: an hour-old "Mari has arrived"
+        ; sent the macro off with a Merchant Teleporter at every start (the
+        ; first read alone was not enough: it missed the line, a later one
+        ; read it). Fresh arrivals also come from the Roblox log (LogWatch).
+        this._startOld := TaskEnv.Dep(deps, "startOld", false)
+        this._noted := Map()
+        if this._startOld
+            this.Rebase()
+    }
+
+    static Names := ["Mari", "Jester"]
+    Rebase() {
+        now := this._env.Now()
+        for name in ChatWatch.Names
+            this._seen[name] := now, this._absent[name] := 0
+        this._noted := Map()
     }
 
     static Detect(text) {
@@ -107,8 +126,13 @@ class ChatWatch {
             suppressed := this._seen.Has(name) && (now - this._seen[name] < ChatWatch.DedupeSec * 1000
                 || (this._absent.Has(name) ? this._absent[name] : 0) < ChatWatch.AbsentReads)
             this._seen[name] := now, this._absent[name] := 0
-            if suppressed
+            if suppressed {
+                if (this._startOld && !this._noted.Has(name)) {
+                    this._noted[name] := true
+                    env.Log("chat: " name "'s arrival line is an old one (in the chat since the start): not visited")
+                }
                 continue
+            }
             hits.Push(name)
             env.Log("chat: " name " detected")
             if IsObject(this._onFound)

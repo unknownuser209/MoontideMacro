@@ -13,6 +13,7 @@
 
 class Roblox {
     static Exe := "RobloxPlayerBeta.exe"
+    static AllowWindowed := false    ; General.allowWindowed=1 (testing only): a window counts as fullscreen
 
     ; -> hwnd (Integer) or 0 when Roblox is not running.
     static Hwnd() {
@@ -47,7 +48,7 @@ class Roblox {
             m := Roblox._Monitor(hwnd)
         } catch
             return "missing"
-        if !(IsObject(m) && Roblox.CoversMonitor(x, y, w, h, m.x, m.y, m.w, m.h))
+        if !(IsObject(m) && Roblox.CoversMonitor(x, y, w, h, m.x, m.y, m.w, m.h)) && !(Roblox.AllowWindowed && w > 0 && h > 0)
             return "notfs"
         Screen.Refresh(hwnd)
         return "ok"

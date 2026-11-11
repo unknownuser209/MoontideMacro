@@ -14,7 +14,12 @@ the mouse like a player. It never reads or changes game memory.
 
 ## Requirements
 
-- Windows, Roblox (standard launcher, no Bloxstrap) **fullscreen at 2560x1440**.
+- Windows, Roblox (standard launcher, no Bloxstrap) **fullscreen**. Tested sizes:
+  2560x1440, 1920x1080, 1920x1200, 1680x1050, 1600x900, 1536x864, 1440x900,
+  1366x768, 1280x800 and 1280x720. Other 16:9 / 16:10 sizes may work; 5:4
+  (1280x1024) and ultrawide (2560x1080, 3440x1440) do not yet.
+- **Be careful:** Memory Match works better at some screen sizes than others,
+  and minion hunting is still very buggy at every size. Keep an eye on both.
 - [AutoHotkey v2](https://www.autohotkey.com/) (v2.0 or newer, not v1).
 
 ## Start
@@ -117,10 +122,11 @@ all fades and motion off (the splash then just shows for a moment).
 
 ### 2. Calibrate
 
-**Playing at 2560x1440 fullscreen with Windows scale 100%?** A ready-made
-calibration (`data\presets\calibration_2560x1440_100.json`) is loaded on the
-first start, so you can skip this step and only re-record a step that misses.
-Other screen sizes or scales: calibrate every step as below.
+**Playing fullscreen at one of the tested sizes with Windows scale 100%?** A
+ready-made calibration for it (`data\presets\calibration_<size>_100.json`) is
+loaded on the first start, so you can skip this step and only re-record a step
+that misses (Setup > Calibrate > Preset lists them all). Other sizes or scales:
+calibrate every step as below.
 
 **Setup > Calibrate** page: pick steps and press **Record selected** (or **Run
 all**). For each step, stand where the prompt says, **hover** the target and
@@ -378,7 +384,7 @@ it was clipped.
 
 | You see | Do this |
 |---|---|
-| Paused: **Not fullscreen 2560x1440** | Make Roblox fullscreen at 2560x1440, press **F2**. |
+| Paused: **Not fullscreen** | Make Roblox fullscreen (F11), press **F2**. |
 | Paused: **Roblox lost focus** | You alt-tabbed. Click into Roblox, press **F2**. |
 | Paused: **Roblox not found** | Open Roblox. With a private server link set, it rejoins by itself. |
 | Paused: **Scheduler error** | Read the log line, fix the cause, press **F2**. |

@@ -177,7 +177,7 @@ class MerchantTask {
     ; (the p cut off), the X was not clicked and the shop stayed open; 06:53
     ; 'Mori's stin': any "<name>'s s..." in the title box is her shop; 07:32
     ; 'Mori•s$hop': "hop" alone too
-    static ShopRe := "i)h[ao0]p|sh[ao0]|'s\s*s[a-z]"
+    static ShopRe := "i)h[ao0]p|sh[ao0]|(?:'|\b)s\s*s[a-z]"   ; live misreads: 'Mori's sho', 'Mori's stin', 'Morl s stib' (apostrophe lost)
 
     ; Letters only, lower case, with the game font's look-alikes folded
     ; ("I<" as "k", "o" as "a", l/1/| as "i"), so OCR text and item names
@@ -598,7 +598,17 @@ class MerchantTask {
 
     ; Uses the Merchant Teleporter from the inventory with proof that it is
     ; the selected item (module header). -> true when Use was clicked.
+    ; the inventory scales evenly, centred (16:10): mode "C" around it
     _Teleport(c, ctx) {
+        old := Screen.Mode
+        Screen.Mode := "C"
+        try
+            return this._TeleportM(c, ctx)
+        finally
+            Screen.Mode := old
+    }
+
+    _TeleportM(c, ctx) {
         env := this._env
         io := env.io
         ; no blind clicks (live 2026-11-02: a click on an empty spot went
