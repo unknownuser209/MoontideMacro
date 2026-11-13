@@ -20,7 +20,8 @@ $exclude = @(
     '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/',
     '^\.gitattributes$', '^\.gitignore$',
     '^data/auras_had\.txt$', '^data/[^/]*state[^/]*\.json$',
-    '^data/(potion_usage\.json|last_biome\.txt|minions_routes\.json|auras_learnt\.json)$'
+    '^data/(potion_usage\.json|last_biome\.txt|minions_routes\.json|auras_learnt\.json)$',
+    '^data/(stats\.json|summary_last\.txt|schedule_state\.txt)$'
 )
 
 $files = @(git ls-files) | Where-Object {

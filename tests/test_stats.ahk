@@ -259,3 +259,23 @@ Test_DailySummary_build() {
     AssertEq(e.fields[1]["value"], "0", "missing = 0")
     AssertEq(e.fields[3]["value"], "n/a", "no attempts")
 }
+
+; review 2026-11-12: a restart inside the window (theme Apply now) started a
+; run the user had stopped: the used window is kept in a file
+Test_Schedule_UsedWindowSurvivesRestart() {
+    p := A_Temp "\vesper_sched_" A_TickCount "_" Random(1, 99999) ".txt"
+    try {
+        cfg := StatFakeCfg(Map("Schedule.enabled", 1))
+        r := RunSchedule(cfg, p)
+        AssertEq(r.Tick("20261112220000", false, 0), "start", "first")
+        r.NoteStart(true)
+        r.Tick("20261112230000", true, 1000)
+        r.NoteStop()
+        r2 := RunSchedule(cfg, p)
+        AssertEq(r2.Tick("20261112230500", false, 0), "", "after a restart: still no new start in this window")
+        AssertEq(r2.Tick("20261113220000", false, 0), "start", "the next window starts")
+        AssertEq(RunSchedule(cfg).Tick("20261112230500", false, 0), "start", "without a file: as before")
+    } finally {
+        try FileDelete(p)
+    }
+}

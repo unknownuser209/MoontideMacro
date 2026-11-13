@@ -119,7 +119,7 @@ class MemoryMatchTask {
     static FlipClicks := 3         ; clicks per flip at most
     static MaxNoFlips := 4         ; flips in a row that never turned a tile: give up
     ; the GAME ends the round (Close under the board), not the macro's count
-    static EndCheckMs := 2500      ; after the last counted chance, Close within this
+    static EndCheckMs := 8000      ; after the last counted chance, Close within this (as CloseWaitMs: it can be slow)
     static MaxExtraTurns := 10     ; turns played on while Close does not come
     static BoardTiles := 12        ; tiles that read as tiles = the board is up (title or not)
 
@@ -733,8 +733,14 @@ class MemoryMatchTask {
                 if (r = 0) {
                     extra += 1, turns := 1
                     env.Log("memory match: no Close after " (MemoryMatchTask.Turns + extra - 1) " chances, the game has more (a click did not count): playing on")
-                    if !(board[a]["state"] = "matched" && board[b]["state"] = "matched")
-                        this._WaitState(ctx, "hidden", MemoryMatchTask.FlipBackMs, a, b)
+                    ; tiles that stay up = the whole board shown: the round
+                    ; is over after all (Close can take longer than
+                    ; EndCheckMs, review 2026-11-12); _Close waits for it
+                    if (!(board[a]["state"] = "matched" && board[b]["state"] = "matched")
+                        && !this._WaitState(ctx, "hidden", MemoryMatchTask.FlipBackMs, a, b)) {
+                        env.Log("memory match: the tiles stayed up: the round is over")
+                        break
+                    }
                 }
             }
             if !env.Wait(MemoryMatchTask.AnimMs, ctx)

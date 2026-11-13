@@ -583,3 +583,61 @@ Test_App_V16_FocusThiefRefocused() {
     AssertTrue(t2.app.ctx.IsPaused(), "another app: paused as before")
     t2.app.Stop("test")
 }
+
+; live 2026-11-12: a ghost rejoin stopped by F3 left state.ghost set and the
+; next Start closed the healthy private server again; Start clears it (the
+; log decides again at the first poll)
+Test_App_V17_StartClearsGhost() {
+    t := AppTestMake()
+    t.app.state.ghost := true
+    t.app.Start()
+    AssertEq(t.app.state.ghost, false, "cleared at Start")
+    t.app.Stop("test")
+}
+
+; review 2026-11-12: "Send one now" marked the day sent, so tonight's real
+; summary never went; only the scheduled send marks it
+Test_App_V17_ManualSummaryKeepsTonights() {
+    t := AppTestMake()
+    dir := A_Temp "\vesper_v17_sum_" A_TickCount
+    DirCreate(dir "\data")
+    try {
+        t.app.root := dir
+        t.app.daily := DailyStats(dir "\data\stats.json")
+        t.wh.Route := (self, ev) => [Map("url", "x")]
+        AssertEq(t.app.SendSummary(), "Sent to 1 webhook", "sent now")
+        AssertTrue(!FileExist(t.app._SummaryPath()), "the day is not marked by a manual send")
+        t.app.SendSummary(true)
+        AssertEq(Trim(FileRead(t.app._SummaryPath())), FormatTime(A_Now, "yyyyMMdd"), "the scheduled send marks it")
+    } finally {
+        try DirDelete(dir, true)
+    }
+}
+
+; review 2026-11-12: a refused schedule start focused Roblox every 15 s
+Test_App_V17_ScheduleWaitsForARouteTool() {
+    t := AppTestMake()
+    s := AfFakeSched()
+    t.app.sched := s
+    t.app._toolBusy := true
+    s.acts.Push("start")
+    f0 := t.rb.focusCalls
+    t.app._ScheduleTick()
+    AssertTrue(!t.app._started, "not started while the tool runs")
+    AssertEq(t.rb.focusCalls, f0, "Roblox not pulled to the front")
+    t.app._toolBusy := false
+    s.acts.Push("start")
+    t.app._ScheduleTick()
+    AssertTrue(t.app._started, "started once the tool is done")
+    t.app.Stop("test")
+}
+
+; review 2026-11-12: !start while paused resumed but said "Started."
+Test_App_V17_RemoteStartWhilePausedSaysResumed() {
+    t := AppTestMake()
+    h := t.app._RemoteHandlers()
+    t.app.Start()
+    t.app.Pause()
+    AssertEq(h["start"].Call("", ""), "Resumed.", "resumed")
+    t.app.Stop("test")
+}

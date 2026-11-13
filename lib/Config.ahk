@@ -181,7 +181,7 @@ class Config {
         u := Config._CIMap()
         u["animations"] := "1"        ; 0 = no UI animations
         u["setupDone"] := "0"         ; 1 = the first-run setup wizard was finished or skipped
-        u["theme"] := "Moontide"      ; colour theme (Theme.Names): Moontide, Overdrive, Glitch, Dream, Cyber
+        u["theme"] := "Moontide"      ; colour theme (Theme.Names): Moontide, Overdrive, Galaxy, Boss, Equinox, Matrix, Radiant, Illusionary
         d["UI"] := u
         ; Run schedule (lib/Schedule.ahk): start / stop by the clock, stop after N hours.
         sc := Config._CIMap()

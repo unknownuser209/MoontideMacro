@@ -24,3 +24,4 @@ logs/
 # v1.6 local state
 data/stats.json
 data/summary_last.txt
+data/schedule_state.txt

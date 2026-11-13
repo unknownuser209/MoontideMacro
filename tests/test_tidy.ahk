@@ -652,3 +652,15 @@ Test_App_RepeatedShiftSkipsWaitLonger() {
     t.app._RunTask(fish)
     AssertEq(t.app._holdUntil - t.app.Now(), App.ErrorHoldMs, "a run resets it")
 }
+
+; live 2026-11-12 after the game update: the title screen read "Ploy" and
+; "Rhonaelogs", it never counted as up and the rejoin never clicked Play
+Test_Title_AfterTheNovemberUpdate() {
+    p := A_ScriptDir "\screens\title_play_dark.jpg"
+    AssertTrue(FileExist(p), "frame exists")
+    AssertTrue(Input.TitleUp("", (x, y, w, h, scale := 1) => Ocr.ReadFile(p, x, y, w, h, scale)), "the new title screen is seen")
+    for s in ["Rhonaelogs", "Rhonaeloqg", "Changelogs", "Change logs", "Chonqelogs"]
+        AssertTrue(RegExMatch(s, Input.TitleLogsRe), s)
+    for s in ["Collections", "Logs", "Close", "Shop"]
+        AssertTrue(!RegExMatch(s, Input.TitleLogsRe), "not " s)
+}

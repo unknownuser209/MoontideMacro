@@ -158,7 +158,14 @@ Test_LogBundle_Screenshots() {
         FileAppend("old", rig.temp "\vesper_shot_old.png")
         FileSetTime(DateAdd(now, -30, "Hours"), rig.temp "\vesper_shot_old.png", "M")    ; older than 24 h
         FileAppend("x", rig.temp "\other_shot.png")
+        ; privacy review 2026-11-12: no screenshots unless asked for
         AssertEq(LogBundle.Make(rig.root, rig.opts).ok, 1, "made")
+        none := 0
+        Loop Files, rig.cap "esper_shot_*.png"
+            none++
+        AssertEq(none, 0, "no screenshots by default")
+        rig.opts["shots"] := true
+        AssertEq(LogBundle.Make(rig.root, rig.opts).ok, 1, "made with screenshots")
         got := []
         Loop Files, rig.cap "\vesper_shot_*.png"
             got.Push(A_LoopFileName)
@@ -264,4 +271,12 @@ Test_LogBundle_RealZip() {
     } finally {
         LbClean(rig)
     }
+}
+
+; privacy review 2026-11-12: Discord ids (Remote logs who wrote) leave the zip
+Test_LogBundle_DiscordIdsScrubbed() {
+    t := LogBundle.ScrubText("Remote: message from 123456789012345678 ignored (not allowed); channel 98765432109876543")
+    AssertTrue(!InStr(t, "123456789012345678") && !InStr(t, "98765432109876543"), "ids gone: " t)
+    AssertTrue(InStr(t, "[id]"), "marked")
+    AssertTrue(InStr(LogBundle.ScrubText("rolls 1234567 coins 2,345,667"), "1234567"), "short numbers kept")
 }

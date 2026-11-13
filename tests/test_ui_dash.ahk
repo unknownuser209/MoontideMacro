@@ -1423,7 +1423,7 @@ Test_Dashboard_V16Pages() {
         calls := []
         cb := Map("checkSetup", () => (calls.Push("check"), [{level: "ok", name: "Roblox open", detail: "1920x1080 fullscreen", fix: ""}
                 , {level: "warn", name: "Focus", detail: "PC Manager is running", fix: "Close it"}, {level: "fail", name: "Private server", detail: "not set", fix: "Paste your link"}])
-            , "logBundle", () => (calls.Push("zip"), {ok: 1, path: dir "\logs\support_1.zip", msg: ""})
+            , "logBundle", (shots := false) => (calls.Push(shots ? "zip+shots" : "zip"), {ok: 1, path: dir "\logs\support_1.zip", msg: ""})
             , "sendSummary", () => "Sent to 1 webhook"
             , "testRemote", () => "Connected as Bot")
         d := Dashboard(cfg, cb)
@@ -1505,6 +1505,8 @@ Test_Wizard_StepsSaveAndSkip() {
         AssertEq(w.Step, 3, "private server page")
         w.Ctrl("ps").Value := "not a link"
         AssertEq(w.Next(), false, "a non-Roblox link stays on the page")
+        w.Ctrl("ps").Value := "https://roblox.com/share?code=WIZCODE123&type=Server"
+        AssertEq(w.Next(), false, "a link auto-rejoin would refuse (no www.) stays on the page")
         link := "https://www.roblox.com/share?code=WIZCODE123&type=Server"
         w.Ctrl("ps").Value := link
         AssertTrue(w.Next(), "a Roblox link moves on")
@@ -1566,10 +1568,29 @@ Test_Theme_PresetsAndPicker() {
         cfg := Config.Load(dir)
         d := Dashboard(cfg)
         AssertEq(d.Ctrl("UI.theme").Text, "Moontide", "picker shows the saved theme")
-        d.Ctrl("UI.theme").Choose("Cyber")
+        d.Ctrl("UI.theme").Choose("Illusionary")
         AssertTrue(d.SavePage("Settings"), "saved")
-        AssertEq(Config.Load(dir).Get("UI.theme", ""), "Cyber", "theme written")
-        AssertTrue(InStr(d.Ctrl("themeNote").Text, "Cyber shows after Apply now"), "says when it shows")
+        AssertEq(Config.Load(dir).Get("UI.theme", ""), "Illusionary", "theme written")
+        AssertTrue(InStr(d.Ctrl("themeNote").Text, "Illusionary shows after Apply now"), "says when it shows")
+    } finally {
+        Theme.Use("Moontide")
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; Apply now saves the picked theme itself (no Save first) and restarts
+Test_Theme_ApplyNowSavesFirst() {
+    dir := UiDashTmp()
+    d := ""
+    fired := []
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg, Map("restart", () => fired.Push("restart")))
+        d.Ctrl("UI.theme").Choose("Galaxy")
+        AssertTrue(d.ApplyTheme(), "applied")
+        AssertEq(Config.Load(dir).Get("UI.theme", ""), "Galaxy", "theme written without pressing Save")
+        AssertEq(fired.Length, 1, "restart asked once")
     } finally {
         Theme.Use("Moontide")
         UiDashClose(d)

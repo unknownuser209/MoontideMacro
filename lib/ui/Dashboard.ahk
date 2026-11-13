@@ -2335,7 +2335,7 @@ class Dashboard {
         this._themeDdl := Theme.Dropdown(g, 722, 478, 150, Theme.Names)
         this._themeDdl.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
         this._ids["UI.theme"] := this._themeDdl
-        this._themeApply := Theme.Button(g, "x880 y478 w116 h28", "Apply now", (*) => this._Fire("restart"), "quiet")
+        this._themeApply := Theme.Button(g, "x880 y478 w116 h28", "Apply now", (*) => this.ApplyTheme(), "quiet")
         this._ids["themeApply"] := this._themeApply
         this._ids["themeNote"] := Theme.Label(g, "x632 y516 w364 h40", "", "muted")
         p.load := ObjBindMethod(this, "_SettingsLoad")
@@ -2363,7 +2363,7 @@ class Dashboard {
             . "so set the same key in Medal. The hotkey is one of F4-F24, never a macro, capture or recorder key.`n`n"
             . "A rare aura is clipped when it is listed, its class is listed, or it is rarer than the threshold.")
         Theme.Label(g, "x632 y184 w364 h20", "Medal (medal.exe) must be running.", "muted")
-        Theme.Label(g, "x632 y206 w364 h20", "Set the same clip hotkey in Medal.", "muted")
+        Theme.Label(g, "x632 y206 w364 h20", "Set the same hotkey in Medal (F8, Alt+9, Shift+F5+T).", "muted")
         p.validate := ObjBindMethod(this, "_ClipsCheck")
         this._SaveBar(p)
     }
@@ -2397,11 +2397,21 @@ class Dashboard {
         this._ThemeNote()
     }
 
+    ; Settings > Look "Apply now": the page is saved first (the theme picked
+    ; and anything else changed here; no separate Save), then the macro
+    ; restarts to show it. -> true when the restart was asked for.
+    ApplyTheme() {
+        if !this.SavePage("Settings")
+            return false
+        this._Fire("restart")
+        return true
+    }
+
     ; "Now: X" or "X after Apply now" under the theme dropdown
     _ThemeNote() {
         saved := Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide"))
         Theme.SetText(this._ids["themeNote"], saved = Theme.Current ? "Now: " Theme.Current " (" Theme.Presets[Theme.Current].Note ")"
-            : saved " shows after Apply now (restarts the macro while it is stopped) or the next start.")
+            : saved " shows after Apply now (saves and restarts the macro while it is stopped) or the next start.")
     }
 
     _PsClear() {
@@ -2702,12 +2712,14 @@ class Dashboard {
         this._checkOut := Theme.Edit(g, 220, 228, 364, 372, "", "Multi ReadOnly -WantReturn VScroll")
         this._ids["checkOut"] := this._checkOut
         this._Panel(616, 152, 396, 200, "Send my log")
-        Theme.Label(g, "x632 y184 w364 h60", "Makes a zip of your log, a few screenshots and this check. Webhook links, server links, the bot token and your Windows name are taken out. "
+        Theme.Label(g, "x632 y184 w364 h60", "Makes a zip of your log and this check. Webhook links, server links, the bot token, Discord ids and your Windows name are taken out. "
             . "Send it to whoever helps you.", "body", Theme.CardBg)
-        Theme.Button(g, "x632 y258 w150 h30", "Make support zip", (*) => this._LogZip())
-        this._zipBtn := Theme.Button(g, "x792 y258 w100 h30", "Show it", (*) => this._ZipShow(), "quiet")
+        Theme.Button(g, "x632 y250 w150 h30", "Make support zip", (*) => this._LogZip())
+        this._zipBtn := Theme.Button(g, "x792 y250 w100 h30", "Show it", (*) => this._ZipShow(), "quiet")
         this._SetHidden(this._zipBtn, true)
-        this._ids["zipStatus"] := Theme.Label(g, "x632 y298 w364 h40", "", "muted")
+        this._zipShots := Theme.Check(g, 632, 288, "Add recent screenshots (they can show your Roblox name and chat)", 0, "", "box", 364)
+        this._ids["zipShots"] := this._zipShots
+        this._ids["zipStatus"] := Theme.Label(g, "x632 y314 w364 h34", "", "muted")
         this._Panel(616, 368, 396, 248, "Setup wizard")
         Theme.Label(g, "x632 y400 w364 h60", "Walks through the basics: the Roblox check, your private server, Discord and what to run. Every step can be skipped.", "body", Theme.CardBg)
         Theme.Button(g, "x632 y472 w180 h30", "Run the setup wizard", (*) => this._Fire("wizard"))
@@ -2740,7 +2752,7 @@ class Dashboard {
 
     _LogZip() {
         Theme.SetText(this._ids["zipStatus"], "Making the zip...")
-        r := this._Fire("logBundle")
+        r := this._Fire("logBundle", this._zipShots.Value ? true : false)
         ok := IsObject(r) && r.HasProp("ok") && r.ok
         this._zipPath := ok ? r.path : ""
         this._SetHidden(this._zipBtn, !ok)

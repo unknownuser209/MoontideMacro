@@ -30,11 +30,29 @@ class RunSchedule {
     static DefaultStart := "22:00"
     static DefaultEnd := "08:00"
 
-    __New(cfg) {
+    ; statePath (optional): a file keeping the used window across restarts
+    ; (review 2026-11-12: a theme restart inside the window started a run
+    ; the user had stopped)
+    __New(cfg, statePath := "") {
         this.cfg := cfg
         this._now := ""
         this._bySchedule := false
+        this._path := statePath
         this._usedKey := ""
+        if (statePath != "")
+            try this._usedKey := Trim(FileRead(statePath, "UTF-8"), " `t`r`n")
+    }
+
+    _Use(key) {
+        if (key = this._usedKey)
+            return
+        this._usedKey := key
+        if (this._path != "") {
+            try {
+                f := FileOpen(this._path, "w", "UTF-8-RAW")
+                f.Write(key), f.Close()
+            }
+        }
     }
 
     static ValidTime(s) {
@@ -116,12 +134,12 @@ class RunSchedule {
     NoteStart(bySchedule) {
         this._bySchedule := bySchedule ? true : false
         if (bySchedule && this._now != "")
-            this._usedKey := this._WindowKey(this._now)
+            this._Use(this._WindowKey(this._now))
     }
 
     NoteStop() {
         if (this._now != "" && this._InWindow(this._now))
-            this._usedKey := this._WindowKey(this._now)
+            this._Use(this._WindowKey(this._now))
         this._bySchedule := false
     }
 

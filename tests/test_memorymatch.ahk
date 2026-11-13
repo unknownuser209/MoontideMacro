@@ -41,6 +41,7 @@ class MmBoard {
         this.slowGreen := Map()     ; tile -> its own GreenMs when it completes a pair
         this.gone := false          ; the Roblox window vanished: nothing of the board reads
         this.startDrops := 0        ; Start clicks the game drops (the first n)
+        this.closeDelay := 800      ; after the last chance: the board shown, Close after this
         this.dropTiles := Map()     ; tile -> clicks on it the game drops (lag)
         this.titleGoneAfter := 0    ; the title stops reading once this many tiles were clicked
         this.io := MmIO(this)
@@ -141,7 +142,7 @@ class MmBoard {
             this.downAt[i] := this.t + this.BackMs
         }
         if (this.chances = 0)
-            this.endAt := this.t + 800
+            this.endAt := this.t + this.closeDelay
     }
 
     State(i) {
@@ -722,6 +723,22 @@ Test_MM_PreemptWithUnreadableTitleFinishes() {
         AssertTrue(!MmHasLog(m, "board is gone"), "not taken for gone")
         AssertEq(b.chances, 0, "every chance used")
         AssertTrue(b.closed, "the board closed")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; review 2026-11-12: Close slower than EndCheckMs after the last chance: the
+; round counted as unfinished and tiles were clicked on the shown board
+Test_MM_SlowCloseIsNoExtraTurn() {
+    b := MmStd()
+    b.closeDelay := 4500
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        AssertEq(b.Tiles().Length, 20, "no tile clicked after the 10th chance")
+        AssertTrue(b.closed, "closed")
+        AssertTrue(!MmHasLog(m, "playing on"), "no extra turn")
     } finally {
         MmClean(m)
     }

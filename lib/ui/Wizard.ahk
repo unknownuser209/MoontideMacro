@@ -163,8 +163,10 @@ class SetupWizard {
                 typed := Trim(this._ids["ps"].Value)
                 if (typed = "")
                     return ""
-                if !RegExMatch(typed, "i)^https?://(www\.)?roblox\.com/")
-                    return this._Why("psWhy", "That is not a Roblox link. Copy it from your private server's Share / Copy Link button.")
+                ; the same check auto-rejoin uses (RecoveryTask.LinkOk): a link
+                ; without "https://www." was taken here and refused at rejoin
+                if (SubStr(typed, 1, 23) != "https://www.roblox.com/" || StrLen(typed) <= 23 || RegExMatch(typed, "[\s`"<>``\\|^]"))
+                    return this._Why("psWhy", "That is not a Roblox private server link (it starts with https://www.roblox.com/). Copy it from your private server's Share / Copy Link button.")
                 this.cfg.Set("General.privateServer", typed)
                 this._ids["ps"].Value := ""
                 this._Save()

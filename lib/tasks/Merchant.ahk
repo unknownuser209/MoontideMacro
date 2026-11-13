@@ -105,6 +105,11 @@ class MerchantTask {
 
     Pending() => this._pending.Count
 
+    ; App.Start: merchants announced before a Stop are gone by now
+    Reset() {
+        this._pending := Map()
+    }
+
     CanRun(state) {
         env := this._env
         if (this._pending.Count = 0)
@@ -399,9 +404,9 @@ class MerchantTask {
             return
         env := this._env
         cc := CleanupCtx(ctx)
-        if (IsObject(cal) && env.InvOpen(cal.inv_items_tab)) {
+        if (IsObject(cal) && Screen.WithMode("C", () => env.InvOpen(cal.inv_items_tab))) {
             env.Log("merchant: preempted with the inventory open: closing it first")
-            env.CloseInv(cal.inv_open, cal.inv_items_tab, cc)
+            Screen.WithMode("C", () => env.CloseInv(cal.inv_open, cal.inv_items_tab, cc))
         }
         if this._ShopUp() {
             env.Log("merchant: preempted in " name "'s shop: closing it first")

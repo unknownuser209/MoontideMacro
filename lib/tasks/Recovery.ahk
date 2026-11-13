@@ -84,6 +84,8 @@
 class RecoveryTask {
     static WindowWaitMs := 90000
     static UpdateMaxMs := 600000    ; most time a Roblox update may add to the window wait
+    static TitleWaitMs := 30000    ; past loadSec: the title screen shows within this
+    static TitlePollMs := 1000
     static Launchers := ["RobloxPlayerInstaller.exe", "RobloxPlayerLauncher.exe", "Bloxstrap.exe", "Fishstrap.exe", "Voidstrap.exe"]
     static RetryMs := 60000         ; hold after a failed/refused rejoin
     static GapMs := 120000
@@ -477,12 +479,22 @@ class RecoveryTask {
         }
         if (IsObject(this._state) && HasProp(this._state, "inLimbo"))
             this._state.inLimbo := false        ; a fresh join starts on Sol's Island
-        if !env.Wait(this._Cfg("loadSec", 20) * 1000, ctx)
-            return false
+        ; the title screen after every join (live 2026-11-09): every reset
+        ; failed on it, the rejoins ran to their limit, then every task failed.
+        ; It is looked for from the moment the window is up (live 2026-11-12:
+        ; it showed during the blind loadSec wait, or after it when checked
+        ; once, and Play was never clicked): Play as soon as it reads, else
+        ; loadSec + TitleWaitMs at most.
+        waited := 0, limit := this._Cfg("loadSec", 20) * 1000 + RecoveryTask.TitleWaitMs
+        while (waited < limit && !Input.TitleUp(env.io, env.ocrFn)) {
+            if !env.Wait(RecoveryTask.TitlePollMs, ctx)
+                return false
+            waited += RecoveryTask.TitlePollMs
+        }
+        if (waited >= limit)
+            env.Log("recovery: no title screen " (limit // 1000) " s after the window opened; going on")
         if !this._FocusOk()
             return false
-        ; the title screen after every join (live 2026-11-09): every reset
-        ; failed on it, the rejoins ran to their limit, then every task failed
         p := Input.ClickPlay(ctx, env.io, env.ocrFn)
         if (p < 0)
             return false

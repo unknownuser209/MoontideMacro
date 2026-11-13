@@ -1737,3 +1737,24 @@ Test_Pt_StopDuringAfterUseStillVerifies() {
     } finally
         r.Done()
 }
+
+; review 2026-11-12: at 16:10 the inventory scales evenly, centred (mode
+; "C"); the potion run mapped it stretched and missed the Items tab at
+; 1920x1200. Every potion click happens in mode "C"; the mode is put back.
+Test_Potions_InventoryInCenteredMode() {
+    rig := PtRig()
+    modes := []
+    try {
+        rig.game.DefineProp("MoveTo", {call: (self, x, y) => (modes.Push(Screen.Mode), self.mx := x, self.my := y, self.log.Push("move " x "," y))})
+        rig.Run()
+        AssertTrue(modes.Length > 0, "clicked")
+        bad := 0
+        for m in modes
+            bad += (m != "C")
+        AssertEq(bad, 0, "every click in mode C (" modes.Length " moves)")
+        AssertEq(Screen.Mode, "S", "mode put back")
+        AssertEq(rig.BiomeUses("Lucky Potion"), 1, "the potion was still used")
+    } finally {
+        rig.Done()
+    }
+}

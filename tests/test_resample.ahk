@@ -47,7 +47,7 @@ RsFrame(name, f) {
     return out
 }
 
-RsScaleImage(src, out, f) {
+RsScaleImage(src, out, f, fy := "") {
     DllCall("LoadLibrary", "Str", "gdiplus", "Ptr")
     si := Buffer(24, 0), NumPut("UInt", 1, si, 0)
     DllCall("gdiplus\GdiplusStartup", "Ptr*", &tok := 0, "Ptr", si, "Ptr", 0)
@@ -57,7 +57,7 @@ RsScaleImage(src, out, f) {
             throw Error("cannot load " src)
         DllCall("gdiplus\GdipGetImageWidth", "Ptr", bmp, "UInt*", &w := 0)
         DllCall("gdiplus\GdipGetImageHeight", "Ptr", bmp, "UInt*", &h := 0)
-        w2 := Round(w * f), h2 := Round(h * f)
+        w2 := Round(w * f), h2 := Round(h * (fy = "" ? f : fy))
         DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", w2, "Int", h2, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &dst)
         DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", dst, "Ptr*", &g)
         DllCall("gdiplus\GdipSetInterpolationMode", "Ptr", g, "Int", 7)        ; HighQualityBicubic
@@ -413,4 +413,43 @@ RsGrab(g, x, y, w, h, dw, dh) {
         }
     }
     return out
+}
+
+; Frame `name` stretched to cw x ch (a 16:10 client stretches the UI, as
+; Screen assumes; 16:9 sizes scale evenly) -> path of a PNG in A_Temp.
+RsFrameAt(name, cw, ch) {
+    static made := Map()
+    src := A_ScriptDir "\screens\" (InStr(name, ".") ? name : name ".jpg")
+    AssertTrue(FileExist(src), "frame " name " exists")
+    dir := A_Temp "\vesper_resample"
+    if !DirExist(dir)
+        DirCreate(dir)
+    out := dir "\" RegExReplace(name, "\.\w+$") "_" cw "x" ch ".png"
+    if !made.Has(out) {
+        RsScaleImage(src, out, cw / 2560, ch / 1440)
+        made[out] := true
+    }
+    return out
+}
+
+; the title screen after the November update (title_play_dark) at every
+; supported size: seen, so a rejoin clicks Play; an in-game frame never is
+Test_Resample_TitleScreenAtEverySize() {
+    bad := []
+    for sz in [[3840, 2160], [1920, 1080], [1600, 900], [1536, 864], [1366, 768], [1280, 720]
+        , [1920, 1200], [1680, 1050], [1440, 900], [1280, 800]] {
+        cw := sz[1], ch := sz[2]
+        try {
+            Screen.SetClient(0, 0, cw, ch)
+            if !Input.TitleUp("", RsOcrFn(RsFrameAt("title_play_dark", cw, ch)))
+                bad.Push(cw "x" ch)
+            if !Input.TitleUp("", RsOcrFn(RsFrameAt("title_play_windy", cw, ch)))
+                bad.Push(cw "x" ch " (old title)")
+            if Input.TitleUp("", RsOcrFn(RsFrameAt("world_day", cw, ch)))
+                bad.Push(cw "x" ch " in game")
+        } finally {
+            Screen.Reset()
+        }
+    }
+    AssertEq(RsJoin(bad), "", "title screen seen at every size")
 }

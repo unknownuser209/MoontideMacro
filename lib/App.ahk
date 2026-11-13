@@ -496,6 +496,10 @@ class App {
         this.state.rareActive := false
         this.state.rareTs := ""
         this.state.biome := ""
+        ; a ghost server is decided again from the log at the first poll
+        ; (live 2026-11-12: a rejoin stopped by F3 left it set, and the next
+        ; Start closed the healthy private server again)
+        this.state.ghost := false
         if this._everStarted {
             try {
                 this.lw := this.lwFactory.Call()
@@ -525,7 +529,10 @@ class App {
         ; waits for the trip (state.startSell). Only with a Sell task: without
         ; one the flag would block craft forever.
         this.state.startSell := false
+        this.state.needRepath := false          ; a re-path left from the last run is not this one's
         this.state.repathStreak := 0
+        if (this._taskMap.Has("merchant") && HasMethod(this._taskMap["merchant"], "Reset"))
+            this._taskMap["merchant"].Reset()   ; a merchant announced before Stop is long gone
         this.state.limboMode := this._LimboMode()
         if this.state.limboMode {
             this.Log("Limbo is on: using the Portable Crack and waiting for Eden (fishing, selling, crafting, quests and merchants are off)")
@@ -553,7 +560,7 @@ class App {
             this.Log("Roblox is not open: auto-rejoin opens your private server")
         else if (win != "ok")
             this._PauseFor(win)
-        else if (this._taskMap.Has("fishing") && HasMethod(this._taskMap["fishing"], "LineInAtStart"))
+        else if (this._Active() && this._taskMap.Has("fishing") && HasMethod(this._taskMap["fishing"], "LineInAtStart"))
             this._taskMap["fishing"].LineInAtStart(this.ctx)     ; a line a stop left out
         this.timerFn.Call(this._tickFn, App.TickMs)
         this._timerOn := true
@@ -1474,7 +1481,17 @@ class App {
 
     _Secrets() {
         arr := []
-        try arr.Push(this.cfg.Get("General.privateServer", ""))
+        try {
+            link := this.cfg.Get("General.privateServer", "")
+            arr.Push(link)
+            ; the share / link code alone is as secret as the whole link
+            pos := 1
+            while (pos := RegExMatch(link, "i)(?:code|privateServerLinkCode|linkCode)=([^&\s]+)", &m, pos)) {
+                if (StrLen(m[1]) >= 6)
+                    arr.Push(m[1])
+                pos += m.Len
+            }
+        }
         try arr.Push(this.cfg.Get("Remote.token", ""))
         try {
             for w in this.cfg.Webhooks()
@@ -1884,7 +1901,7 @@ class App {
         }
         this.state.onBump := ObjBindMethod(this, "_DailyAdd")
         if !IsObject(this.sched)
-            this.sched := RunSchedule(this.cfg)
+            this.sched := RunSchedule(this.cfg, this.root "\data\schedule_state.txt")
         this._RemoteSetup()
         SetTimer(ObjBindMethod(this, "ServiceTick"), 500)
     }
@@ -1938,6 +1955,15 @@ class App {
             return
         act := this.sched.Tick(A_Now, this._started, IsObject(this.daily) ? this.daily.RunMs() : 0)
         if (act = "start") {
+            ; a route tool or a task still stopping refuses Start: no focus
+            ; grab every 15 s (review 2026-11-12); told once, tried again
+            if (this._toolBusy || IsObject(this._running)) {
+                if !(this.HasOwnProp("_schedBusyTold") && this._schedBusyTold)
+                    this.Log("Schedule: start time, but a route tool or the last task is still busy; starting when it is done")
+                this._schedBusyTold := true
+                return
+            }
+            this._schedBusyTold := false
             this.Log("Schedule: start time, starting")
             this._FrontRoblox()
             this._schedStarting := true
@@ -1966,19 +1992,22 @@ class App {
 
     _SummaryTick() {
         if (IsObject(this.daily) && DailySummary.Due(this.cfg, A_Now, this._SummaryLast()))
-            this.SendSummary()
+            this.SendSummary(true)
     }
 
     ; Today's numbers to the webhooks with Stop (startstop) ticked. -> a line
-    ; for the dashboard. The day counts as sent even with no webhook (asked
-    ; again tomorrow, not every 30 s).
-    SendSummary() {
+    ; for the dashboard. scheduled (the daily time): the day counts as sent,
+    ; even with no webhook (asked again tomorrow, not every 30 s). "Send one
+    ; now" marks nothing, so tonight's summary still goes (review 2026-11-12).
+    SendSummary(scheduled := false) {
         if !IsObject(this.daily)
             return "Not sent: the macro is not ready"
         today := FormatTime(A_Now, "yyyyMMdd")
-        try {
-            f := FileOpen(this._SummaryPath(), "w", "UTF-8-RAW")
-            f.Write(today), f.Close()
+        if scheduled {
+            try {
+                f := FileOpen(this._SummaryPath(), "w", "UTF-8-RAW")
+                f.Write(today), f.Close()
+            }
         }
         n := 0
         try n := this.wh.Route("startstop").Length
@@ -2037,14 +2066,15 @@ class App {
         c := this.cfg
         return Map("token", c.Get("Remote.token", ""), "channelId", Trim(c.Get("Remote.channel", "")), "allowedIds", c.Get("Remote.users", "")
             , "prefix", c.Get("Remote.prefix", "!"), "pollSec", c.Get("Remote.pollSec", 5)
-            , "log", (t) => this.Log("Remote: " t), "handlers", this._RemoteHandlers())
+            , "log", (t) => this.Log(RegExMatch(t, "i)^Remote:") ? t : "Remote: " t), "handlers", this._RemoteHandlers())
     }
 
     _RemoteHandlers() {
         return Map(
             "status", (args, msg) => this._RemoteStatus(),
             "stats", (args, msg) => this._RemoteStats(),
-            "start", (args, msg) => (this._FrontRoblox(), this.Start() ? "Started." : this._started ? "Already running." : "Not started: see the log."),
+            "start", (args, msg) => (this._FrontRoblox(), paused := this._started && this.ctx.IsPaused()
+                , this.Start() ? (paused ? "Resumed." : "Started.") : this._started ? "Already running." : "Not started: see the log."),
             "stop", (args, msg) => (this.Stop("Discord") ? "Stopped." : "It was not running."),
             "pause", (args, msg) => (this.Pause() ? "Paused." : "It is not running."),
             "resume", (args, msg) => (this._FrontRoblox(), this.Resume() ? "Resumed." : "Not resumed: " (this._pauseReason != "" ? this._pauseReason : "it is not paused") "."),
@@ -2108,8 +2138,12 @@ class App {
     ; Settings > Look "Apply now": a new theme needs new windows, so the macro
     ; restarts (only while stopped: a run is never cut short for a colour).
     OnRestart() {
-        if this._started {
+        if (this._started || IsObject(this._running)) {
             this.Log("Theme: stop the macro first (F3), then press Apply now")
+            return false
+        }
+        if this._toolBusy {
+            this.Log("Theme: finish the route record / test first, then press Apply now")
             return false
         }
         this.Log("Theme: restarting to show " Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide")))
@@ -2121,10 +2155,10 @@ class App {
 
     OnCheckSetup() => SetupCheck.Run(this.cfg)
 
-    OnLogBundle() {
+    OnLogBundle(shots := false) {
         rep := ""
         try rep := SetupCheck.Report(SetupCheck.Run(this.cfg))
-        r := LogBundle.Make(this.root, Map("report", rep))
+        r := LogBundle.Make(this.root, Map("report", rep, "shots", shots ? true : false))
         if r.ok
             this.Log("Support zip made: " RegExReplace(r.path, "^.*\\"))
         return r
@@ -2254,7 +2288,7 @@ class App {
             "checkUpdate", () => this.OnCheckUpdate(true),
             "installUpdate", () => this.OnInstallUpdate(),
             "checkSetup", () => this.OnCheckSetup(),
-            "logBundle", () => this.OnLogBundle(),
+            "logBundle", (shots := false) => this.OnLogBundle(shots),
             "wizard", () => this.OpenWizard(),
             "sendSummary", () => this.SendSummary(),
             "testRemote", () => this.OnTestRemote(),

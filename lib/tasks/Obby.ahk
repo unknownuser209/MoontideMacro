@@ -725,7 +725,7 @@ class ObbyTask {
         if this.JockUp()
             return "jock dialog"
         c := this._AuraCal()
-        if (IsObject(c) && (this._Open(c) || this._Panel(c)))
+        if (IsObject(c) && Screen.WithMode("C", () => this._Open(c) || this._Panel(c)))
             return "storage"
         return ""
     }
@@ -780,13 +780,13 @@ class ObbyTask {
             case "raid":
                 return this._CloseRaid(ctx)
             case "inventory":
-                return this._CloseInventory(ctx)
+                return Screen.WithMode("C", () => this._CloseInventory(ctx))
             case "ugc shop":
-                return this._CloseByX(ctx, () => this.ShopUp(), "the UGC Shop's X")
+                return Screen.WithMode("C", () => this._CloseByX(ctx, () => this.ShopUp(), "the UGC Shop's X"))
             case "jock dialog":
                 return this._CloseByX(ctx, () => this.JockUp(), "Jock's Leave", ObbyTask.JockLeave)
             case "storage":
-                return this._ShutStorage(this._AuraCal(), ctx) ? 1 : 2
+                return Screen.WithMode("C", () => this._ShutStorage(this._AuraCal(), ctx)) ? 1 : 2
             case "title":
                 r := Input.ClickPlay(ctx, env.io, env.ocrFn)
                 return (r = 0) ? 1 : r
@@ -831,14 +831,14 @@ class ObbyTask {
     static InvX := [1884, 399]
 
     ; The title reads (one read).
-    InvUp() => this._Reads(ObbyTask.InvBox, ObbyTask.InvRe)
+    InvUp() => Screen.WithMode("C", () => this._Reads(ObbyTask.InvBox, ObbyTask.InvRe))
 
     ; THE UGC SHOP (L63 01:17:39 WINDY): E is also the shop keeper's interact
     ; key at spawn; the shop came up over the fight, the orb behind it. The
     ; same frame as the Inventory: its title in InvBox, its X at InvX. Only
     ; the X is ever clicked, never Purchase (Robux).
     static ShopRe := "i)(ugc|ugg|[il1|\x22'-]{1,3}g[cg]|l[il1]gg?)\s*sh[o0][opqn]"   ; reads "UGC Shoo" in InvBox; "UGG Shon", "IIGC Shon", "I-IGC Shoo" below 1440p
-    ShopUp() => this._Reads(ObbyTask.InvBox, ObbyTask.ShopRe)
+    ShopUp() => Screen.WithMode("C", () => this._Reads(ObbyTask.InvBox, ObbyTask.ShopRe))
 
     ; Closes it by its X and checks that it went. -> 1 closed | 0 not up |
     ; 2 still up or refused | -1 stopped

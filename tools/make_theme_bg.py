@@ -7,13 +7,11 @@ the theme's Sol's RNG art, centre-cropped to that aspect, scaled, softened,
 darkened and tinted toward the theme's background colour so panels and text
 read on it, then palette-quantised (small file).
 
-Sources (first that exists):
-  overdrive  assets/themes/src/matrix_overdrive.(png|jpg|jpeg|webp)
-             (the Matrix : Overdrive aura picture; save it there from the
-             Sol's RNG wiki), else assets/biomes/HELL.png
-  glitch     assets/biomes/GLITCHED.png
-  dream      assets/biomes/DREAMSPACE.png
-  cyber      assets/biomes/CYBERSPACE.png
+Sources: assets/themes/src/<theme>.webp, the Sol's RNG thumbnails the
+user picked (2026-11-12): overdrive (Matrix : Overdrive, red), galaxy
+(blue-violet), boss (Boss Preview, green-gold), equinox (1 in 2,500,000,000,
+black and white), matrix (orange), radiant (The Radiant Forest, purple),
+illusionary (Illusionary, electric blue).
 The Moontide theme keeps assets/moontide_bg_dim.png (tools/make_bg.py).
 
 Needs Python 3 + Pillow. Not used at runtime.
@@ -26,21 +24,22 @@ W, H = 864, 620
 OUT = os.path.join(ROOT, "assets", "themes")
 SRC = os.path.join(OUT, "src")
 
-# theme -> (source candidates, background colour it is tinted toward)
+# theme -> (brightness kept, background colour it is tinted toward)
 THEMES = {
-    "overdrive": ([os.path.join(SRC, "matrix_overdrive." + e) for e in ("png", "jpg", "jpeg", "webp")]
-                  + [os.path.join(ROOT, "assets", "biomes", "HELL.png")], (0x12, 0x0A, 0x0C)),
-    "glitch": ([os.path.join(ROOT, "assets", "biomes", "GLITCHED.png")], (0x0A, 0x11, 0x0C)),
-    "dream": ([os.path.join(ROOT, "assets", "biomes", "DREAMSPACE.png")], (0x14, 0x0C, 0x14)),
-    "cyber": ([os.path.join(ROOT, "assets", "biomes", "CYBERSPACE.png")], (0x0A, 0x10, 0x14)),
+    "overdrive": (0.42, (0x12, 0x0A, 0x0C)),
+    "galaxy": (0.34, (0x0B, 0x0B, 0x1A)),
+    "boss": (0.38, (0x11, 0x12, 0x0A)),
+    "equinox": (0.30, (0x0E, 0x0E, 0x0E)),
+    "matrix": (0.40, (0x14, 0x0C, 0x07)),
+    "radiant": (0.34, (0x0D, 0x0A, 0x18)),
+    "illusionary": (0.30, (0x06, 0x0A, 0x1C)),
 }
-BRIGHT = 0.42     # keep 42 % brightness
 TINT = 0.35       # then 35 % of the way to the theme background
 
 
-def build(name, sources, bg):
-    src = next((p for p in sources if os.path.exists(p)), None)
-    if src is None:
+def build(name, bright, bg):
+    src = os.path.join(SRC, name + ".webp")
+    if not os.path.exists(src):
         print(name, ": no source")
         return
     im = Image.open(src).convert("RGB")
@@ -55,7 +54,7 @@ def build(name, sources, bg):
     im = im.resize((W, H), Image.LANCZOS)
     if small:                                # upscaled art: soften the pixels
         im = im.filter(ImageFilter.GaussianBlur(2.2))
-    im = ImageEnhance.Brightness(im).enhance(BRIGHT)
+    im = ImageEnhance.Brightness(im).enhance(bright)
     im = Image.blend(im, Image.new("RGB", (W, H), bg), TINT)
     os.makedirs(OUT, exist_ok=True)
     out = os.path.join(OUT, name + ".png")
@@ -64,5 +63,5 @@ def build(name, sources, bg):
 
 
 if __name__ == "__main__":
-    for n, (s, c) in THEMES.items():
-        build(n, s, c)
+    for n, (b, c) in THEMES.items():
+        build(n, b, c)

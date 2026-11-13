@@ -299,9 +299,18 @@ class PotionsTask {
         this._pending := ""
         if !IsObject(ev)
             return
-        if this._needClose
-            this._CloseLeftover(ctx)
-        this._RunEvent(ev, ctx)
+        ; the inventory scales evenly, centred (16:10): mode "C" around it,
+        ; as BiomeItems / Merchant (review 2026-11-12: every potion missed
+        ; the Items tab at 1920x1200)
+        old := Screen.Mode
+        Screen.Mode := "C"
+        try {
+            if this._needClose
+                this._CloseLeftover(ctx)
+            this._RunEvent(ev, ctx)
+        } finally {
+            Screen.Mode := old
+        }
     }
 
     ; A run cut short by a pause / focus loss left the inventory open (no

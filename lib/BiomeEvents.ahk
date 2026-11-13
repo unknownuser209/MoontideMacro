@@ -229,7 +229,7 @@ class BiomeEvents {
         if !test
             this._SaveLast(name)
         this._Log("Biome: " name (rare ? " (RARE)" : "") (info["known"] ? "" : " (not in biomes.json)"))
-        if HasMethod(st, "Bump")
+        if (!test && HasMethod(st, "Bump"))
             st.Bump("biomes")
         ; an Ended card when the biome changes, then a Started card, except
         ; for a rare biome: that one gets only the rare message below
@@ -240,7 +240,7 @@ class BiomeEvents {
         if !rare {
             return
         }
-        if HasMethod(st, "Bump")
+        if (!test && HasMethod(st, "Bump"))
             st.Bump("rareBiomes")
         st.rareActive := true
         st.rareTs := ts               ; PotionsTask only acts while this matches its event
@@ -335,7 +335,7 @@ class BiomeEvents {
 
     ; Private-server link for the rare webhook, or "". Never logged.
     _JoinLink() {
-        if (!this._cfg.Get("General.joinButton", 1) || this._Ghost())
+        if (!this._cfg.Get("General.joinButton", 0) || this._Ghost())
             return ""
         link := Trim(this._cfg.Get("General.privateServer", ""))
         return RegExMatch(link, "i)^https://(?:www\.)?roblox\.com/[^\s()\[\]]+$") ? link : ""

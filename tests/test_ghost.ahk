@@ -215,3 +215,71 @@ Test_Ghost_JoinSplitAcrossReadsIsPrivate() {
         LwTmpClean(d)
     }
 }
+
+; live 2026-11-12 20:57: Sol's restart teleported the user into a new copy of
+; their own private server (ticket RequestType 2, JoinTypeId 4). It read as a
+; ghost server and every Start closed Roblox and rejoined. The game's boss
+; arenas (RequestType 2, JoinTypeId 6) and public servers (0 / 10) stay ghosts.
+GhTicket(ts, req, jt) => ts ',1.0,1,6,Info [FLog::UgcExperienceController] UgcExperienceController: doTeleport: joinScriptUrl https://assetgame.roblox.com/Game/Join.ashx?ticketVersion=2&ticket={"UserId"%3a1%2c"PlaceId"%3a15532962292%2c"IsTeleport"%3atrue%2c"FollowUserId"%3anull%2c"JoinTypeId"%3a' jt '%2c"MatchmakingDecisionId"%3anull%2c"RequestType"%3a' req '}'
+
+Test_Ghost_TeleportIntoThePrivateServerIsPrivate() {
+    AssertEq(LogWatch.TeleportKind(GhTicket("2026-11-13T02:57:14.632Z", 2, 4)).jt, 4, "JoinTypeId read")
+    AssertEq(LogWatch.TeleportKind(GhTicket("2026-11-13T02:57:14.632Z", 2, 4)).req, 2, "RequestType read")
+    AssertEq(LogWatch.TeleportKind("no ticket here").req, -1, "no ticket")
+    d := LwTmpDir()
+    try {
+        path := d "\0.747_20261113T004754Z_Player_077A8_last.log"
+        FileAppend("", path)
+        lw := LogWatch(d)
+        lw.Poll()
+        cases := [[2, 4, "private", "a teleport into the private server"]
+            , [2, 6, "other", "a reserved boss arena"]
+            , [0, 10, "other", "a public server"]]
+        for c in cases {
+            FileAppend(GhTicket("2026-11-13T02:57:14.632Z", c[1], c[2]) "`n" GhTeleport("2026-11-13T02:57:14.700Z") "`n"
+                . GhJoin("2026-11-13T02:57:15.104Z") "`n" GhLoad("2026-11-13T02:57:15.104Z", "") "`n", path, "UTF-8-RAW")
+            j := GhJoins(lw.Poll())
+            AssertEq(j.Length, 1, c[4] ": one join")
+            AssertEq(j[1]["name"], c[3], c[4])
+        }
+        ; the ticket is used once: a later plain teleport is a ghost again
+        FileAppend(GhTicket("2026-11-13T03:00:00.000Z", 2, 4) "`n" GhJoin("2026-11-13T03:00:01.000Z") "`n" GhLoad("2026-11-13T03:00:01.000Z", "") "`n"
+            . GhJoin("2026-11-13T03:05:00.000Z") "`n" GhLoad("2026-11-13T03:05:00.000Z", "") "`n", path, "UTF-8-RAW")
+        j := GhJoins(lw.Poll())
+        AssertEq(j.Length, 2, "two joins")
+        AssertEq(j[1]["name"], "private", "the ticketed one")
+        AssertEq(j[2]["name"], "other", "the next one without a ticket")
+        ; at startup (the user's case: F1 long after the teleport)
+        filler := ""
+        Loop 1200
+            filler .= "2026-11-13T03:10:00.000Z,1.0,1,6,Info [FLog::Output] filler line number " A_Index " ........................`n"
+        path2 := d "\0.747_20261113T031000Z_Player_88888_last.log"
+        FileAppend(GhReq("2026-11-13T02:22:30.312Z", "RequestPrivateGame") "`n" GhJoin("2026-11-13T02:22:30.779Z") "`n"
+            . GhTicket("2026-11-13T02:57:14.632Z", 2, 4) "`n" GhJoin("2026-11-13T02:57:15.104Z") "`n" GhLoad("2026-11-13T02:57:15.104Z", "") "`n" filler, path2, "UTF-8-RAW")
+        FileSetTime(A_Now, path2, "M")
+        FileSetTime("20200101000000", path, "M")
+        j := GhJoins(LogWatch(d).Poll())
+        AssertEq(j[1]["name"], "private", "startup: still the private server, no rejoin")
+    } finally {
+        LwTmpClean(d)
+    }
+}
+
+; review 2026-11-12: a teleport ticket left by a teleport that never joined
+; must not make the next (public) launch read as private
+Test_Ghost_StaleTicketIsDropped() {
+    d := LwTmpDir()
+    try {
+        path := d "\0.747_20261113T050000Z_Player_99999_last.log"
+        FileAppend("", path)
+        lw := LogWatch(d)
+        lw.Poll()
+        FileAppend(GhTicket("2026-11-13T05:00:00.000Z", 2, 4) "`n" GhReq("2026-11-13T05:01:00.000Z", "RequestGame") "`n"
+            . GhJoin("2026-11-13T05:01:01.000Z") "`n" GhLoad("2026-11-13T05:01:01.000Z", "") "`n", path, "UTF-8-RAW")
+        j := GhJoins(lw.Poll())
+        AssertEq(j.Length, 1, "one join")
+        AssertEq(j[1]["name"], "other", "the public launch is a ghost")
+    } finally {
+        LwTmpClean(d)
+    }
+}

@@ -559,7 +559,7 @@ class SellTask {
             return []
         lp := this._coords["sell"]["loop"]
         popup := {up: () => this._PopupUp() ? "Sell Confirm popup" : ""
-            , close: (label, ctx) => !FishLogic.ClickAt(io, ctx, SellTask.ShopChecks.cancel, lp["confirmPreMs"], 0) ? -1
+            , close: (label, ctx) => !Screen.WithMode("C", () => FishLogic.ClickAt(io, ctx, SellTask.ShopChecks.cancel, lp["confirmPreMs"], 0)) ? -1
                 : (r := this._WaitPopupGone(ctx)) < 0 ? -1 : r ? 1 : 2}
         shop := {up: () => this._ShopUp() ? "Fishing Shop" : ""
             , close: (label, ctx) => (r := this._CloseShop(ctx)) < 0 ? -1 : r ? 1 : 2}
@@ -592,7 +592,7 @@ class SellTask {
         this.deps.log.Call("sell: preempted at the fisher - closing what is open first")
         if this._PopupUp() {
             lp := this._coords["sell"]["loop"]
-            if !FishLogic.ClickAt(io, cc, SellTask.ShopChecks.cancel, lp["confirmPreMs"], 0)
+            if !Screen.WithMode("C", () => FishLogic.ClickAt(io, cc, SellTask.ShopChecks.cancel, lp["confirmPreMs"], 0))
                 return
             if (this._WaitPopupGone(cc) < 0)
                 return

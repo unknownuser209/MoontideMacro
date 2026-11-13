@@ -269,3 +269,68 @@ Test_Clip_NoFireAfterStop() {
         Clip.Reset()
     }
 }
+
+; ---- combo clip hotkeys (the user, 2026-11-12: "alt+9 or shift+f5+t") -------
+
+Test_Clip_ComboHotkeysParse() {
+    AssertEq(Clip.HotkeyText("alt+9"), "Alt+9", "Alt+9")
+    AssertEq(Clip.HotkeyText("shift+f5+t"), "Shift+F5+T", "Shift+F5+T")
+    AssertEq(Clip.HotkeyText(" T + shift "), "Shift+T", "modifiers first, spaces and case ignored")
+    AssertEq(Clip.HotkeyText("control+alt+F9"), "Ctrl+Alt+F9", "Control = Ctrl")
+    AssertEq(Clip.HotkeyText("F8"), "F8", "one key as before")
+    AssertEq(Clip.HotkeyText("f10+t"), "F10+T", "an F key with a letter")
+    for bad in ["t+y", "9", "e", "alt+shift", "alt+f4", "win+d", "lwin+9", "alt+f1", "ctrl+f3", "alt+9+9"
+        , "ctrl+alt+shift+f5+t", "alt+", "+9", "alt+space", "alt+tab", "alt+enter", "^F8", "LButton+alt"]
+        AssertEq(Clip.HotkeyText(bad), "", "refused <" bad ">")
+}
+
+Test_Clip_ComboHotkeyPressedInOrder() {
+    for c in [["alt+9", ["down Alt", "down 9", "up 9", "up Alt"]]
+        , ["Shift+F5+T", ["down Shift", "down F5", "down t", "up t", "up F5", "up Shift"]]] {
+        env := ClEnv()
+        ClSetup(env, &dir, 1, c[1])
+        try {
+            AssertEq(Clip.Trigger("rare"), "scheduled", c[1] " scheduled")
+            env.RunTimers()
+            got := ""
+            for e in env.io.log
+                got .= (got = "" ? "" : ", ") e
+            want := ""
+            for e in c[2]
+                want .= (want = "" ? "" : ", ") e
+            AssertEq(got, want, c[1] " held in order, last tapped, released in reverse (letters lower case)")
+            AssertEq(env.wh.sent.Length, 1, c[1] " clips webhook")
+        } finally {
+            try DirDelete(dir, true)
+            Clip.Reset()
+        }
+    }
+}
+
+Test_Clip_ComboMustNotHoldMacroKeys() {
+    dir := ClTmpDir()
+    try {
+        cfg := Config.Load(dir)
+        AssertEq(Clip.HotkeyProblem("alt+9", cfg), "", "Alt+9 fine")
+        AssertTrue(InStr(Clip.HotkeyProblem("shift+f4", cfg), "capture key"), "holds the capture key F4")
+        AssertTrue(InStr(Clip.HotkeyProblem("ctrl+f7", cfg), "route recorder"), "holds the recorder key F7")
+        AssertTrue(InStr(Clip.HotkeyProblem("t+y", cfg), "Alt+9"), "the refusal shows a combo example")
+    } finally {
+        try DirDelete(dir, true)
+    }
+    ; the Clips page saves a combo
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        d.Ctrl("Medal.clipHotkey").Value := "shift+f5+t"
+        AssertTrue(d.SavePage("Clips"), "Clips save takes Shift+F5+T")
+        AssertEq(Config.Load(dir).Get("Medal.clipHotkey", ""), "shift+f5+t", "on disk")
+        d.Ctrl("Medal.clipHotkey").Value := "alt+f4"
+        AssertEq(d.SavePage("Clips"), false, "Alt+F4 refused")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}

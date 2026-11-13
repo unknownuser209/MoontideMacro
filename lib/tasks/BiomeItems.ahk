@@ -278,9 +278,9 @@ class BiomeItemsTask {
         ; told to stop part way: every wait returned -1 with the inventory
         ; still open over the next task. A preempt closes it first (checked,
         ; only while its tabs read); a halt sends nothing.
-        if (r < 0 && !CleanupCtx.Halted(ctx) && env.InvOpen(c.inv_items_tab)) {
+        if (r < 0 && !CleanupCtx.Halted(ctx) && Screen.WithMode("C", () => env.InvOpen(c.inv_items_tab))) {
             env.Log("biome items: stopped with the inventory open: closing it first")
-            env.CloseInv(c.inv_open, c.inv_items_tab, CleanupCtx(ctx))
+            Screen.WithMode("C", () => env.CloseInv(c.inv_open, c.inv_items_tab, CleanupCtx(ctx)))
         }
         return (r = 1) ? 1 : 0
     }

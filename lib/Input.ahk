@@ -975,7 +975,14 @@ class Input {
     static TitlePlayBox := {x: 200, y: 1290, w: 320, h: 90}
     static TitlePlayRe := "i)^\W*pl[ao0]y\W*$"
     static TitleLogsBox := {x: 50, y: 1150, w: 500, h: 90}
-    static TitleLogsRe := "i)ch[ao]n[gq][e3]\s*l[o0][gq]"
+    ; "Changelogs" in the game font: "Rhonaelogs" live 2026-11-12 (after
+    ; the update), "Rhonaeloqg" earlier; below 1440p ".hnnaeloqs",
+    ; "- nnnelons", "Chonqeloqs" (tests\screens resampled): an h or n, a
+    ; few letters, then l, o, g / q / n and s / g
+    static TitleLogsRe := "i)[hn][a-z]{1,4}\s*l[o0][gqn][sg5]"
+    ; below 1440p one zoom misses words another reads ("Play" read nothing
+    ; at 2x on a 1366x768 frame, "Ploy" at 3x): these are tried in turn
+    static TitleScalesOff := [2, 3, 1]
     static TitleScale := 2
     static TitlePlay := [352, 1334]
     static TitleTries := 3        ; clicks on Play before giving up
@@ -993,9 +1000,17 @@ class Input {
         io := Input._Backend(io)
         if (!IsObject(ocr) && !HasMethod(io, "Ocr"))
             return false
-        s := Input.TitleScale
-        return RegExMatch(Input._ReadAt(io, Input.TitlePlayBox, ocr, s), Input.TitlePlayRe) > 0
-            && RegExMatch(Input._ReadAt(io, Input.TitleLogsBox, ocr, s), Input.TitleLogsRe) > 0
+        scales := Screen.IsIdentity() ? [Input.TitleScale] : Input.TitleScalesOff
+        return Input._ReadsAny(io, Input.TitlePlayBox, ocr, scales, Input.TitlePlayRe)
+            && Input._ReadsAny(io, Input.TitleLogsBox, ocr, scales, Input.TitleLogsRe)
+    }
+
+    ; box read at each scale in turn until one matches re -> true
+    static _ReadsAny(io, box, ocr, scales, re) {
+        for sc in scales
+            if RegExMatch(Input._ReadAt(io, box, ocr, sc), re)
+                return true
+        return false
     }
 
     ; Clicks Play while the title screen reads, until it is gone. Shift lock

@@ -57,6 +57,8 @@ class LogBundle {
     ; One piece of text: UiLogic.Scrub, the extra secrets, then the user name.
     static ScrubText(text, secrets := "", userName := "") {
         s := UiLogic.Scrub(text, secrets, true)
+        ; Discord user / channel ids (17-20 digits; Remote logs who wrote)
+        s := RegExReplace(s, "(?<!\d)\d{17,20}(?!\d)", "[id]")
         userName := Trim(String(userName))
         if (StrLen(userName) >= 3)
             s := RegExReplace(s, "i)(?<![\w])" LogBundle._Esc(userName) "(?![\w])", "<user>")
@@ -175,9 +177,13 @@ class LogBundle {
             LogBundle._Put(stage "\macro.log", logText != "" ? LogBundle.TailScrubbed(logText, LogBundle.MaxLogLines, secrets, user)
                 : "(no macro.log found)`r`n")
 
-            shots := LogBundle._Shots(tempDir, now)
-            for s in shots
-                FileCopy(s, stage "\" LogBundle._Base(s), 1)
+            ; screenshots can show the Roblox name, players and chat: only
+            ; when the user ticks them (privacy review 2026-11-12)
+            if o("shots", false) {
+                shots := LogBundle._Shots(tempDir, now)
+                for s in shots
+                    FileCopy(s, stage "\" LogBundle._Base(s), 1)
+            }
 
             report := String(o("report", ""))
             LogBundle._Put(stage "\setup_check.txt", report != "" ? LogBundle.ScrubText(report, secrets, user)

@@ -89,8 +89,9 @@ several pages shows them as tabs. The **Animations** switch (Setup > Settings) t
 all fades and motion off (the splash then just shows for a moment).
 
 **Themes** (Setup > Settings > Look): Moontide (navy and gold), Overdrive
-(red), Glitch (green), Dream (pink) and Cyber (blue). Each changes every colour
-and the background picture (Sol's RNG art). Press **Apply now** while the macro
+(red), Galaxy (blue-violet), Boss (green and gold), Equinox (black and white),
+Matrix (orange), Radiant (purple) and Illusionary (electric blue). Each changes
+every colour and the background picture (Sol's RNG art). Press **Apply now** while the macro
 is stopped, or it shows at the next start.
 
 The sidebar hubs:

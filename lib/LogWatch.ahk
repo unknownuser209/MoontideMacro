@@ -72,6 +72,13 @@ class LogWatch {
     ; 2026-11-11: the macro's own private rejoin read as a ghost server and
     ; it rejoined until the limit)
     static JOIN_WAIT_MS := 15000
+    ; a game teleport into the private server itself (live 2026-11-12 20:57:
+    ; Sol's restart moved the user into a new copy of their own private
+    ; server; it read as a ghost server and every Start rejoined): the
+    ; teleport ticket says RequestType 2 (a private game) and JoinTypeId 4.
+    ; The game's reserved boss arenas are JoinTypeId 6, public servers
+    ; RequestType 0 / JoinTypeId 10: those stay "other".
+    static PRIVATE_TELEPORT := {req: 2, jt: 4}
     static TickFn := () => A_TickCount
 
     ; ---- instance state ----------------------------------------------------
@@ -82,6 +89,7 @@ class LogWatch {
     CurrentAura := ""
     AuraKnown := false               ; an "Equipped ..." state was read (CurrentAura "" = none, not unknown)
     CurrentJoin := ""                ; "private" | "other" | "" (no join seen in this log)
+    _tele := ""                      ; the last teleport ticket {req, jt} (PRIVATE_TELEPORT)
     _lastReq := ""                   ; requestType of the last launch request, until its join
     _pending := false                ; a join waits for its GameJoinLoadTime line (_JoinLine)
     _pendingAt := 0                  ; TickFn when that join was seen
@@ -186,7 +194,7 @@ class LogWatch {
         if (path !== this.Path) {
             this.Path := path
             this.Offset := -1
-            this.CurrentJoin := "", this._lastReq := "", this._joinTs := ""
+            this.CurrentJoin := "", this._lastReq := "", this._joinTs := "", this._tele := ""
         }
         try {
             f := FileOpen(path, "r")
@@ -321,14 +329,19 @@ class LogWatch {
     ; request waits for that line; _FlushJoin ends the wait as "other".
     ; Before this every such rejoin read as a ghost server.
     _JoinLine(line) {
+        if InStr(line, "doTeleport: joinScriptUrl") {
+            this._tele := LogWatch.TeleportKind(line)
+            return ""
+        }
         if InStr(line, '"requestType":"') {
             if RegExMatch(line, '"requestType":"(\w+)"', &m)
                 this._lastReq := m[1]
+            this._tele := ""                ; a new launch: an older teleport ticket is not this join's
             return ""
         }
         if InStr(line, "! Joining game ") {
             if (this._lastReq == LogWatch.PRIVATE_REQUEST) {
-                this._lastReq := "", this._pending := false
+                this._lastReq := "", this._pending := false, this._tele := ""
                 this.CurrentJoin := "private"
                 return "private"
             }
@@ -338,11 +351,23 @@ class LogWatch {
         }
         if (this._pending && InStr(line, "[FLog::GameJoinLoadTime]")) {
             this._pending := false
-            this.CurrentJoin := InStr(line, "referral_page:" LogWatch.PRIVATE_REQUEST) ? "private" : "other"
+            this.CurrentJoin := (InStr(line, "referral_page:" LogWatch.PRIVATE_REQUEST) || this._PrivateTeleport()) ? "private" : "other"
+            this._tele := ""
             return this.CurrentJoin
         }
         return ""
     }
+
+    ; The teleport ticket on a doTeleport joinScriptUrl line (URL-encoded
+    ; JSON) -> {req, jt} (-1 when missing). No ids are kept.
+    static TeleportKind(line) {
+        req := RegExMatch(line, 'i)"RequestType"(?:%3a|:)\s*(\d+)', &a) ? Integer(a[1]) : -1
+        jt := RegExMatch(line, 'i)"JoinTypeId"(?:%3a|:)\s*(\d+)', &b) ? Integer(b[1]) : -1
+        return {req: req, jt: jt}
+    }
+
+    ; the pending join came from a teleport into the private server itself
+    _PrivateTeleport() => IsObject(this._tele) && this._tele.req = LogWatch.PRIVATE_TELEPORT.req && this._tele.jt = LogWatch.PRIVATE_TELEPORT.jt
 
     ; A join still waiting for its GameJoinLoadTime line -> "other" (and
     ; CurrentJoin set), else "".
@@ -350,8 +375,9 @@ class LogWatch {
         if !this._pending
             return ""
         this._pending := false
-        this.CurrentJoin := "other"
-        return "other"
+        this.CurrentJoin := this._PrivateTeleport() ? "private" : "other"
+        this._tele := ""
+        return this.CurrentJoin
     }
 
     _Process(text, events, backfill) {

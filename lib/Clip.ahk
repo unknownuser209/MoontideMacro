@@ -31,10 +31,17 @@
 ;     BiomeEvents).
 ;   Clip.AuraWanted(name)  name is in [Medal] auras (comma list,
 ;                          case/space-insensitive)
-;   Clip.HotkeyAllowed(k)  only F4-F24. Never mouse buttons (a click could
-;                          land on Use), never F1-F3 (macro hotkeys, F3 =
-;                          stop), never keys that can type into a text box
-;                          (letters, digits, numpad, nav keys) or combos.
+;   Clip.HotkeyAllowed(k)  one key F4-F24, or a combo of 2-4 keys joined by
+;                          "+" ("Alt+9", "Shift+F5+T"; any case, spaces ok):
+;                          Ctrl / Alt / Shift, F4-F24, letters and digits,
+;                          at least one of them a modifier or an F key (a bare
+;                          "T+Y" types into a text box). Never mouse buttons
+;                          (a click could land on Use), never F1-F3 (macro
+;                          hotkeys, F3 = stop), never Win (Windows shortcuts:
+;                          Win+D hides Roblox), never Alt+F4 (closes Roblox),
+;                          no key twice. Clip.Keys(k) -> the keys in press
+;                          order (modifiers first), "" when not allowed;
+;                          Clip.HotkeyText(k) -> "Shift+F5+T".
 ;   Clip.HotkeyProblem(k, cfg) -> "" or why k cannot be the clip hotkey:
 ;                          not HotkeyAllowed, or equal to a configured macro
 ;                          hotkey ([Hotkeys] start / pause / stop), the
@@ -105,16 +112,86 @@ class Clip {
         return p ? Trim(SubStr(r, 1, p - 1)) : r
     }
 
-    static HotkeyAllowed(k) {
-        if !(k is String)
-            return false
-        return RegExMatch(k, "i)^F(?:[4-9]|1\d|2[0-4])$") ? true : false
+    static Mods := ["Ctrl", "Alt", "Shift"]
+    static MaxKeys := 4
+
+    static HotkeyAllowed(k) => IsObject(Clip.Keys(k))
+
+    ; The keys of hotkey k in press order: modifiers first (Ctrl, Alt,
+    ; Shift as typed), then the rest as typed; the last one is tapped while
+    ; the others are held. Names: "Ctrl", "Alt", "Shift", "F5", "T", "9".
+    ; -> Array, or "" when k is not allowed (see HotkeyAllowed).
+    static Keys(k) {
+        if !(k is String) || Trim(k) = ""
+            return ""
+        parts := StrSplit(Trim(k), "+", " `t")
+        if (parts.Length > Clip.MaxKeys)
+            return ""
+        mods := [], rest := [], seen := Map()
+        for p in parts {
+            n := Clip._KeyName(p)
+            if (n = "" || seen.Has(n))
+                return ""
+            seen[n] := true
+            (Clip._IsMod(n) ? mods : rest).Push(n)
+        }
+        if (rest.Length = 0)
+            return ""                                   ; modifiers alone
+        if (parts.Length = 1)
+            return RegExMatch(rest[1], "^F(?:[4-9]|1\d|2[0-4])$") ? rest : ""
+        fkey := false
+        for n in rest {
+            if RegExMatch(n, "^F(?:[1-3])$")
+                return ""                               ; macro start / pause / stop
+            fkey := fkey || RegExMatch(n, "^F\d+$")
+        }
+        if (mods.Length = 0 && !fkey)
+            return ""                                   ; "T+Y" types into a text box
+        if (seen.Has("Alt") && seen.Has("F4"))
+            return ""                                   ; Alt+F4 closes Roblox
+        for n in rest
+            mods.Push(n)
+        return mods
+    }
+
+    ; "Shift+F5+T" (press order), "" when not allowed.
+    static HotkeyText(k) {
+        keys := Clip.Keys(k)
+        if !IsObject(keys)
+            return ""
+        s := ""
+        for n in keys
+            s .= (s = "" ? "" : "+") n
+        return s
+    }
+
+    ; A typed key -> its name, "" when it is no clip key.
+    static _KeyName(p) {
+        p := StrLower(Trim(p))
+        if (p = "ctrl" || p = "control" || p = "ctl")
+            return "Ctrl"
+        if (p = "alt")
+            return "Alt"
+        if (p = "shift")
+            return "Shift"
+        if RegExMatch(p, "^f([1-9]|1\d|2[0-4])$", &m)
+            return "F" m[1]
+        if RegExMatch(p, "^[a-z0-9]$")
+            return StrUpper(p)
+        return ""
+    }
+
+    static _IsMod(n) {
+        for m in Clip.Mods
+            if (m = n)
+                return true
+        return false
     }
 
     static HotkeyProblem(k, cfg := "") {
         if !Clip.HotkeyAllowed(k)
-            return "clip hotkey '" k "' is not allowed: use one of F4-F24"
-        kk := StrUpper(Trim(k))
+            return "clip hotkey '" k "' is not allowed: use one of F4-F24, or a combo like Alt+9 or Shift+F5+T"
+        kk := StrUpper(Clip.HotkeyText(k))
         for name, def in Map("start", "F1", "pause", "F2", "stop", "F3") {
             v := def
             if IsObject(cfg)
@@ -131,6 +208,16 @@ class Clip {
             return "clip hotkey " kk " is the calibration capture key: pick another F4-F24 key"
         if (StrUpper(RouteRecorder.Key) == kk)
             return "clip hotkey " kk " is the route recorder key: pick another F4-F24 key"
+        ; a combo holding the capture or recorder key presses it too
+        keys := Clip.Keys(k)
+        if (keys.Length > 1) {
+            for n in keys {
+                if (StrUpper(n) == StrUpper(Trim(String(cap))))
+                    return "clip hotkey " kk " holds the calibration capture key " n ": pick another key"
+                if (StrUpper(n) == StrUpper(RouteRecorder.Key))
+                    return "clip hotkey " kk " holds the route recorder key " n ": pick another key"
+            }
+        }
         return ""
     }
 
@@ -211,7 +298,7 @@ class Clip {
             return
         }
         try {
-            Input.Key(key, 50, Clip._io)
+            Clip.Press(key, Clip._io)
         } catch Any as e {
             Clip._Log("Clip: hotkey send failed: " (e is Error ? e.Message : "error"))
             return
@@ -226,6 +313,22 @@ class Clip {
             try Clip._wh.Send("clips", "Clip saved", desc
                 . "`n(the clip stays in Medal; it is not uploaded)", 0x9B59B6)
         }
+    }
+
+    ; Presses hotkey k: one key tapped, or a combo (the keys held in press
+    ; order, the last tapped, released in reverse). Letters go out lower
+    ; case: a capital in a send adds a Shift of its own.
+    static Press(k, io := "") {
+        keys := Clip.Keys(k)
+        if !IsObject(keys)
+            throw ValueError("Clip.Press: bad hotkey")
+        send := []
+        for n in keys
+            send.Push(StrLen(n) = 1 ? StrLower(n) : n)
+        if (send.Length = 1)
+            return Input.Key(send[1], 50, io)
+        last := send.Pop()
+        Input.Combo(send, last, 50, io)
     }
 
     static _Hotkey() {

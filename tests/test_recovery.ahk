@@ -92,6 +92,7 @@ class RcRig {
         this.windowAt := 0          ; set by Run(link): window appears at this fake time
         this.openMs := 5000         ; delay between Run(link) and the window
         this.screen := ""           ; OCR text of the screen centre
+        this.ocrFn := ""            ; (x, y) -> text, instead of .screen
         this.ocrCalls := 0
         this.closes := 0
         this.paused := 0
@@ -109,7 +110,7 @@ class RcRig {
             hwnd: () => (rig.win && rig.clock.t >= rig.windowAt) ? 1234 : 0,
             active: () => rig.focus,
             focus: () => (rig.focusCalls++, rig.canFocus),
-            ocr: (x, y, w, h) => (rig.ocrCalls++, rig.screen),
+            ocr: (x, y, w, h, scale := 1) => (rig.ocrCalls++, IsObject(rig.ocrFn) ? rig.ocrFn.Call(x, y) : rig.screen),
             procs: (name) => (name = rig.updateName && rig.clock.t < rig.updateUntil),
             close: () => (rig.closes++, rig.win := false, true),
             run: (target) => (rig.runs.Push(target), rig.windowAt := rig.clock.t + rig.openMs, rig.win := true)
@@ -614,4 +615,32 @@ Test_Recovery_Update_LauncherList() {
         rig.updateUntil := rig.clock.t + 120000
         AssertEq(rig.task.Run(rig.Ctx()), 1, "waited for " n)
     }
+}
+
+; live 2026-11-12: after the rejoin the title screen came after loadSec; Play
+; was looked for once, not up yet, never clicked. It is waited for now.
+Test_Recovery_Rejoin_WaitsForALateTitleScreen() {
+    rig := RcRig()
+    rig.win := false
+    rig.ocrFn := (x, y) => (rig.windowAt && rig.clock.t >= rig.windowAt + 32000 && rig.io.Count("c") = 0)
+        ? ((x = Input.TitlePlayBox.x && y = Input.TitlePlayBox.y) ? "Play"
+        : (x = Input.TitleLogsBox.x && y = Input.TitleLogsBox.y) ? "Change logs" : "") : ""
+    AssertEq(rig.task.Run(rig.Ctx()), 1, "rejoined")
+    AssertTrue(InStr(rig.AllText(), "recovery: title screen: clicked Play"), "Play clicked on the late title screen")
+    AssertTrue(!InStr(rig.AllText(), "no title screen"), "not given up")
+    ; up during the load wait: Play at once, not after loadSec
+    rig3 := RcRig()
+    rig3.win := false
+    rig3.ocrFn := (x, y) => (rig3.windowAt && rig3.clock.t >= rig3.windowAt + 6000 && rig3.io.Count("c") = 0)
+        ? ((x = Input.TitlePlayBox.x && y = Input.TitlePlayBox.y) ? "Play"
+        : (x = Input.TitleLogsBox.x && y = Input.TitleLogsBox.y) ? "Change logs" : "") : ""
+    clickAt := 0
+    rig3.io.DefineProp("ClickHere", {call: (self) => (clickAt := clickAt ? clickAt : rig3.clock.t, self.ev.Push("c"))})
+    AssertEq(rig3.task.Run(rig3.Ctx()), 1, "rejoined (early title)")
+    AssertTrue(clickAt && clickAt - rig3.windowAt < 12000, "Play clicked soon after the title showed (" (clickAt - rig3.windowAt) " ms after the window)")
+    ; no title screen at all: given up after TitleWaitMs, the rejoin goes on
+    rig2 := RcRig()
+    rig2.win := false
+    AssertEq(rig2.task.Run(rig2.Ctx()), 1, "rejoined without a title screen")
+    AssertTrue(InStr(rig2.AllText(), "no title screen"), "said so")
 }

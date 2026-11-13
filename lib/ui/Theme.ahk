@@ -47,7 +47,7 @@ class Theme {
     static Current := "Moontide"
     static Pulse := "B5772A"       ; darker accent the Running pill pulses to
     static BgImage := "moontide_bg_dim.png"
-    static Names := ["Moontide", "Overdrive", "Glitch", "Dream", "Cyber"]
+    static Names := ["Moontide", "Overdrive", "Galaxy", "Boss", "Equinox", "Matrix", "Radiant", "Illusionary"]
     static Presets := Map(
         "Moontide", {Bg: "0D1117", PanelC: "0B2A5B", Text: "F7F1E8", Accent: "F2A93B", SideBg: "0A1628", CardBg: "0A1628", FieldBg: "0A1A36"
             , FrameC: "1E4780", HoverBg: "143A73", OffBg: "1B2D4F", Muted: "A8A199", Ink: "0D1117", AccentHi: "F7BD5E", Pulse: "B5772A"
@@ -55,15 +55,24 @@ class Theme {
         "Overdrive", {Bg: "120A0C", PanelC: "5B0B16", Text: "F7EDEB", Accent: "FF4D57", SideBg: "1F0A0E", CardBg: "1F0A0E", FieldBg: "2A0D13"
             , FrameC: "80202E", HoverBg: "731426", OffBg: "4F1B26", Muted: "B09C9C", Ink: "120A0C", AccentHi: "FF7A82", Pulse: "B52A33"
             , BgImage: "themes\overdrive.png", Note: "Red, Matrix : Overdrive"},
-        "Glitch", {Bg: "0A110C", PanelC: "0B5B2A", Text: "EEF7F0", Accent: "3BF27A", SideBg: "0A2814", CardBg: "0A2814", FieldBg: "0A361A"
-            , FrameC: "1E8047", HoverBg: "147340", OffBg: "1B4F2D", Muted: "9CAEA2", Ink: "0A110C", AccentHi: "6EF79C", Pulse: "2AB55A"
-            , BgImage: "themes\glitch.png", Note: "Green, Glitched"},
-        "Dream", {Bg: "140C14", PanelC: "5B0B4F", Text: "F7EEF6", Accent: "F25ED8", SideBg: "280A24", CardBg: "280A24", FieldBg: "360A30"
-            , FrameC: "801E6E", HoverBg: "731460", OffBg: "4F1B47", Muted: "B09CAC", Ink: "140C14", AccentHi: "F78BE4", Pulse: "B53A9E"
-            , BgImage: "themes\dream.png", Note: "Pink, Dreamspace"},
-        "Cyber", {Bg: "0A1014", PanelC: "0B465B", Text: "EEF5F7", Accent: "3BD9F2", SideBg: "0A2128", CardBg: "0A2128", FieldBg: "0A2B36"
-            , FrameC: "1E6A80", HoverBg: "145F73", OffBg: "1B414F", Muted: "9CAAAE", Ink: "0A1014", AccentHi: "6EE4F7", Pulse: "2A9FB5"
-            , BgImage: "themes\cyber.png", Note: "Blue, Cyberspace"})
+        "Galaxy", {Bg: "0B0B1A", PanelC: "1E1B5B", Text: "EEF0FA", Accent: "8F9BFF", SideBg: "100F28", CardBg: "100F28", FieldBg: "141336"
+            , FrameC: "3A3A8F", HoverBg: "26256E", OffBg: "22214A", Muted: "A4A6C2", Ink: "0B0B1A", AccentHi: "B3BCFF", Pulse: "5A63C2"
+            , BgImage: "themes\galaxy.png", Note: "Blue-violet, a galaxy"},
+        "Boss", {Bg: "11120A", PanelC: "3F4A12", Text: "F5F4E6", Accent: "C8E04A", SideBg: "1B1F0B", CardBg: "1B1F0B", FieldBg: "232A0E"
+            , FrameC: "66782A", HoverBg: "4A5A18", OffBg: "343D1A", Muted: "ABAE96", Ink: "11120A", AccentHi: "DCF07A", Pulse: "8A9E2C"
+            , BgImage: "themes\boss.png", Note: "Green and gold, Boss Preview"},
+        "Equinox", {Bg: "0E0E0E", PanelC: "3A3A3A", Text: "F4F4F4", Accent: "E6E6E6", SideBg: "181818", CardBg: "181818", FieldBg: "222222"
+            , FrameC: "6A6A6A", HoverBg: "4A4A4A", OffBg: "2E2E2E", Muted: "A8A8A8", Ink: "0E0E0E", AccentHi: "FFFFFF", Pulse: "8A8A8A"
+            , BgImage: "themes\equinox.png", Note: "Black and white, 1 in 2,500,000,000"},
+        "Matrix", {Bg: "140C07", PanelC: "5B2A0B", Text: "F7EFE8", Accent: "FF8A2B", SideBg: "24120A", CardBg: "24120A", FieldBg: "30170C"
+            , FrameC: "80421E", HoverBg: "733614", OffBg: "4F2C1B", Muted: "B0A196", Ink: "140C07", AccentHi: "FFA95E", Pulse: "B55E1E"
+            , BgImage: "themes\matrix.png", Note: "Orange, Matrix"},
+        "Radiant", {Bg: "0D0A18", PanelC: "2E1660", Text: "F1EEFA", Accent: "A97BFF", SideBg: "160F2C", CardBg: "160F2C", FieldBg: "1D1338"
+            , FrameC: "4F3196", HoverBg: "3A2278", OffBg: "2C2150", Muted: "ABA3C4", Ink: "0D0A18", AccentHi: "C4A5FF", Pulse: "7048C2"
+            , BgImage: "themes\radiant.png", Note: "Purple, The Radiant Forest"},
+        "Illusionary", {Bg: "060A1C", PanelC: "0B2A8F", Text: "F2F5FF", Accent: "4D7CFF", SideBg: "0A1236", CardBg: "0A1236", FieldBg: "0C1744"
+            , FrameC: "2447C2", HoverBg: "1A35A6", OffBg: "1A2A5E", Muted: "A2ACCC", Ink: "060A1C", AccentHi: "85A6FF", Pulse: "2E55C2"
+            , BgImage: "themes\illusionary.png", Note: "Electric blue, Illusionary"})
     static ThemeKeys := ["Bg", "PanelC", "Text", "Accent", "SideBg", "CardBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Muted", "Ink", "AccentHi", "Pulse", "BgImage"]
 
     ; Theme name as listed (any case), "Moontide" when unknown.
