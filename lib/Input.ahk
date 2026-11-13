@@ -571,8 +571,21 @@ class Input {
     ; io.Ocr (test recorders) or with blind = true the sequence is sent
     ; without checks.
     ; -> false if stopped or a check failed (Input.LastResetError says which).
+    ; Speed (2026-11-13): with FastReset (the App turns it on) every respawn
+    ; uses QuickReset's waits, over at the respawn's lines in Roblox's log
+    ; when SettledFn sees them (RespawnTail: auras that write them), else
+    ; after afterEnter as before. Hunts used these waits for weeks; a wait cut
+    ; too far costs a retry, nothing is left open. Tests keep it off.
+    static FastReset := false
+    static SettledFn := ""        ; () -> true once the respawn shows in the log
+    static RespawnSyncFn := ""    ; () -> the respawn log read from now on
     static ResetToSpawn(ctx := "", io := "", blind := false) {
         io := Input._Backend(io)
+        if (Input.FastReset && !Input._quick && !blind && HasMethod(io, "Ocr")) {
+            if IsObject(Input.RespawnSyncFn)
+                try Input.RespawnSyncFn.Call()
+            return Input.QuickReset(ctx, io, Input.SettledFn)
+        }
         Input.LastResetError := ""
         if (blind || !HasMethod(io, "Ocr"))
             return Input._ResetBlind(ctx, io)

@@ -540,13 +540,13 @@ Test_Hubs_EveryPageReachable() {
     AssertEq(Dashboard.Hubs[2].pages[6], "Obby & Memory", "Obby & Memory follows Biome items")
     AssertEq(Dashboard.Hubs[2].pages[5], "Biome items", "Biome items before Obby & Memory")
     AssertEq(Dashboard.Hubs[4].pages[3], "Clips", "Clips is an Alerts tab")
-    AssertEq(Dashboard.Hubs[5].pages[6], "Dev tools", "Dev tools is the last Setup tab")
+    AssertEq(Dashboard.Hubs[5].pages[7], "Dev tools", "Dev tools is the last Setup tab")
     ; v1.6: Stats on Home, the Limited hub (Hunting), summary + remote under
     ; Alerts, Check & help first under Setup, Schedule before Settings
     AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[1].pages), "Run,Stats", "Home tabs")
     AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[3].pages), "Hunting", "Limited holds Hunting")
     AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[4].pages), "Biomes & Potions,Webhooks,Clips,Summary,Remote", "Alerts tabs")
-    AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[5].pages), "Check,Calibrate,Tools,Schedule,Settings,Dev tools", "Setup tabs")
+    AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[5].pages), "Check,Calibrate,Tools,Schedule,Settings,Profiles,Dev tools", "Setup tabs")
 }
 
 Test_Hubs_TabLabels() {
@@ -882,7 +882,7 @@ Test_Dashboard_HelpTipsOnPanels() {
                 if Theme.IsPanel(c)
                     panels.Push(UiDashPos(c))
             for c in d._pages[i].ctrls {
-                if (Theme.HelpText(c) = "")
+                if (Theme.HelpText(c) = "" || d._hidden.Has(c.Hwnd))   ; a label too long for its "?" hides it
                     continue
                 t := UiDashPos(c)
                 AssertEq(t.w "," t.h, "16,16", name ": help tip is 16x16")
@@ -1593,6 +1593,69 @@ Test_Theme_ApplyNowSavesFirst() {
         AssertEq(fired.Length, 1, "restart asked once")
     } finally {
         Theme.Use("Moontide")
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; idea 4 (2026-11-13): every help text belongs to a real setting, and the
+; settings with one show a "?" on their page
+Test_Help_TextsMatchSettings() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        bound := Map()
+        for b in d._binds
+            bound[StrLower(b.key)] := true
+        for k, t in HelpTexts.Map {
+            AssertTrue(bound.Has(k) || cfg.Get(k, "__none__") != "__none__", "a real setting: " k)
+            AssertTrue(StrLen(t) >= 20 && StrLen(t) <= 220, "short plain text: " k)
+        }
+        n := 0
+        for hwnd, txt in Theme._help
+            n++
+        AssertTrue(n >= 50, "a ? on most settings (" n ")")
+        AssertEq(HelpTexts.For("general.FISHING"), HelpTexts.For("General.fishing"), "any case")
+        AssertEq(HelpTexts.For("No.such"), "", "unknown key")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; idea 3 (2026-11-13): simple mode shows only the main pages; the sidebar
+; button switches it live and saves it
+Test_Dashboard_SimpleMode() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        cfg.Set("UI.simple", 1)
+        d := Dashboard(cfg)
+        d.Show()
+        AssertTrue(d.Ctrl("hub:Limited").Visible, "the Limited hub (Hunting) shows in simple mode too")
+        d.Ctrl("hub:Alerts").GetPos(, &ya)
+        d.Ctrl("hub:Automate").GetPos(, &yb)
+        AssertEq(ya - yb, 80, "hubs one after another")
+        d.SelectHub(Dashboard.HubOf("Hunting"))
+        AssertEq(Dashboard.Pages[d._active], "Hunting", "Hunting opens")
+        d.SelectHub(Dashboard.HubOf("Fishing"))
+        AssertTrue(d.Ctrl("tab:Fishing").Visible && d.Ctrl("tab:Quests").Visible, "main tabs shown")
+        AssertTrue(!d.Ctrl("tab:Craft").Visible && !d.Ctrl("tab:Limbo").Visible, "expert tabs hidden")
+        d.Ctrl("tab:Fishing").GetPos(&fx, , &fw)
+        d.Ctrl("tab:Quests").GetPos(&qx)
+        AssertEq(qx, fx + fw + 28, "Quests moved up next to Fishing")
+        AssertTrue(InStr(d.Ctrl("simpleMode").Text, "ON"), "button says on")
+        d.SetSimple(false)
+        AssertEq(Config.Load(dir).Get("UI.simple", ""), "0", "saved off")
+        AssertTrue(d.Ctrl("hub:Limited").Visible, "every hub back")
+        AssertTrue(d.Ctrl("tab:Craft").Visible, "every tab back")
+        d.SelectPage(Dashboard.PageIndex("Craft"))
+        d.SetSimple(true)
+        AssertEq(Dashboard.Pages[d._active], "Run", "a hidden page open -> Home")
+    } finally {
         UiDashClose(d)
         try DirDelete(dir, true)
     }

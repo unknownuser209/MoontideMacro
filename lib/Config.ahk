@@ -182,6 +182,8 @@ class Config {
         u["animations"] := "1"        ; 0 = no UI animations
         u["setupDone"] := "0"         ; 1 = the first-run setup wizard was finished or skipped
         u["theme"] := "Moontide"      ; colour theme (Theme.Names): Moontide, Overdrive, Galaxy, Boss, Equinox, Matrix, Radiant, Illusionary
+        u["simple"] := "0"            ; 1 = simple mode: only the main dashboard pages (new installs start with it on)
+        u["lang"] := "en"             ; window language (lib/I18n.ahk, lang\<code>.json): en, es, pt, fil, fr, de
         d["UI"] := u
         ; Run schedule (lib/Schedule.ahk): start / stop by the clock, stop after N hours.
         sc := Config._CIMap()

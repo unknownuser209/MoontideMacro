@@ -4,6 +4,7 @@
 #Include ..\lib\Updater.ahk
 #Include ..\lib\Config.ahk
 #Include ..\lib\ui\Dashboard.ahk
+#Include ..\lib\ui\WhatsNew.ahk
 
 ; ---- helpers (names must not start with Test_) -----------------------------
 
@@ -352,4 +353,276 @@ Test_Updater_DashboardNotice() {
             d.Destroy()
         UpdClean(r)
     }
+}
+
+; ---- what's new + go back (safer updates) ------------------------------------------
+
+UpdReadJson(path) => Json.Parse(FileRead(path, "UTF-8"))
+
+UpdHas(arr, v) {
+    for x in arr {
+        if (x = v)
+            return true
+    }
+    return false
+}
+
+; Release with notes; the zip also adds a file in a new folder.
+UpdInstallWithNotes(r, body := "## Fixes`n- **Faster** rejoin`n- ``F1`` works") {
+    m := UpdMake(r, Map("unzip", (zip, dest) => (UpdFill(dest, true), UpdPut(dest "\assets\new\a.png", "new asset"))))
+    m[2]["reply"] := '{"tag_name":"v1.1.0","body":' Json.Stringify(body, 0) ',"assets":[{"name":"M.zip","browser_download_url":"https://github.com/o/r/releases/download/v9/M.zip"}]}'
+    info := m[1].Check(true)
+    AssertEq(info["status"], "available", "release found")
+    res := m[1].Install(info)
+    AssertTrue(res["ok"], "install ok")
+    return m
+}
+
+Test_Updater_InstallWritesManifestAndWhatsNew() {
+    r := UpdMakeRoot()
+    try {
+        UpdInstallWithNotes(r)
+        AssertTrue(FileExist(r "\backup\1.0\manifest.json"), "manifest written")
+        mf := UpdReadJson(r "\backup\1.0\manifest.json")
+        AssertEq(mf["from"], "1.0", "from")
+        AssertEq(mf["to"], "1.1.0", "to")
+        AssertTrue(UpdHas(mf["replaced"], "Vesper.ahk") && UpdHas(mf["replaced"], "lib\App.ahk"), "replaced files listed")
+        AssertTrue(UpdHas(mf["added"], "lib\Updater.ahk") && UpdHas(mf["added"], "data\default_routes.json"), "added files listed")
+        AssertTrue(UpdHas(mf["added"], "assets\new\a.png"), "file in a new folder listed")
+        AssertTrue(!UpdHas(mf["replaced"], "settings.ini") && !UpdHas(mf["added"], "settings.ini"), "user files not listed")
+        wn := UpdReadJson(r "\data\whatsnew.json")
+        AssertEq(wn["version"], "1.1.0", "whatsnew version")
+        AssertEq(wn["tag"], "v1.1.0", "whatsnew tag")
+        AssertTrue(InStr(wn["notes"], "**Faster** rejoin"), "release notes saved as they came")
+        AssertEq(UpdGet(r "\settings.ini"), "USER settings", "settings kept")
+    } finally {
+        UpdClean(r)
+    }
+}
+
+Test_Updater_TakeWhatsNewOnceAndOnlyForThisVersion() {
+    r := UpdTmp()
+    try {
+        AssertEq(Updater.TakeWhatsNew(r, "1.1"), "", "no file")
+        UpdPut(r "\data\whatsnew.json", '{"version":"1.1.0","tag":"v1.1.0","notes":"- a"}')
+        wn := Updater.TakeWhatsNew(r, "1.1")
+        AssertTrue(IsObject(wn), "1.1.0 matches Brand-style 1.1")
+        AssertEq(wn["notes"], "- a", "notes")
+        AssertTrue(!FileExist(r "\data\whatsnew.json"), "deleted after it is shown")
+        AssertEq(Updater.TakeWhatsNew(r, "1.1"), "", "shown once")
+        UpdPut(r "\data\whatsnew.json", '{"version":"1.2","notes":"x"}')
+        AssertEq(Updater.TakeWhatsNew(r, "1.1"), "", "other version not shown")
+        AssertTrue(!FileExist(r "\data\whatsnew.json"), "other version deleted")
+        UpdPut(r "\data\whatsnew.json", 'not json')
+        AssertEq(Updater.TakeWhatsNew(r, "1.1"), "", "garbage not shown")
+        AssertTrue(!FileExist(r "\data\whatsnew.json"), "garbage deleted")
+        AssertTrue(Updater.IsProtected("data\whatsnew.json"), "a release zip never overwrites it")
+    } finally {
+        UpdClean(r)
+    }
+}
+
+Test_Updater_NotesTextPlain() {
+    md := "# Moontide v1.8`r`n`r`n`r`n## What's new`r`n* **Faster** rejoin`r`n- Fixed ``F1`` key`r`n  - nested [link](https://x.y/z)`r`n---`r`n#12 stays`r`nDone"
+    want := "Moontide v1.8`r`n`r`nWhat's new`r`n- Faster rejoin`r`n- Fixed F1 key`r`n  - nested link`r`n`r`n#12 stays`r`nDone"
+    AssertEq(Updater.NotesText(md), want, "markdown stripped, bullets kept")
+    AssertEq(Updater.NotesText(""), "", "empty")
+    long := ""
+    loop 900
+        long .= "- line " A_Index "`n"
+    AssertTrue(StrLen(Updater.NotesText(long)) <= Updater.NotesMax + 3, "capped")
+}
+
+Test_Updater_WhatsNewWindow() {
+    w := WhatsNewWindow("1.8", "## Hi`n- **one**")
+    try {
+        AssertEq(w.Title, "What's new in v1.8", "title")
+        AssertEq(w.Text, "Hi`r`n- one", "plain text")
+        AssertEq(w._box.Value, "Hi`n- one", "shown in the box (Value gives `n line ends)")
+        AssertEq(w._gui.Title, "What's new in v1.8", "window caption")
+    } finally {
+        w.Close()
+    }
+    AssertEq(WhatsNewWindow("1.8", "").Text, "No notes came with this version.", "no notes")
+}
+
+Test_Updater_RollbackRestoresLastVersion() {
+    r := UpdMakeRoot()
+    try {
+        UpdInstallWithNotes(r)
+        UpdPut(r "\settings.ini", "USER settings changed after the update")
+        UpdPut(r "\data\routes.json", "USER routes 2")
+        m := UpdMake(r, Map("version", "1.1"))
+        b := m[1].LastBackup()
+        AssertTrue(IsObject(b), "backup found")
+        AssertEq(b["from"], "1.0", "goes back to 1.0")
+        res := m[1].Rollback()
+        AssertTrue(res["ok"], "rollback ok")
+        AssertEq(UpdGet(r "\Vesper.ahk"), "old main", "main restored")
+        AssertEq(UpdGet(r "\lib\App.ahk"), "old app", "lib restored")
+        AssertTrue(!FileExist(r "\lib\Updater.ahk"), "added file removed")
+        AssertTrue(!FileExist(r "\data\default_routes.json"), "added data file removed")
+        AssertTrue(!DirExist(r "\assets"), "empty new folders removed")
+        AssertTrue(DirExist(r "\lib"), "folder with old files kept")
+        AssertEq(UpdGet(r "\settings.ini"), "USER settings changed after the update", "settings untouched")
+        AssertEq(UpdGet(r "\data\routes.json"), "USER routes 2", "routes untouched")
+        AssertEq(UpdGet(r "\data\calibration.json"), "USER calib", "calibration untouched")
+        AssertEq(UpdGet(r "\logs\macro.log"), "USER log", "logs untouched")
+        AssertTrue(!DirExist(r "\backup\1.0"), "used backup removed")
+        AssertTrue(!FileExist(r "\data\whatsnew.json"), "whatsnew removed")
+        AssertTrue(!DirExist(r "\update_tmp"), "temp folder removed")
+        AssertEq(m[2]["restart"], 1, "restarted")
+        AssertEq(m[1].LastBackup(), "", "nothing left to go back to")
+    } finally {
+        UpdClean(r)
+    }
+}
+
+Test_Updater_RollbackRefusals() {
+    r := UpdMakeRoot()
+    try {
+        m := UpdMake(r, Map("version", "1.1"))
+        AssertEq(m[1].LastBackup(), "", "no backup folder")
+        AssertTrue(!m[1].Rollback()["ok"], "no backup: refused")
+        UpdPut(r "\backup\1.0\Vesper.ahk", "old main")      ; old-style backup, no manifest
+        AssertEq(m[1].LastBackup(), "", "backup without a manifest is not offered")
+        UpdInstallWithNotes(r)
+        m2 := UpdMake(r, Map("version", "1.2"))
+        AssertEq(m2[1].LastBackup(), "", "backup made for another version is not offered")
+        running := [true]
+        m3 := UpdMake(r, Map("version", "1.1.0", "isStopped", () => !running[1]))
+        AssertTrue(IsObject(m3[1].LastBackup()), "offered")
+        AssertTrue(!m3[1].Rollback()["ok"], "refused while running")
+        AssertEq(UpdGet(r "\Vesper.ahk"), "new main", "untouched while running")
+        AssertEq(m3[2]["restart"], 0, "no restart while running")
+    } finally {
+        UpdClean(r)
+    }
+}
+
+; A tampered / broken manifest never reaches user files or leaves the folder.
+Test_Updater_RollbackSkipsUnsafePaths() {
+    r := UpdMakeRoot()
+    outside := r "_outside.txt"
+    try {
+        UpdPut(outside, "OUTSIDE")
+        UpdPut(r "\Vesper.ahk", "new main")
+        UpdPut(r "\backup\1.0\Vesper.ahk", "old main")
+        UpdPut(r "\backup\1.0\settings.ini", "BACKUP settings")
+        mf := Map("from", "1.0", "to", "1.1", "made", A_Now
+            , "replaced", ["Vesper.ahk", "settings.ini", "..\x.txt"]
+            , "added", ["data\routes.json", "..\" RegExReplace(outside, "^.*\\"), "C:\Windows\win.ini", "\abs.txt", "logs\macro.log"])
+        UpdPut(r "\backup\1.0\manifest.json", Json.Stringify(mf))
+        m := UpdMake(r, Map("version", "1.1"))
+        AssertTrue(m[1].Rollback()["ok"], "rollback ok")
+        AssertEq(UpdGet(r "\Vesper.ahk"), "old main", "program file restored")
+        AssertEq(UpdGet(r "\settings.ini"), "USER settings", "settings never copied back")
+        AssertEq(UpdGet(r "\data\routes.json"), "USER routes", "user file never deleted")
+        AssertEq(UpdGet(r "\logs\macro.log"), "USER log", "logs never deleted")
+        AssertEq(UpdGet(outside), "OUTSIDE", "nothing outside the folder deleted")
+    } finally {
+        try FileDelete(outside)
+        UpdClean(r)
+    }
+}
+
+Test_Updater_RollbackFailureKeepsNewVersion() {
+    r := UpdMakeRoot()
+    try {
+        UpdInstallWithNotes(r)
+        n := [0]
+        ; the current files are kept first, then the backup is copied back: fail on the 2nd copy back
+        cp := (s, t) => (InStr(s, "\backup\") && ++n[1] = 2 ? UpdThrowing() : FileCopy(s, t, 1))
+        m := UpdMake(r, Map("version", "1.1", "copyFile", cp))
+        res := m[1].Rollback()
+        AssertTrue(!res["ok"], "failed")
+        AssertTrue(n[1] >= 2, "reached the failing copy")
+        AssertEq(UpdGet(r "\Vesper.ahk"), "new main", "main kept new")
+        AssertEq(UpdGet(r "\lib\App.ahk"), "new app", "lib kept new")
+        AssertEq(UpdGet(r "\lib\Updater.ahk"), "new file", "added file kept")
+        AssertTrue(DirExist(r "\backup\1.0"), "backup kept for another try")
+        AssertTrue(!DirExist(r "\update_tmp"), "temp folder removed")
+        AssertEq(m[2]["restart"], 0, "no restart")
+    } finally {
+        UpdClean(r)
+    }
+}
+
+Test_Updater_DashboardGoBackButton() {
+    r := UpdTmp()
+    d := ""
+    try {
+        DirCreate(r "\data")
+        src := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "") "\data"
+        for n in ["biomes", "potions", "quests", "merchants"]
+            FileCopy(src "\" n ".json", r "\data\" n ".json", 1)
+        UpdPut(r "\settings.ini", "[Update]`r`nrepo=o/r`r`n")
+        fired := []
+        d := Dashboard(Config.Load(r), Map("rollback", () => fired.Push(1)))
+        AssertTrue(d._hidden.Has(d._updBack.Hwnd), "hidden without a backup")
+        d.SetRollback("1.7")
+        AssertTrue(!d._hidden.Has(d._updBack.Hwnd), "shown with a backup")
+        AssertEq(d._updBack.Text, "Go back to v1.7", "button text")
+        d.SetUpdate("1.9")
+        AssertTrue(d._hidden.Has(d._updBack.Hwnd), "hidden while an update is offered")
+        d.SetUpdate("")
+        AssertTrue(!d._hidden.Has(d._updBack.Hwnd), "back after Later")
+        d.SetRollback("")
+        AssertTrue(d._hidden.Has(d._updBack.Hwnd), "hidden again")
+        d._AskRollback()                 ; no backup: no question, nothing fired
+        AssertEq(fired.Length, 0, "nothing fired without a backup")
+    } finally {
+        if IsObject(d)
+            d.Destroy()
+        UpdClean(r)
+    }
+}
+
+UpdFakeRollbackUpdater(calls) {
+    u := {Enabled: true}
+    u.Rollback := (*) => (calls.Push("rollback"), Map("ok", false, "msg", "Go back: no backup of the last version"))
+    u.LastBackup := (*) => ""
+    return u
+}
+
+Test_Updater_AppGoBackOnlyWhenStopped() {
+    t := AppTestMake()
+    calls := []
+    t.app._updater := UpdFakeRollbackUpdater(calls)
+    t.app._started := true
+    AssertEq(t.app.OnRollback(), false, "refused while running")
+    AssertEq(calls.Length, 0, "updater not asked while running")
+    t.app._started := false
+    t.app._toolBusy := true
+    AssertEq(t.app.OnRollback(), false, "refused while a route tool runs")
+    AssertEq(calls.Length, 0, "updater not asked while busy")
+    t.app._toolBusy := false
+    AssertEq(t.app.OnRollback(), false, "updater result passed on")
+    AssertEq(calls.Length, 1, "updater asked once stopped")
+}
+
+Test_Updater_AppShowWhatsNewOnce() {
+    t := AppTestMake()
+    r := UpdTmp()
+    try {
+        t.app.root := r
+        AssertEq(t.app.ShowWhatsNew(), "", "nothing to show")
+        UpdPut(r "\data\whatsnew.json", Json.Stringify(Map("version", Brand.Version, "tag", "v" Brand.Version, "notes", "- hi")))
+        wn := t.app.ShowWhatsNew()
+        AssertTrue(IsObject(wn), "shown for this version")
+        AssertEq(wn["notes"], "- hi", "notes")
+        AssertTrue(!FileExist(r "\data\whatsnew.json"), "file removed")
+        AssertEq(t.app.ShowWhatsNew(), "", "only once")
+    } finally {
+        UpdClean(r)
+    }
+}
+
+; idea 1 (2026-11-13): MoontideMacro.exe runs the macro, so an update must
+; not try to overwrite it (locked); a copy without one gets it
+Test_Updater_LauncherKeptWhenPresent() {
+    AssertTrue(Updater.IsLauncher("MoontideMacro.exe"), "the launcher")
+    AssertTrue(Updater.IsLauncher("moontidemacro.EXE"), "any case")
+    AssertTrue(!Updater.IsLauncher("lib\MoontideMacro.exe"), "only at the top")
+    AssertTrue(!Updater.IsLauncher("Vesper.ahk"), "not the scripts")
 }

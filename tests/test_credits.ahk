@@ -224,7 +224,7 @@ Test_Credits_SplashRunsHeadless() {
     t0 := A_TickCount
     Splash.Show(Map("animations", 1, "noshow", 1, "holdMs", 40))
     ms := A_TickCount - t0
-    AssertTrue(ms >= 600 && ms < 3000, "fade in + hold + fade out ran for " ms " ms")
+    AssertTrue(ms >= 400 && ms < 3000, "fade in + hold + fade out ran for " ms " ms")     ; 2 x 200 ms fades + the hold
     AssertEq(Anim.Active(), 0, "no tween left behind")
     t0 := A_TickCount
     Splash.Show(Map("animations", 0, "noshow", 1))

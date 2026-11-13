@@ -35,6 +35,9 @@
 #Include %A_LineFile%\..\ui\Dashboard.ahk
 #Include %A_LineFile%\..\ui\Overlay.ahk
 #Include %A_LineFile%\..\ui\Wizard.ahk
+#Include %A_LineFile%\..\FixIt.ahk
+#Include %A_LineFile%\..\ui\FixCard.ahk
+#Include %A_LineFile%\..\ui\WhatsNew.ahk
 ; ---------------------------------------------------------------------------
 ; App: wires every module into the running macro (Task 14b). Vesper.ahk only
 ; calls App.Main(A_ScriptDir, A_Args).
@@ -217,11 +220,15 @@ class App {
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
         this._frontFn := App._Dep(d, "front", "")     ; () -> exe in front (focus pause note); "" = the real one
         this._refocusAt := []                        ; _Refocus times (ms)
+        this.fixit := FixIt()                        ; fix-it cards (idea 10): rules over the log
+        this._fixOn := false                         ; cards only in the real app (Boot), never in tests
+        this._fixCard := ""
         ; v1.6 services (Boot "normal" makes the real ones; tests may pass them)
         this.daily := App._Dep(d, "daily", "")       ; DailyStats: today / this run / 30 days
         this.sched := App._Dep(d, "schedule", "")    ; RunSchedule
         this.remote := ""                            ; DiscordRemote while Remote.enabled
         this._wizard := ""
+        this._whatsNew := ""
         this._schedStarting := false
         this._svc := Map("sched", 0, "sum", 0, "save", 0, "stats", 0, "hist", 0)
         this._svcErr := Map()
@@ -509,6 +516,7 @@ class App {
         }
         this._everStarted := true
         this.ctx.Reset()
+        try this.fixit.Reset()                  ; a new run: cards may show again
         this._started := true
         this._startedAt := this.Now()
         this._uptime := 0
@@ -1247,6 +1255,38 @@ class App {
         this._lastLoops := n
     }
 
+    ; Home's NEXT UP (idea 8, 2026-11-13): the soonest timed task while
+    ; running -> "Quests in 12 min" / "Obby now" / "" (stopped, none on)
+    NextUp() {
+        if !this._started
+            return ""
+        now := this.Now()
+        best := "", bestMs := -1
+        for t in [["quests", "Quests", "quests.enabled", "questIntervalMs"], ["obby", "Obby", "Obby.enabled", "obbyIntervalMs"]] {
+            if !(this._taskMap.Has(t[1]) && this.cfg.Get(t[3], 0))
+                continue
+            ms := this.state.lastRun.Has(t[1]) ? Max(0, this.state.lastRun[t[1]] + this.state.%t[4]% - now) : 0
+            if (bestMs < 0 || ms < bestMs)
+                best := t[2], bestMs := ms
+        }
+        if (this._taskMap.Has("memorymatch") && this.cfg.Get("MemoryMatch.enabled", 0)) {
+            ms := 0
+            try {
+                nt := this._taskMap["memorymatch"].NextTry()
+                if (nt != "")
+                    ms := Max(0, DateDiff(nt, A_Now, "Seconds") * 1000)
+            }
+            if (bestMs < 0 || ms < bestMs)
+                best := "Memory Match", bestMs := ms
+        }
+        if (bestMs < 0)
+            return ""
+        if (bestMs < 60000)
+            return best " now"
+        m := bestMs // 60000
+        return best " in " (m < 60 ? m " min" : (m // 60) "h " Mod(m, 60) "m")
+    }
+
     _Status() {
         st := !this._started ? "Stopped" : this.ctx.IsPaused() ? "Paused" : "Running"
         if (this._pauseReason != "")
@@ -1263,6 +1303,8 @@ class App {
         stats := (this.state.HasProp("stats") && this.state.stats is Map) ? this.state.stats : Map()
         for u in this.ui {
             try u.SetStatus(st, task, biome, rare, up, this._loops)
+            if HasMethod(u, "SetNext")
+                try u.SetNext(this.NextUp())
             if HasMethod(u, "SetStats")            ; Dashboard Home tiles (cheap when unchanged)
                 try u.SetStats(stats)
         }
@@ -1300,6 +1342,7 @@ class App {
 
     Log(text) {
         this._LogFile(text)
+        this._FixCheck(text)
         if (this.ui.Length = 0) {
             if (this._early.Length < 100)
                 this._early.Push(text)
@@ -1307,6 +1350,56 @@ class App {
         }
         for u in this.ui
             try u.Log(text)
+    }
+
+    ; ---- fix-it cards (idea 10, 2026-11-13) ----
+
+    ; a log line that makes a FixIt rule trip -> its card (no focus taken)
+    _FixCheck(text) {
+        if !(this._fixOn && IsObject(this.fixit) && IsObject(this.dash))
+            return
+        r := ""
+        try r := this.fixit.Seen(text)
+        if !IsObject(r)
+            return
+        try this._fixCard.Destroy()
+        try {
+            this._fixCard := FixCard(r, Map("page", (n) => this._FixPage(n), "act", (a) => this._FixAct(a)
+                , "zip", () => this._FixZip(), "dismiss", (k) => this.fixit.Dismiss(k)))
+            this._fixCard.Show()
+        }
+    }
+
+    _FixPage(name) {
+        i := Dashboard.PageIndex(name)
+        if !i
+            return
+        try this.dash._gui.Show()
+        this.dash.SelectPage(i)
+    }
+
+    ; "Fix it for me" -> a line for the card
+    _FixAct(act) {
+        if (act = "fullscreen") {
+            if !WinExist("ahk_exe RobloxPlayerBeta.exe")
+                return "Roblox is not open."
+            try {
+                WinActivate("ahk_exe RobloxPlayerBeta.exe")
+                WinWaitActive("ahk_exe RobloxPlayerBeta.exe", , 2)
+                Sleep(250)
+                Send("{F11}")
+            }
+            return "Pressed F11 in Roblox. When it is fullscreen, press F2."
+        }
+        return ""
+    }
+
+    _FixZip() {
+        r := this.OnLogBundle(false)
+        if !(IsObject(r) && r.ok)
+            return "Not made: " (IsObject(r) ? r.msg : "the macro is not ready")
+        try Run('explorer.exe /select,"' r.path '"')
+        return "Made " RegExReplace(r.path, "^.*\\") ": send it to whoever helps you."
     }
 
     _Send(ev, title, desc, color, fields := "") {
@@ -1537,6 +1630,10 @@ class App {
     _UseCalibration() {
         try {
             this.calibrate.Use(this.root "\data\calibration.json", this.cfg)
+            note := ""
+            try note := this.calibrate.AutoNote
+            if (note != "")
+                this.Log("Calibration: " note)
         } catch Any as e {
             this._Error("Calibration: data\calibration.json could not be loaded (" App._ErrText(e) "); calibrated steps are skipped")
         }
@@ -1846,8 +1943,26 @@ class App {
     ; ---- boot, hotkeys, exit ----------------------------------------------------
 
     Boot(mode := "normal") {
-        if (mode = "normal")
+        if (mode = "normal") {
             Theme.Use(this.cfg.Get("UI.theme", "Moontide"))     ; before any window
+            I18n.Use(this.cfg.Get("UI.lang", "en"))             ; texts are translated when made
+        }
+        this._fixOn := (mode = "normal")
+        ; speed: every respawn with the quick waits, over at Roblox's respawn
+        ; lines when the aura writes them (Input.FastReset)
+        if (mode = "normal") {
+            try {
+                tail := RespawnTail()
+                Input.SettledFn := () => tail.Poll()
+                Input.RespawnSyncFn := () => tail.Sync()
+            }
+            Input.FastReset := true
+        }
+        ; a new install (the setup wizard will show) starts in simple mode
+        if (mode = "normal" && SetupWizard.ShouldShow(this.cfg) && !this.cfg.Get("UI.simple", 0)) {
+            this.cfg.Set("UI.simple", 1)
+            try this.cfg.Save()
+        }
         this.ShowSplash(mode)
         try Screenshot.Cleanup()
         ; calibration first: the Dashboard's Calibrate list is built from it
@@ -1883,6 +1998,9 @@ class App {
         if (mode = "normal" && this.Updater().Enabled)
             SetTimer(ObjBindMethod(this, "OnCheckUpdate", false), -2500)
         if (mode = "normal") {
+            this.RefreshRollback()
+            if (IsObject(this.dash) && FileExist(this.root "\" Updater.WhatsNewFile))
+                SetTimer(ObjBindMethod(this, "ShowWhatsNew"), -800)
             this.StartServices()
             if (IsObject(this.dash) && SetupWizard.ShouldShow(this.cfg))
                 SetTimer(ObjBindMethod(this, "OpenWizard"), -1500)
@@ -2224,6 +2342,59 @@ class App {
             this.dash.SetUpdate("", res["msg"])
     }
 
+    ; "What's new in vX" once after the updater put this version in
+    ; (data\whatsnew.json; deleted when read, also when it is for another version).
+    ; -> the Map shown, or "".
+    ShowWhatsNew() {
+        wn := ""
+        try wn := Updater.TakeWhatsNew(this.root, Brand.Version)
+        if !IsObject(wn)
+            return ""
+        this.Log("Updated to v" Brand.Version)
+        if (IsObject(this.dash) && this.dash is Dashboard) {
+            try this._whatsNew.Close()
+            try {
+                this._whatsNew := WhatsNewWindow(Brand.Version, wn["notes"])
+                this._whatsNew.Show(this.dash._gui)
+            } catch Any as e {
+                this.Log("What's new: could not show it (" App._ErrText(e) ")")
+            }
+        }
+        return wn
+    }
+
+    ; Dashboard "Go back to vX": shown only while a backup of the version
+    ; before this update exists (backup\<ver>\manifest.json).
+    RefreshRollback() {
+        if !IsObject(this.dash)
+            return
+        ver := ""
+        try {
+            b := this.Updater().LastBackup()
+            if IsObject(b)
+                ver := b["from"]
+        }
+        try this.dash.SetRollback(ver)
+    }
+
+    ; Dashboard "Go back to vX" (after its Yes/No): only while stopped, like OnRestart.
+    OnRollback() {
+        if (this._started || IsObject(this._running)) {
+            this.Log("Go back: stop the macro first (F3), then try again")
+            return false
+        }
+        if this._toolBusy {
+            this.Log("Go back: finish the route record / test first")
+            return false
+        }
+        res := this.Updater().Rollback()
+        if (!res["ok"] && IsObject(this.dash)) {
+            this.dash.SetUpdate("", res["msg"])
+            this.RefreshRollback()
+        }
+        return res["ok"]
+    }
+
     ; Startup splash: blocks ~1.6 s, before the Dashboard exists. Normal mode only;
     ; the real Splash only when the app builds its own UI (not with a given ui / splash dep).
     ShowSplash(mode) {
@@ -2287,6 +2458,7 @@ class App {
             "testWebhook", (i) => this.OnTestWebhook(i),
             "checkUpdate", () => this.OnCheckUpdate(true),
             "installUpdate", () => this.OnInstallUpdate(),
+            "rollback", () => this.OnRollback(),
             "checkSetup", () => this.OnCheckSetup(),
             "logBundle", (shots := false) => this.OnLogBundle(shots),
             "wizard", () => this.OpenWizard(),

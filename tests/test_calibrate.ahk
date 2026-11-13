@@ -682,3 +682,41 @@ Test_Calibrate_ShippedPresetIsAFullCalibration() {
     j := Json.Parse(FileRead(path, "UTF-8"))
     AssertTrue(j["steps"].Count >= 30, "preset has the recorded steps")
 }
+
+; idea 2 (2026-11-13): an unedited preset made for ANOTHER screen is swapped
+; for the preset of this screen at load (read only); an own calibration,
+; even one step different, is always kept
+Test_Calibrate_PresetFollowsTheScreen() {
+    d := CalTempDir()
+    old := Calibrate.SystemFn
+    try {
+        DirCreate(d "\presets")
+        big := '{"version": 1, "steps": {"rod": {"x": 10, "y": 20, "color": "0xFFFFFF"}}}'
+        small := '{"version": 1, "steps": {"rod": {"x": 7, "y": 15, "color": "0xFFFFFF"}}}'
+        FileAppend(big, d "\presets\calibration_2560x1440_100.json", "UTF-8")
+        FileAppend(small, d "\presets\calibration_1920x1080_100.json", "UTF-8")
+        FileAppend(big, d "\calibration.json", "UTF-8")             ; the 1440 preset, applied as is
+        Calibrate.SystemFn := () => {w: 1920, h: 1080, scale: 100}
+        Calibrate.Use(d "\calibration.json")
+        AssertEq(Calibrate.Point("rod").x, 7, "the 1080 preset is used on a 1080 screen")
+        AssertTrue(InStr(Calibrate.AutoNote, "2560x1440"), "says why: " Calibrate.AutoNote)
+        AssertEq(FileRead(d "\calibration.json", "UTF-8"), big, "the file is unchanged")
+        Calibrate.SystemFn := () => {w: 2560, h: 1440, scale: 100}
+        Calibrate.Use(d "\calibration.json")
+        AssertEq(Calibrate.Point("rod").x, 10, "back on 1440: the file itself")
+        AssertEq(Calibrate.AutoNote, "", "nothing to say")
+        FileDelete(d "\calibration.json")
+        FileAppend('{"version": 1, "steps": {"rod": {"x": 11, "y": 20, "color": "0xFFFFFF"}}}', d "\calibration.json", "UTF-8")
+        Calibrate.SystemFn := () => {w: 1920, h: 1080, scale: 100}
+        Calibrate.Use(d "\calibration.json")
+        AssertEq(Calibrate.Point("rod").x, 11, "an edited calibration is kept")
+        Calibrate.SystemFn := () => {w: 1600, h: 900, scale: 100}
+        FileDelete(d "\calibration.json")
+        FileAppend(big, d "\calibration.json", "UTF-8")
+        Calibrate.Use(d "\calibration.json")
+        AssertEq(Calibrate.Point("rod").x, 10, "no preset for this screen: the file")
+    } finally {
+        Calibrate.SystemFn := old
+        CalCleanup(d)
+    }
+}

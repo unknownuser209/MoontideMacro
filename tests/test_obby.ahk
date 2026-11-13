@@ -1321,3 +1321,33 @@ Test_Obby_FailedSwapPutsTheAuraBack() {
     o2.t.Run(SchedCtx())
     AssertEq(calls2.Length, 0, "Glock still on: nothing to put back")
 }
+
+; speed (2026-11-13): the tile an aura was found on is checked first next
+; time (Sailor was result 11 on every logged swap: ~25 s of reads each run)
+Test_Obby_FoundTileIsCheckedFirstNextTime() {
+    owned := ["Sailor: Admiral", "Sailor: Admiral", "Sailor: Admiral", "Sailor: Flying Dutchman", "Sailor", "Eden"]
+    o := QmObbyTask("Sailor", , , , owned)
+    o.s.special := ["Eden"]
+    o.t.wear := "Eden"
+    reads := []
+    orig := ObbyTask.Prototype._ReadName
+    o.t.DefineProp("_ReadName", {call: (self, c, aura) => (reads.Push(aura), orig.Call(self, c, aura))})
+    sw := o.t.PutOnSailor(SchedCtx())
+    reads.Length := 0
+    AssertTrue(sw.ok && o.t.PutBack(SchedCtx(), sw), "first swap and back (Sailor searched)")
+    n1 := ObbyCountReads(reads, "Sailor")
+    AssertTrue(n1 >= 5, "the first search reads up to tile 5 (" n1 ")")
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(sw.ok, "second swap")
+    reads.Length := 0
+    AssertTrue(o.t.PutBack(SchedCtx(), sw), "second put back")
+    AssertEq(ObbyCountReads(reads, "Sailor"), 1, "the second search goes straight to tile 5")
+    AssertTrue(QmObbyLogHas(o.logs, "Sailor is result 5"), "found at 5")
+}
+
+ObbyCountReads(reads, aura) {
+    n := 0
+    for a in reads
+        n += (a = aura)
+    return n
+}

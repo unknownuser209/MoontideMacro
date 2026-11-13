@@ -65,6 +65,7 @@
 #Include test_resample.ahk
 #Include test_presets.ahk
 #Include test_stats.ahk
+#Include test_i18n.ahk
 
 Main()
 
@@ -110,3 +111,5 @@ Out(line) {
 #Include test_remote.ahk
 #Include test_setupcheck.ahk
 #Include test_logbundle.ahk
+#Include test_fixit.ahk
+#Include test_profiles.ahk

@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\..\Brand.ahk
+#Include %A_LineFile%\..\..\I18n.ahk
 ; ---------------------------------------------------------------------------
 ; Theme: Moontide Macro palette, fonts and light-weight styled controls.
 ;
@@ -22,6 +23,11 @@
 ;
 ; Collector: while Theme.Sink is an Array, every control created through
 ; Theme is pushed into it (the dashboard uses this to group page controls).
+;
+; Language (lib\I18n.ahk): Window titles, Label / Panel / Section / ListHeader
+; texts, Help tips, Button and Check labels, Segmented captions and Confirm
+; texts go through I18n.T when made (unchanged in English). Dropdown items
+; and Theme.SetText are not translated (callers wrap visible texts).
 ; ---------------------------------------------------------------------------
 
 class Theme {
@@ -47,7 +53,7 @@ class Theme {
     static Current := "Moontide"
     static Pulse := "B5772A"       ; darker accent the Running pill pulses to
     static BgImage := "moontide_bg_dim.png"
-    static Names := ["Moontide", "Overdrive", "Galaxy", "Boss", "Equinox", "Matrix", "Radiant", "Illusionary"]
+    static Names := ["Moontide", "Overdrive", "Galaxy", "Boss", "Equinox", "Matrix", "Radiant", "Illusionary", "Contrast"]
     static Presets := Map(
         "Moontide", {Bg: "0D1117", PanelC: "0B2A5B", Text: "F7F1E8", Accent: "F2A93B", SideBg: "0A1628", CardBg: "0A1628", FieldBg: "0A1A36"
             , FrameC: "1E4780", HoverBg: "143A73", OffBg: "1B2D4F", Muted: "A8A199", Ink: "0D1117", AccentHi: "F7BD5E", Pulse: "B5772A"
@@ -72,7 +78,11 @@ class Theme {
             , BgImage: "themes\radiant.png", Note: "Purple, The Radiant Forest"},
         "Illusionary", {Bg: "060A1C", PanelC: "0B2A8F", Text: "F2F5FF", Accent: "4D7CFF", SideBg: "0A1236", CardBg: "0A1236", FieldBg: "0C1744"
             , FrameC: "2447C2", HoverBg: "1A35A6", OffBg: "1A2A5E", Muted: "A2ACCC", Ink: "060A1C", AccentHi: "85A6FF", Pulse: "2E55C2"
-            , BgImage: "themes\illusionary.png", Note: "Electric blue, Illusionary"})
+            , BgImage: "themes\illusionary.png", Note: "Electric blue, Illusionary"},
+        ; high contrast (idea 8): black, white text, yellow highlights, no picture
+        "Contrast", {Bg: "000000", PanelC: "4A4A4A", Text: "FFFFFF", Accent: "FFD400", SideBg: "000000", CardBg: "0A0A0A", FieldBg: "1C1C1C"
+            , FrameC: "BDBDBD", HoverBg: "333333", OffBg: "2A2A2A", Muted: "E0E0E0", Ink: "000000", AccentHi: "FFE45C", Pulse: "A68A00"
+            , BgImage: "themes\contrast.png", Note: "High contrast: black, white and yellow, easy to read"})
     static ThemeKeys := ["Bg", "PanelC", "Text", "Accent", "SideBg", "CardBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Muted", "Ink", "AccentHi", "Pulse", "BgImage"]
 
     ; Theme name as listed (any case), "Moontide" when unknown.
@@ -149,7 +159,7 @@ class Theme {
 
     ; Window with the palette, dark title bar (Win10 1809+/Win11 caption colours).
     static Window(title, opts := "") {
-        g := Gui(opts, title)
+        g := Gui(opts, I18n.T(title))
         g.BackColor := Theme.Bg
         g.MarginX := 0, g.MarginY := 0
         Theme.Font(g, "body")
@@ -182,7 +192,7 @@ class Theme {
     ; bg = "" -> transparent over whatever is behind (e.g. the art).
     static Label(g, opts, text, role := "body", bg := "", color := "") {
         Theme.Font(g, role, color)
-        c := Theme.Add(g, "Text", opts (bg = "" ? " BackgroundTrans" : " Background" bg), text)
+        c := Theme.Add(g, "Text", opts (bg = "" ? " BackgroundTrans" : " Background" bg), I18n.T(text))
         if (bg = "")
             Theme._trans[c.Hwnd] := true
         Theme._roles[c.Hwnd] := role
@@ -208,6 +218,7 @@ class Theme {
     ; 16x16 "?" in Muted; hovering (or clicking) shows `text` as a ToolTip
     ; by the mouse, leaving hides it.
     static Help(g, x, y, text) {
+        text := I18n.T(text)
         Theme.Font(g, "caps")
         c := Theme.Add(g, "Text", "x" x " y" y " w16 h16 +0x100 +0x200 Center Background" Theme.OffBg " c" Theme.Muted, "?")
         Theme._help[c.Hwnd] := text
@@ -359,7 +370,7 @@ class Theme {
     ; kind: "normal" (navy) | "primary" (gold) | "quiet" (flat on bg)
     static Button(g, opts, label, clickFn, kind := "normal") {
         Theme.Font(g, "button")
-        c := Theme.Add(g, "Text", opts " +0x100 +0x200 Center", label)
+        c := Theme.Add(g, "Text", opts " +0x100 +0x200 Center", I18n.T(label))
         Theme._PaintButton(c, kind, false, true)
         Theme.Clickable(c, clickFn, (on) => Theme._PaintButton(c, kind, on, Theme._hot[c.Hwnd].enabled))
         return c
@@ -398,7 +409,7 @@ class Theme {
         if (label != "") {
             w := (labelW < 0) ? "" : " w" (labelW ? labelW : 240)
             Theme.Font(g, "body")
-            lbl := Theme.Add(g, "Text", "x" lx " y" y w " h20 +0x100 +0x200 BackgroundTrans", label)
+            lbl := Theme.Add(g, "Text", "x" lx " y" y w " h20 +0x100 +0x200 BackgroundTrans", I18n.T(label))
             Theme._trans[lbl.Hwnd] := true
         }
         return ThemeCheck(box, lbl, value, onChange, style)
@@ -500,7 +511,7 @@ class Theme {
         opts := Map()
         Theme.Font(g, "button")
         for i, lb in labels {
-            c := Theme.Add(g, "Text", "x" x + (i - 1) * w " y" y " w" w " h" h " +0x100 +0x200 Center", lb)
+            c := Theme.Add(g, "Text", "x" x + (i - 1) * w " y" y " w" w " h" h " +0x100 +0x200 Center", I18n.T(lb))
             opts[lb] := ThemeOption(c, lb, opts, onPick, i = picked)
         }
         return opts
@@ -545,6 +556,7 @@ class Theme {
     ; Blocks (pumping messages) until answered. -> true only for okLabel.
     static Confirm(owner, title, body, okLabel := "OK", cancelLabel := "Cancel") {
         res := [false]
+        title := I18n.T(title), body := I18n.T(body), okLabel := I18n.T(okLabel), cancelLabel := I18n.T(cancelLabel)
         d := Gui("-MinimizeBox -MaximizeBox" (IsObject(owner) ? " +Owner" owner.Hwnd : ""), Brand.Name)
         d.BackColor := Theme.Bg
         d.MarginX := 0, d.MarginY := 0

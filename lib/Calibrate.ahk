@@ -624,10 +624,15 @@ class Calibrate {
         ; so). Read only: the user's file is not written until a step is
         ; recorded (then it holds the preset + the new step)
         src := path
+        Calibrate.AutoNote := ""
         if Calibrate._NoSteps(path) {
             pp := Calibrate.PresetPath(path)
             if (pp != "" && FileExist(pp))
                 src := pp
+        } else {
+            alt := Calibrate._PresetSwap(path)
+            if (alt != "")
+                src := alt
         }
         if !FileExist(src) {
             Calibrate._status := "missing"
@@ -723,6 +728,45 @@ class Calibrate {
                     m := {x: m.x, y: m.y, w: cw, h: ch}
             }
         return {w: m.w, h: m.h, scale: sc}
+    }
+
+    ; What _Load did on its own (App logs it), "" when nothing.
+    static AutoNote := ""
+
+    ; Auto screen setup (idea 2, 2026-11-13): the calibration is exactly one
+    ; of the shipped presets (never hand-edited) but the screen now matches
+    ; ANOTHER preset (the player changed resolution): -> that preset's path
+    ; (used read-only, like the first run; the file on disk is untouched).
+    ; A hand-made or edited calibration -> "" (always kept).
+    static _PresetSwap(path) {
+        pp := Calibrate.PresetPath(path)
+        if (pp = "" || !FileExist(pp))
+            return ""
+        mine := Calibrate._StepsKey(path)
+        if (mine = "" || mine == Calibrate._StepsKey(pp))
+            return ""
+        for p in Calibrate.Presets(path) {
+            if (p.path = pp)
+                continue
+            if (Calibrate._StepsKey(p.path) == mine) {
+                sys := ""
+                try sys := Calibrate.SystemFn.Call()
+                Calibrate.AutoNote := "your calibration is the " p.label " preset but your screen is " (IsObject(sys) ? Calibrate.PresetLabel(sys) : "another size")
+                    . ": using the matching preset (your file is unchanged; Calibrate > Apply preset makes it permanent)"
+                return pp
+            }
+        }
+        return ""
+    }
+
+    ; a calibration file's steps as one comparable string ("" = none / broken)
+    static _StepsKey(file) {
+        try {
+            root := Json.Parse(FileRead(file, "UTF-8"))
+            if (root is Map && root.Has("steps") && root["steps"] is Map && root["steps"].Count)
+                return Json.Stringify(root["steps"])
+        }
+        return ""
     }
 
     ; Path of the preset matching this system's display, or "".

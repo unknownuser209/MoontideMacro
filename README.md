@@ -10,7 +10,10 @@ It only reads screen pixels and the Roblox log, and presses keys and clicks
 the mouse like a player. It never reads or changes game memory.
 
 (Originally built around the Vesper theme, so the entry script is still
-`Vesper.ahk`.)
+`Vesper.ahk`. `MoontideMacro.exe` is AutoHotkey v2 itself, renamed: it runs
+`MoontideMacro.ahk`, which starts the same macro. Its license is in
+`AutoHotkey license.txt`. Some antivirus apps are wary of any AutoHotkey
+program; it reads no game memory and sends nothing anywhere you did not set up.)
 
 ## Requirements
 
@@ -20,12 +23,16 @@ the mouse like a player. It never reads or changes game memory.
   (1280x1024) and ultrawide (2560x1080, 3440x1440) do not yet.
 - **Be careful:** Memory Match works better at some screen sizes than others,
   and minion hunting is still very buggy at every size. Keep an eye on both.
-- [AutoHotkey v2](https://www.autohotkey.com/) (v2.0 or newer, not v1).
+- Nothing to install: the release zip includes `MoontideMacro.exe`. If you
+  already have [AutoHotkey v2](https://www.autohotkey.com/), you can run
+  `Vesper.ahk` instead.
 
 ## Start
 
-1. Install AutoHotkey v2.
-2. Double-click `Vesper.ahk`. The dashboard and a small overlay open.
+1. Download the zip from the latest release and unzip it into its own folder.
+2. Double-click `MoontideMacro.exe` (or `Vesper.ahk` with AutoHotkey v2
+   installed; use one or the other, not both). The dashboard and a small
+   overlay open. The first time, the setup wizard walks you through the basics.
 3. Open Roblox fullscreen, join your server, stand at the fishing spot.
 4. Press **F1**.
 

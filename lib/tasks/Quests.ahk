@@ -72,8 +72,12 @@ class QuestsTask {
     static MaxSteps := 16          ; reads per pass (5 quests need ~10)
     static OpenKey := "e"
     static SettleMs := 700
-    static ButtonTries := 8       ; button reads again while it reads nothing (a toast over it)
-    static ButtonRetryMs := 500
+    ; Speed (2026-11-13): an unread button cost 8 x 500 ms on 4 of 5 slots
+    ; (106 times in the logs). 3 x 300 ms now: still unread = left alone
+    ; (never dismissed blind), a claim under a toast waits for the next visit.
+    static ButtonTries := 3       ; button reads again while it reads nothing (a toast over it)
+    static ButtonRetryMs := 300
+    static NextMaxMs := 1400      ; after >: the next quest's text shows (read twice the same) within this
     static SkillRe := "i)t[ao]unt|b[ao]rr[ao]ge|nothing|imp[ao][lI1]e|de[ao]deye|voidrush|rkm[ao]t"   ; Eden's skill list
     static AfterCardMs := 1200     ; after a catch card closed, before E
     static WalkTries := 2          ; respawn + walk + E when the board did not open
@@ -409,9 +413,28 @@ class QuestsTask {
                 break
             env.Click(nextPt)                   ; Accept / leave alone keep the quest on screen
             pushed := true
-            if !env.Wait(QuestsTask.SettleMs, ctx)
+            if (this._WaitNext(area, key, ctx) < 0)
                 break
         }
         return done
+    }
+
+    ; After >: the board shows another quest, the same key on two reads in a
+    ; row (no half-drawn text), at most NextMaxMs; was a fixed SettleMs.
+    ; -> 1 | 0 not within NextMaxMs (the loop's own read decides) | -1 stopped
+    _WaitNext(area, oldKey, ctx) {
+        env := this._env
+        waited := 0, prev := ""
+        Loop {
+            if !env.Wait(QuestsTask.PollMs, ctx)
+                return -1
+            waited += QuestsTask.PollMs
+            k := QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h))
+            if (k != "" && k != oldKey && k = prev)
+                return 1
+            prev := k
+            if (waited >= QuestsTask.NextMaxMs)
+                return 0
+        }
     }
 }

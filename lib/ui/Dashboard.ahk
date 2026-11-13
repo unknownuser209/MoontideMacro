@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Theme.ahk
 #Include %A_LineFile%\..\Anim.ahk
+#Include %A_LineFile%\..\HelpTexts.ahk
 #Include %A_LineFile%\..\..\Credits.ahk
 #Include %A_LineFile%\..\UiLogic.ahk
 #Include %A_LineFile%\..\..\Config.ahk
@@ -10,6 +11,7 @@
 #Include %A_LineFile%\..\..\RouteRecorder.ahk
 #Include %A_LineFile%\..\..\tasks\BiomeItems.ahk
 #Include %A_LineFile%\..\..\tasks\MemoryMatch.ahk
+#Include %A_LineFile%\..\..\Profiles.ahk
 ; ---------------------------------------------------------------------------
 ; Dashboard: the main Moontide Macro window (1040x680). The sidebar lists six
 ; hubs (Dashboard.Hubs); a hub shows its title, a tab strip of its pages and
@@ -119,6 +121,8 @@
 ;   quests.enabled 1, quests.dismissDisabled 0 | merchant.enabled 1,
 ;     merchant.chatPollSec 5
 ;   recovery: enabled 1, afkMin 15, stuckMin 10, loadSec 20
+;   UI (Settings > Look): animations 1, theme "Moontide", lang "en" (lib\I18n.ahk;
+;     theme and language show after Apply now or the next start)
 ;   Limbo: enabled 0 (Automate > Limbo)
 ;   Medal (Alerts > Clips): enabled 0, clipHotkey F8 (Clips save refuses a key that
 ;     Clip.HotkeyProblem rejects: not F4-F24, or a macro / capture /
@@ -126,6 +130,13 @@
 ;     onRareAura 0, auras "", auraMinRarity 100000000 (field shows commas,
 ;     accepts "100m" / "1b" / "1,000,000,000"; unparsable -> not saved),
 ;     auraAlwaysCategories "Challenged,Challenged+"
+;   Setup > Profiles (lib\Profiles.ahk): a profile button sets its keys, saves
+;     at once and reloads every other page (unsaved edits there are dropped);
+;     Export writes <cfg dir>\exports\moontide_settings_<yyyyMMdd>.ini without
+;     secrets; Import merges the shareable keys of a chosen .ini (never
+;     webhooks, links, the bot or dry run). d.ApplyProfile(name),
+;     d.ExportSettings(), d.ImportSettings(path) (tests). Ids: "profile:<name>",
+;     "profileStatus", "export", "exportShow", "import", "shareStatus".
 ;   Tools page (tab "Routes"): Record route buttons (data\routes.json via
 ;     RouteRecorder). Dev tools page: test events (refused by the app
 ;     unless dry run is ON).
@@ -146,9 +157,9 @@ class Dashboard {
     static H := 680
     ; Internal page names (SavePage / tests); the user sees TabLabel(name).
     static Pages := ["Run", "Fishing", "Craft", "Quests", "Merchants", "Biomes & Potions", "Biome items", "Obby & Memory", "Webhooks", "Calibrate", "Settings", "Tools", "Limbo", "Clips", "Dev tools"
-        , "Stats", "Hunting", "Summary", "Remote", "Check", "Schedule", "Credits", "Log"]
+        , "Stats", "Hunting", "Summary", "Remote", "Check", "Schedule", "Credits", "Log", "Profiles"]
     static Builders := ["_PageRun", "_PageFishing", "_PageCraft", "_PageQuests", "_PageMerchants", "_PageBiomes", "_PageBiomeItems", "_PageObbyMemory", "_PageWebhooks", "_PageCalibrate", "_PageSettings", "_PageTools", "_PageLimbo", "_PageClips", "_PageDevTools"
-        , "_PageStats", "_PageHunting", "_PageSummary", "_PageRemote", "_PageCheck", "_PageSchedule", "_PageCredits", "_PageLog"]
+        , "_PageStats", "_PageHunting", "_PageSummary", "_PageRemote", "_PageCheck", "_PageSchedule", "_PageCredits", "_PageLog", "_PageProfiles"]
     static Subtitles := [
         "Status at a glance. F1 start  " Chr(0xB7) "  F2 pause / resume  " Chr(0xB7) "  F3 stop",
         "Selling rhythm, minigame mode and failsafes.",
@@ -172,7 +183,8 @@ class Dashboard {
         "Check what the macro can see on your PC, and make a log zip for support.",
         "Start and stop by the clock, or stop after a number of hours.",
         "Who made " Brand.Name ".",
-        "The newest 200 lines. Links and webhook URLs are always hidden."
+        "The newest 200 lines. Links and webhook URLs are always hidden.",
+        "One-click setups, and your settings in a file to share (no webhooks or links)."
     ]
     ; Sidebar hubs, each a tab strip of pages (every page is in exactly one).
     static Hubs := [
@@ -180,10 +192,15 @@ class Dashboard {
         {name: "Automate", icon: "bolt", pages: ["Fishing", "Craft", "Quests", "Merchants", "Biome items", "Obby & Memory", "Limbo"]},
         {name: "Limited", icon: "clock", pages: ["Hunting"]},
         {name: "Alerts", icon: "bell", pages: ["Biomes & Potions", "Webhooks", "Clips", "Summary", "Remote"]},
-        {name: "Setup", icon: "gear", pages: ["Check", "Calibrate", "Tools", "Schedule", "Settings", "Dev tools"]},
+        {name: "Setup", icon: "gear", pages: ["Check", "Calibrate", "Tools", "Schedule", "Settings", "Profiles", "Dev tools"]},
         {name: "Log", icon: "list", pages: ["Log"]},
         {name: "About", icon: "info", pages: ["Credits"]}
     ]
+    ; Simple mode (UI.simple, idea 3, 2026-11-13): only these pages show; a
+    ; hub with none of them is hidden (the user asked for the Limited tab in
+    ; simple mode too). The sidebar button under the hubs switches it live.
+    static SimplePages := Map("Run", 1, "Stats", 1, "Fishing", 1, "Quests", 1, "Merchants", 1, "Hunting", 1, "Biomes & Potions", 1
+        , "Webhooks", 1, "Check", 1, "Settings", 1, "Log", 1, "Credits", 1)
     static TabLabels := Map("Craft", "Crafting", "Biomes & Potions", "Biomes", "Webhooks", "Discord", "Tools", "Routes", "Summary", "Daily summary", "Check", "Check & help")
     static MaxHooks := 8
     static Events := ["biome", "rare", "merchant", "quests", "craft", "errors", "startstop", "potions", "clips", "obby", "memorymatch", "sinister"]
@@ -271,6 +288,9 @@ class Dashboard {
         ; a switch for a part still known to be buggy: a warning before it goes on
         this._confirmBuggy := (title, text) => Theme.Confirm(this._gui, title, text, "Turn on", "Keep off")
         this._confirmBig := (title, text) => Theme.Confirm(this._gui, title, text, "Use it", "Change it")
+        ; Setup > Profiles: apply a profile (yes / no), the file to import ("" = cancel)
+        this._confirmProfile := (title, text) => Theme.Confirm(this._gui, title, text, "Apply", "Cancel")
+        this._pickImport := () => this._PickIni()
         this._bigWarned := ""
         this._Build()
         ; animations: gated on this window, switched by UI.animations (live)
@@ -434,6 +454,13 @@ class Dashboard {
         return ok ? true : false
     }
 
+    ; Home's NEXT UP cell ("Quests in 12 min"; "" = nothing timed / stopped)
+    SetNext(text) {
+        t := (text = "") ? Chr(0x2014) : text
+        if (this._stNext.Text != t)
+            Theme.SetText(this._stNext, t)
+    }
+
     SetStatus(state, task := "", biome := "", rare := false, uptimeMs := 0, loops := 0) {
         st := UiLogic.NormState(state)
         up := UiLogic.Uptime(uptimeMs)
@@ -441,7 +468,7 @@ class Dashboard {
         if (key == this._statusKey)
             return
         this._statusKey := key
-        pl := (st = "Paused") ? "Resume" : "Pause"
+        pl := I18n.T((st = "Paused") ? "Resume" : "Pause")
         for b in this._pauseBtns {
             if (b.Text != pl)
                 b.Text := pl
@@ -451,21 +478,20 @@ class Dashboard {
             case "Paused": bg := Theme.PanelC, fg := Theme.Text, vc := Theme.Text
             default: bg := Theme.OffBg, fg := Theme.Muted, vc := Theme.Muted
         }
-        pill := Chr(0x25CF) "  " StrUpper(st)
+        pill := Chr(0x25CF) "  " StrUpper(I18n.T(st))
         if (this._pill.Text != pill) {
             this._pill.Text := pill
             Theme.SetColors(this._pill, bg, fg)
-            this._stState.Text := st
+            this._stState.Text := I18n.T(st)
             Theme.SetColors(this._stState, Theme.CardBg, vc)
         }
-        Theme.SetText(this._stTask, task = "" ? Chr(0x2014) : task)
-        bText := biome = "" ? Chr(0x2014) : biome (rare ? "   " Chr(0x2726) " rare" : "")
+        Theme.SetText(this._stTask, task = "" ? Chr(0x2014) : I18n.T(task))
+        bText := biome = "" ? Chr(0x2014) : biome (rare ? "   " Chr(0x2726) " " I18n.T("rare") : "")
         if (this._stBiome.Text != bText) {
             this._stBiome.Text := bText
             Theme.SetColors(this._stBiome, Theme.CardBg, rare ? Theme.Accent : Theme.Text)
         }
         Theme.SetText(this._stUp, up)
-        Theme.SetText(this._stLoops, String(loops))
         this._loopsN := IsNumber(loops) ? Integer(loops) : 0
         run := (st = "Running")
         if (run != this._running) {
@@ -554,9 +580,57 @@ class Dashboard {
 
     ; Hub i on the tab last opened there (its first tab the first time).
     SelectHub(i) {
-        if (i < 1 || i > Dashboard.Hubs.Length)
+        if (i < 1 || i > Dashboard.Hubs.Length || !this._ShownIn(i).Length)
             return
-        this.SelectPage(this._hubLast.Has(i) ? this._hubLast[i] : Dashboard.PageIndex(Dashboard.Hubs[i].pages[1]))
+        last := this._hubLast.Has(i) ? this._hubLast[i] : 0
+        this.SelectPage((last && this.PageShown(Dashboard.Pages[last])) ? last : Dashboard.PageIndex(this._ShownIn(i)[1]))
+    }
+
+    ; ---- simple mode (idea 3) ----
+
+    PageShown(name) => !this._simple || Dashboard.SimplePages.Has(name)
+
+    ; hub h's pages that show now
+    _ShownIn(h) {
+        out := []
+        for p in Dashboard.Hubs[h].pages
+            if this.PageShown(p)
+                out.Push(p)
+        return out
+    }
+
+    ; the hub buttons: hidden hubs leave no gap; the mode button's text
+    _LayoutNav() {
+        vi := 0
+        for i, hub in Dashboard.Hubs {
+            on := this._ShownIn(i).Length > 0
+            this._nav[i].Visible := on
+            this._navBar[i].Visible := on
+            if on {
+                y := 74 + vi * 40
+                this._nav[i].Move(, y)
+                this._navBar[i].Move(, y)
+                vi++
+            }
+        }
+        Theme.SetText(this._simpleBtn, "SIMPLE MODE  " Chr(0xB7) "  " (this._simple ? "ON" : "OFF"))
+    }
+
+    ; Simple mode on / off, saved, shown at once (a hidden page open -> Home)
+    SetSimple(on) {
+        this._simple := on ? true : false
+        try {
+            this.cfg.Set("UI.simple", this._simple ? 1 : 0)
+            this.cfg.Save()
+        }
+        this._LayoutNav()
+        if (this._active && !this.PageShown(Dashboard.Pages[this._active])) {
+            this.SelectHub(1)
+        } else if this._hub {
+            this._ShowHub(this._hub)
+            this._PaintTabs()
+        }
+        this.Log("Simple mode " (this._simple ? "on: only the main pages show (the sidebar button shows them all)" : "off: every page shows"))
     }
 
     SavePage(name) {
@@ -571,7 +645,7 @@ class Dashboard {
                 why := e.Message
             if (why != "") {
                 msg := UiLogic.Scrub(why, this._Secrets())
-                this._SetPageStatus(page, "Not saved: " msg, true)
+                this._SetPageStatus(page, I18n.T("Not saved:") " " msg, true)
                 this.Log("Settings: " name " not saved: " msg)
                 this._RefreshDot(page)
                 return false
@@ -584,7 +658,7 @@ class Dashboard {
             this.cfg.Save()
         } catch Any as e {
             msg := UiLogic.Scrub(e.Message, this._Secrets())
-            this._SetPageStatus(page, "Not saved: " msg, true)
+            this._SetPageStatus(page, I18n.T("Not saved:") " " msg, true)
             this.Log("Settings: " name " not saved: " msg)
             this._RefreshDot(page)
             return false
@@ -592,7 +666,7 @@ class Dashboard {
         page.dirty := false
         this._Snap(page)
         this._RefreshDot(page)
-        this._SetPageStatus(page, "Saved " FormatTime(, "HH:mm:ss") (note ? "   " note : ""))
+        this._SetPageStatus(page, I18n.T("Saved") " " FormatTime(, "HH:mm:ss") (note ? "   " note : ""))
         this.Log("Settings: " name " saved")
         if (name = "Settings" && this._shown)
             this._StartLoops(true)         ; UI.animations takes effect now
@@ -604,7 +678,7 @@ class Dashboard {
     RevertPage(name) {
         page := this._PageByName(name)
         this._LoadPage(page)
-        this._SetPageStatus(page, "Reverted to saved values")
+        this._SetPageStatus(page, I18n.T("Reverted to saved values"))
     }
 
     ; ---- build ----------------------------------------------------------------
@@ -652,6 +726,7 @@ class Dashboard {
         Theme.Button(g, "x940 y16 w80 h28", "Stop", (*) => this._Fire("stop"))
 
         ; sidebar
+        this._simple := this.cfg.Get("UI.simple", 0) ? true : false
         Theme.Rect(g, 0, 60, 176, 620, Theme.SideBg)
         Theme.Rect(g, 175, 60, 1, 620, Theme.PanelC)
         this._nav := []
@@ -660,12 +735,15 @@ class Dashboard {
             y := 74 + (i - 1) * 40
             this._navBar.Push(Theme.Rect(g, 0, y, 3, 34, Theme.SideBg))
             Theme.Font(g, "nav")
-            c := g.Add("Text", "x12 y" y " w152 h34 +0x80 +0x100 +0x200 Background" Theme.SideBg, "   " hub.name)
+            c := g.Add("Text", "x12 y" y " w152 h34 +0x80 +0x100 +0x200 Background" Theme.SideBg, "   " I18n.T(hub.name))
             Theme.Clickable(c, ObjBindMethod(this, "_NavClick", i), ObjBindMethod(this, "_PaintNav", i))
             this._nav.Push(c)
             this._ids["hub:" hub.name] := c
         }
         Theme.Font(g, "caps")
+        this._simpleBtn := g.Add("Text", "x14 y586 w148 h28 +0x80 +0x100 +0x200 Center Background" Theme.SideBg " c" Theme.Muted, "")
+        Theme.Clickable(this._simpleBtn, (*) => this.SetSimple(!this._simple), (on) => Theme.SetColors(this._simpleBtn, Theme.SideBg, on ? Theme.Accent : Theme.Muted))
+        this._ids["simpleMode"] := this._simpleBtn
         this._chip := g.Add("Text", "x14 y622 w148 h30 +0x80 +0x200 Center Background" Theme.OffBg, "")
 
         ; twinkling stars (header y < 59, sidebar x < 176), loop "stars"
@@ -703,6 +781,7 @@ class Dashboard {
             }
         }
         this._underline := Theme.Rect(g, 204, 130, 40, 2, Theme.Accent)
+        this._LayoutNav()
         this._underline.Visible := false
         this._ids["tabUnderline"] := this._underline
 
@@ -742,11 +821,15 @@ class Dashboard {
     }
 
     ; Solid panel on the page being built; a titled one is also
-    ; Ctrl("panel:<page>:<title>"). help: text of a "?" at the title's right.
+    ; Ctrl("panel:<page>:<title>") (its frame) and Ctrl("panelTitle:<page>:<title>")
+    ; (its caption; Theme translates it, the ids keep the English title).
+    ; help: text of a "?" at the title's right.
     _Panel(x, y, w, h, title := "", help := "") {
         parts := Theme.Panel(this._gui, x, y, w, h, title)
-        if (title != "" && IsObject(this._curPage))
+        if (title != "" && IsObject(this._curPage)) {
             this._ids["panel:" this._curPage.name ":" title] := parts[1]
+            this._ids["panelTitle:" this._curPage.name ":" title] := parts[3]
+        }
         if (help != "")
             Theme.Help(this._gui, x + w - 28, y + 8, help)
         return parts
@@ -810,7 +893,7 @@ class Dashboard {
             return
         dot := this._dots[page.idx]
         h := Dashboard.HubOf(page.name)
-        want := (h = this._hub && Dashboard.Hubs[h].pages.Length > 1 && this._PageDirty(page)) ? true : false
+        want := (h = this._hub && this._ShownIn(h).Length > 1 && this.PageShown(page.name) && this._PageDirty(page)) ? true : false
         if (dot.Visible != want) {
             dot.Visible := want
             if !want
@@ -832,16 +915,24 @@ class Dashboard {
     _ShowHub(h) {
         old := this._hub
         this._hub := h
-        multi := Dashboard.Hubs[h].pages.Length > 1
+        multi := this._ShownIn(h).Length > 1
+        x := 204
+        for name in this._ShownIn(h) {
+            i := Dashboard.PageIndex(name)
+            this._tabs[i].GetPos(, , &tw)
+            this._tabs[i].Move(x)
+            this._dots[i].Move(x + tw + 3)
+            x += tw + 28
+        }
         for i, name in Dashboard.Pages {
-            on := multi && Dashboard.HubOf(name) = h
+            on := multi && Dashboard.HubOf(name) = h && this.PageShown(name)
             if (this._tabs[i].Visible != on)
                 this._tabs[i].Visible := on
         }
         for page in this._pages
             this._RefreshDot(page)
         this._underline.Visible := multi
-        Theme.SetText(this._hubTitle, Dashboard.Hubs[h].name)
+        Theme.SetText(this._hubTitle, I18n.T(Dashboard.Hubs[h].name))
         if old
             this._PaintNav(old, false)
         this._PaintNav(h, false)
@@ -849,7 +940,7 @@ class Dashboard {
 
     ; Active tab gold, the underline (a single control) moved under it.
     _PaintTabs() {
-        for name in Dashboard.Hubs[this._hub].pages
+        for name in this._ShownIn(this._hub)
             this._PaintTab(Dashboard.PageIndex(name), false)
         if this._underline.Visible {
             this._tabs[this._active].GetPos(&tx, , &tw)
@@ -1013,7 +1104,7 @@ class Dashboard {
 
     _IntField(x, y, label, key, def, unit := "", lw := 170, min := "") {
         g := this._gui
-        Theme.Label(g, "x" x " y" y + 4 " w" lw - 8 " h20", label)
+        late := this._FieldLabel(x, y, label, key, lw)
         e := Theme.Edit(g, x + lw, y, 72, 28, "", "Number")
         if (unit != "")
             Theme.Label(g, "x" x + lw + 80 " y" y + 5 " w70 h20", unit, "muted")
@@ -1025,7 +1116,7 @@ class Dashboard {
 
     _StrField(x, y, label, key, def, w := 120, lw := 170) {
         g := this._gui
-        Theme.Label(g, "x" x " y" y + 4 " w" lw - 8 " h20", label)
+        late := this._FieldLabel(x, y, label, key, lw)
         e := Theme.Edit(g, x + lw, y, w, 28)
         this._Bind("str", key, def, e)
         return e
@@ -1054,7 +1145,35 @@ class Dashboard {
         ctl.Value := (was = "" || MinionsTask.IsBig(this.cfg, was)) ? "Eden" : was
     }
 
+    ; A field's label (lw - 8 wide) and, when HelpTexts has the key, a "?"
+    ; right after the text (idea 4, 2026-11-13). A label too long for both (a
+    ; translation) keeps its full width and goes without the "?" (a "?" after
+    ; the input sat on the next field). -> "" | that help text
+    _FieldLabel(x, y, label, key, lw) {
+        g := this._gui
+        help := HelpTexts.For(key)
+        if (help = "") {
+            Theme.Label(g, "x" x " y" y + 4 " w" lw - 8 " h20", label)
+            return ""
+        }
+        l := Theme.Label(g, "x" x " y" y + 4 " h20", label)
+        l.GetPos(, , &tw)
+        if (tw <= lw - 26) {
+            Theme.Help(g, x + tw + 6, y + 6, help)
+            return ""
+        }
+        l.Move(, , lw - 8)
+        ; the "?" still exists (every language has the same controls) but
+        ; hidden and zero-sized, so it covers nothing
+        h := Theme.Help(g, x, y + 6, help)
+        h.Move(, , 0, 0)
+        this._SetHidden(h, true)
+        return help
+    }
+
     _BoolField(x, y, label, key, def, w := 310, help := "") {
+        if (help = "")
+            help := HelpTexts.For(key)
         c := Theme.Check(this._gui, x, y, label, 0, "", "pill", help != "" ? -1 : w)
         this._Bind("bool", key, def, c)
         if (help != "")
@@ -1215,7 +1334,7 @@ class Dashboard {
         for c in this._dryOn
             this._SetHidden(c, !v)
         this._chipLive := !v
-        this._chip.Text := v ? "DRY RUN  " Chr(0xB7) "  SAFE" : "LIVE  " Chr(0xB7) "  POTIONS ARMED"
+        this._chip.Text := v ? I18n.T("DRY RUN") "  " Chr(0xB7) "  " I18n.T("SAFE") : I18n.T("LIVE") "  " Chr(0xB7) "  " I18n.T("POTIONS ARMED")
         this._pulseLvl := -1           ; a running pulse repaints the chip next step
         this._PaintChip()
     }
@@ -1242,8 +1361,10 @@ class Dashboard {
         this._stUp := Theme.Label(g, "x404 y264 w180 h24", "", "value", Theme.CardBg)
         Theme.Label(g, "x220 y298 w170 h16", "BIOME", "caps", Theme.CardBg)
         this._stBiome := Theme.Label(g, "x220 y316 w176 h24", "", "value", Theme.CardBg)
-        Theme.Label(g, "x404 y298 w170 h16", "LOOPS", "caps", Theme.CardBg)
-        this._stLoops := Theme.Label(g, "x404 y316 w180 h24", "", "value", Theme.CardBg)
+        ; what comes next (idea 8): the LOOPS count is also on the Stats tiles
+        Theme.Label(g, "x404 y298 w170 h16", "NEXT UP", "caps", Theme.CardBg)
+        this._stNext := Theme.Label(g, "x404 y316 w180 h24", "", "value", Theme.CardBg)
+        this._ids["stNext"] := this._stNext
 
         Theme.Button(g, "x204 y368 w124 h36", "Start", (*) => this._Fire("start"), "primary")
         this._PauseBtn(Theme.Button(g, "x340 y368 w124 h36", "Pause", (*) => this._Fire("pause")))
@@ -1276,8 +1397,12 @@ class Dashboard {
             this._updCheck := Theme.Button(g, "x632 y328 w132 h28", "Check for updates", (*) => this._Fire("checkUpdate"))
             this._updInstall := Theme.Button(g, "x776 y328 w100 h28", "Install", (*) => this._Fire("installUpdate"), "primary")
             this._updLater := Theme.Button(g, "x888 y328 w100 h28", "Later", (*) => this.SetUpdate(""))
+            ; "Go back to vX" in the same row while no update is offered (SetRollback)
+            this._updBack := Theme.Button(g, "x776 y328 w212 h28", "Go back", (*) => this._AskRollback())
+            this._rbVer := ""
             this._SetHidden(this._updInstall, true)
             this._SetHidden(this._updLater, true)
+            this._SetHidden(this._updBack, true)
         }
         this._Panel(616, 276 + dy, 396, 340 - dy, "Recent activity")
         this._recent := Theme.Edit(g, 632, 308 + dy, 364, 292 - dy, "", "Multi ReadOnly -WantReturn VScroll")
@@ -1292,6 +1417,26 @@ class Dashboard {
         this._updMsg.Text := on ? "Update available: v" version : (note != "" ? note : "Moontide Macro v" Brand.Version)
         this._SetHidden(this._updInstall, !on)
         this._SetHidden(this._updLater, !on)
+        this._SetHidden(this._updBack, on || this._rbVer = "")
+    }
+
+    ; "Go back to vX" button (version "" = no backup: hidden). Hidden while an
+    ; update is offered. No-op without the Updates panel.
+    SetRollback(version) {
+        if !HasProp(this, "_updBack")
+            return
+        this._rbVer := String(version)
+        if (this._rbVer != "")
+            Theme.SetText(this._updBack, "Go back to v" this._rbVer)
+        this._SetHidden(this._updBack, this._rbVer = "" || !this._hidden.Has(this._updInstall.Hwnd))
+    }
+
+    _AskRollback() {
+        if (this._rbVer = "")
+            return
+        if (MsgBox("Go back to v" this._rbVer "? The macro restarts. Your settings and data stay.", Brand.Name, "YesNo Icon? Owner" this._gui.Hwnd) != "Yes")
+            return
+        this._Fire("rollback")
     }
 
     ; ---- page: Fishing ----------------------------------------------------------
@@ -1988,8 +2133,13 @@ class Dashboard {
             . "Mention = Discord user or role ID, used for rare biomes. Test sends one message to that row's saved webhook.")
         for h in [["ON", x.on], ["NAME", x.name], ["URL", x.url], ["MENTION", x.men]]
             Theme.Label(g, "x" h[2] + 2 " y182 w80 h16", h[1], "caps")
-        for j, cap in Dashboard.EventCaps
-            Theme.Label(g, "x" x.ev + (j - 1) * Dashboard.EventPitch " y182 w" Dashboard.EventPitch " h16 Center", cap, "caps")
+        I18n.Raw := true               ; 28 px column codes stay as they are in every language
+        try {
+            for j, cap in Dashboard.EventCaps
+                Theme.Label(g, "x" x.ev + (j - 1) * Dashboard.EventPitch " y182 w" Dashboard.EventPitch " h16 Center", cap, "caps")
+        } finally {
+            I18n.Raw := false
+        }
         this._hookEmpty := Theme.Label(g, "x216 y214 w600 h20", "No webhooks yet. Add one to get Discord alerts.", "muted")
         this._rows := []
         Loop Dashboard.MaxHooks {
@@ -2327,7 +2477,8 @@ class Dashboard {
         this._Panel(616, 300, 396, 96, "Hotkeys")
         this._hkText := Theme.Label(g, "x632 y330 w364 h44", "", "body")
 
-        this._Panel(616, 412, 396, 152, "Look", "Theme: the colours and the background picture (Sol's RNG art). A new theme shows after Apply now or the next start. "
+        this._Panel(616, 412, 396, 192, "Look", "Theme: the colours and the background picture (Sol's RNG art). A new theme shows after Apply now or the next start. "
+            . "Language: the language of this window, also shown after Apply now or the next start. "
             . "Animations: the tab underline, page fade, moon, stars, running pulse and Home count-up. "
             . "They only move while this window is in front, never while Roblox is.")
         this._BoolField(632, 446, "Animations", "UI.animations", 1)
@@ -2337,7 +2488,12 @@ class Dashboard {
         this._ids["UI.theme"] := this._themeDdl
         this._themeApply := Theme.Button(g, "x880 y478 w116 h28", "Apply now", (*) => this.ApplyTheme(), "quiet")
         this._ids["themeApply"] := this._themeApply
-        this._ids["themeNote"] := Theme.Label(g, "x632 y516 w364 h40", "", "muted")
+        ; language (UI.lang, lib\I18n.ahk): like the theme, shown after Apply now or the next start
+        Theme.Label(g, "x632 y520 w90 h20", "Language")
+        this._langDdl := Theme.Dropdown(g, 722, 516, 150, I18n.Names)
+        this._langDdl.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+        this._ids["UI.lang"] := this._langDdl
+        this._ids["themeNote"] := Theme.Label(g, "x632 y554 w364 h40", "", "muted")
         p.load := ObjBindMethod(this, "_SettingsLoad")
         p.save := ObjBindMethod(this, "_SettingsSave")
         this._SaveBar(p)
@@ -2394,6 +2550,7 @@ class Dashboard {
         Theme.SetText(this._hkText, hk("start", "F1") " start   " hk("pause", "F2") " pause / resume   " hk("stop", "F3") " stop (halts potions)`n"
             . "Capture key " this._CapKey() "   Route recorder " RouteRecorder.Key)
         this._themeDdl.Choose(Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide")))
+        this._langDdl.Choose(I18n.IndexOf(this.cfg.Get("UI.lang", "en")))
         this._ThemeNote()
     }
 
@@ -2410,8 +2567,8 @@ class Dashboard {
     ; "Now: X" or "X after Apply now" under the theme dropdown
     _ThemeNote() {
         saved := Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide"))
-        Theme.SetText(this._ids["themeNote"], saved = Theme.Current ? "Now: " Theme.Current " (" Theme.Presets[Theme.Current].Note ")"
-            : saved " shows after Apply now (saves and restarts the macro while it is stopped) or the next start.")
+        Theme.SetText(this._ids["themeNote"], saved = Theme.Current ? I18n.F("Now: {1} ({2})", Theme.Current, I18n.T(Theme.Presets[Theme.Current].Note))
+            : I18n.F("{1} shows after Apply now (saves and restarts the macro while it is stopped) or the next start.", saved))
     }
 
     _PsClear() {
@@ -2423,6 +2580,8 @@ class Dashboard {
 
     _SettingsSave() {
         this.cfg.Set("UI.theme", Theme.ThemeName(this._themeDdl.Text))
+        li := this._langDdl.Value
+        this.cfg.Set("UI.lang", (li >= 1 && li <= I18n.Codes.Length) ? I18n.Codes[li] : "en")
         this._ThemeNote()
         cur := this.cfg.Get("General.privateServer", "")
         new := this._psWipe ? "" : UiLogic.NewSecret(cur, this._psEdit.Value)
@@ -2994,6 +3153,112 @@ class Dashboard {
 
     _OpenDiscord() {
         try Run(Brand.DiscordUrl)
+    }
+
+    ; ---- page: Profiles (Setup) -------------------------------------------------
+
+    _PageProfiles(p) {
+        g := this._gui
+        this._Panel(204, 152, 396, 464, "One-click profiles", "Each button turns a few switches on or off and saves at once. "
+            . "Potion dry run, webhooks, the server link and the Discord bot are never changed. Unsaved edits on other tabs are dropped.")
+        for i, name in Profiles.Names {
+            y := 186 + (i - 1) * 88
+            this._ids["profile:" name] := Theme.Button(g, "x220 y" y " w180 h30", name, ObjBindMethod(this, "_ProfileBtn", name))
+            Theme.Label(g, "x220 y" y + 36 " w364 h36", Profiles.Description(name), "muted")
+        }
+        this._ids["profileStatus"] := Theme.Label(g, "x220 y546 w364 h56", "", "muted")
+        this._Panel(616, 152, 396, 464, "Share settings")
+        Theme.Label(g, "x632 y184 w364 h100", "Export saves your settings in a file you can send to a friend. Webhooks, server links, "
+            . "the bot token and Discord ids are left out.`n`nImport takes the settings from such a file. Your own webhooks, links and token stay.", "body", Theme.CardBg)
+        this._ids["export"] := Theme.Button(g, "x632 y300 w150 h30", "Export settings", (*) => this.ExportSettings(), "primary")
+        this._exportBtn := Theme.Button(g, "x792 y300 w100 h30", "Show it", (*) => this._ExportShow(), "quiet")
+        this._ids["exportShow"] := this._exportBtn
+        this._SetHidden(this._exportBtn, true)
+        this._ids["import"] := Theme.Button(g, "x632 y342 w150 h30", "Import settings", (*) => this.ImportSettings())
+        this._ids["shareStatus"] := Theme.Label(g, "x632 y386 w364 h56", "", "muted")
+        Theme.Label(g, "x632 y560 w364 h40", "Exports go to the exports folder next to the macro.", "muted")
+        this._exportPath := ""
+    }
+
+    _ProfileBtn(name, *) => this.ApplyProfile(name)
+
+    ; Asks, applies profile `name`, saves and reloads the other pages.
+    ; -> the status text ("" when cancelled).
+    ApplyProfile(name) {
+        n := Profiles.Settings(name).Length
+        if (this._confirmProfile.Call("Use " name "?", Profiles.Description(name) "`n`nSets up to " n " switches and saves at once. "
+            . "Potion dry run, webhooks and links stay as they are. Unsaved edits on other tabs are dropped.") != true)
+            return ""
+        try {
+            changed := Profiles.Apply(this.cfg, name)
+            this.cfg.Save()
+        } catch Any as e {
+            msg := "Not applied: " UiLogic.Scrub(e.Message, this._Secrets())
+            Theme.SetText(this._ids["profileStatus"], msg)
+            return msg
+        }
+        this._ReloadOthers()
+        msg := "Applied: " name " (" changed.Length " setting" (changed.Length = 1 ? "" : "s") " changed)"
+        Theme.SetText(this._ids["profileStatus"], msg)
+        this.Log("Profiles: " msg)
+        this._Fire("saved", "Profiles")
+        return msg
+    }
+
+    ; Every page but Profiles shows the saved values again.
+    _ReloadOthers() {
+        for page in this._pages {
+            if (page.name != "Profiles")
+                this._LoadPage(page)
+        }
+        this._RefreshDry()
+    }
+
+    ; -> {ok, path, n, msg} (Profiles.Export)
+    ExportSettings() {
+        r := Profiles.Export(this.cfg)
+        this._exportPath := r.ok ? r.path : ""
+        this._SetHidden(this._exportBtn, !r.ok)
+        Theme.SetText(this._ids["shareStatus"], r.msg)
+        if r.ok
+            this.Log("Profiles: " r.n " settings exported")
+        return r
+    }
+
+    _ExportShow() {
+        if (this._exportPath != "" && FileExist(this._exportPath))
+            try Run('explorer.exe /select,"' this._exportPath '"')
+    }
+
+    _PickIni() {
+        start := DirExist(this.cfg.dir "\exports") ? this.cfg.dir "\exports" : this.cfg.dir
+        this._gui.Opt("+OwnDialogs")
+        f := ""
+        try f := FileSelect(1, start, "Import settings", "Settings (*.ini)")
+        return f
+    }
+
+    ; path "" = ask with FileSelect. -> {ok, n, skipped, msg} ("" when cancelled)
+    ImportSettings(path := "") {
+        if (path = "")
+            path := this._pickImport.Call()
+        if (path = "")
+            return ""
+        r := Profiles.Import(this.cfg, path)
+        if r.ok {
+            try {
+                this.cfg.Save()
+            } catch Any as e {
+                r := {ok: 0, n: 0, skipped: r.skipped, msg: "Not imported: " UiLogic.Scrub(e.Message, this._Secrets())}
+            }
+        }
+        if r.ok {
+            this._ReloadOthers()
+            this.Log("Profiles: " r.msg)
+            this._Fire("saved", "Profiles")
+        }
+        Theme.SetText(this._ids["shareStatus"], r.msg)
+        return r
     }
 
     ; ---- page: Log --------------------------------------------------------------

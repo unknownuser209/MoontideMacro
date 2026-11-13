@@ -27,7 +27,18 @@
 ;       <root>\update_tmp, needs Vesper.ahk in it, backs the replaced files up
 ;       to <root>\backup\<old version>\, copies the new ones over (user files
 ;       are NEVER touched, see Protected) and restarts. Any failure restores
-;       the backup and keeps the old version running.
+;       the backup and keeps the old version running. A good install also
+;       writes backup\<old version>\manifest.json (from, to, made, replaced,
+;       added) and data\whatsnew.json (version, tag, notes = the release text).
+;   u.LastBackup() -> Map(dir, from, to, replaced, added) of the newest backup
+;       whose manifest says it was made by the update to THIS version, or "".
+;   u.Rollback() -> Map(ok, msg). Refuses while the macro runs. Puts the
+;       replaced files back, deletes the files that update added (user files
+;       are never touched), removes that backup and restarts. Any failure puts
+;       the new version back as it was.
+;   Updater.TakeWhatsNew(root, version) -> Map(version, tag, notes) once after
+;       an update to that version, else ""; the file is deleted either way.
+;   Updater.NotesText(md) -> release notes as plain text (no **, #, backticks).
 ; No tokens, no personal data: one anonymous GET with a fixed User-Agent.
 ; ---------------------------------------------------------------------------
 
@@ -38,8 +49,10 @@ class Updater {
     static Protected := ["settings.ini", "data\calibration.json", "data\routes.json", "data\quests.json"
         , "data\merchants.json", "data\potions.json", "data\biomes.json", "data\auras_had.txt"
         , "data\potion_usage.json", "data\last_biome.txt", "data\minions_routes.json", "data\auras_learnt.json"
-        , "data\stats.json", "data\summary_last.txt", "data\schedule_state.txt"]
-    static ProtectedDirs := ["logs\", "backup\", "update_tmp\"]
+        , "data\stats.json", "data\summary_last.txt", "data\schedule_state.txt", "data\whatsnew.json"]
+    static WhatsNewFile := "data\whatsnew.json"
+    static NotesMax := 8000
+    static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\"]
 
     static ParseVersion(tag) {
         if !RegExMatch(Trim(String(tag)), "^[vV]?(\d{1,9})(?:\.(\d{1,9}))?(?:\.(\d{1,9}))?$", &m)
@@ -69,6 +82,9 @@ class Updater {
         }
         return false
     }
+
+    ; the no-install launcher (tools\make_release.ps1 adds it to the zip)
+    static IsLauncher(rel) => StrLower(StrReplace(rel, "/", "\")) = "moontidemacro.exe"
 
     static IsProtected(rel) {
         r := StrLower(StrReplace(rel, "/", "\"))
@@ -157,7 +173,8 @@ class Updater {
         if (url = "" && rel.Has("zipball_url"))
             url := String(rel["zipball_url"])
         v := Updater.ParseVersion(tag)
-        this.last := Map("status", "available", "tag", tag, "version", v[1] "." v[2] "." v[3], "url", url)
+        notes := (rel.Has("body") && rel["body"] is String) ? SubStr(rel["body"], 1, Updater.NotesMax) : ""
+        this.last := Map("status", "available", "tag", tag, "version", v[1] "." v[2] "." v[3], "url", url, "notes", notes)
         this.Log("Update available: " tag)
         return this.last
     }
@@ -192,7 +209,9 @@ class Updater {
                 throw Error("the download has no Vesper.ahk")
             rels := []
             for rel in Updater._List(src) {
-                if !Updater.IsProtected(rel)
+                ; MoontideMacro.exe (AutoHotkey itself) cannot be replaced while
+                ; it runs the macro: kept when there is one, added when not
+                if !Updater.IsProtected(rel) && !(Updater.IsLauncher(rel) && FileExist(this.root "\" rel))
                     rels.Push(rel)
             }
             backupDir := this._BackupDir()
@@ -216,9 +235,187 @@ class Updater {
             return this._Fail("Update failed, kept the old version: " (e is Error ? e.Message : String(e)))
         }
         try DirDelete(tmp, true)
+        this._WriteManifest(backupDir, info, done)
+        this._WriteWhatsNew(info)
         this.Log("Updated to " (info.Has("tag") ? info["tag"] : "new version") "; restarting")
         try this._restart.Call()
         return Map("ok", true, "msg", "updated")
+    }
+
+    ; backup\<old>\manifest.json: what "Go back" needs. A failure here only
+    ; costs the Go back button, never the update.
+    _WriteManifest(backupDir, info, done) {
+        replaced := [], added := []
+        for item in done
+            (item[2] ? replaced : added).Push(item[1])
+        to := info.Has("version") ? info["version"] : (info.Has("tag") ? RegExReplace(info["tag"], "^[vV]") : "")
+        m := Map("from", this.version, "to", to, "made", A_Now, "replaced", replaced, "added", added)
+        try Updater._WriteText(backupDir "\manifest.json", Json.Stringify(m))
+        catch Any as e
+            this.Log("Update: could not save the backup list (" (e is Error ? e.Message : String(e)) ")")
+    }
+
+    ; data\whatsnew.json: shown once by the new version after the restart.
+    _WriteWhatsNew(info) {
+        ver := info.Has("version") ? info["version"] : (info.Has("tag") ? RegExReplace(info["tag"], "^[vV]") : "")
+        m := Map("version", ver, "tag", info.Has("tag") ? info["tag"] : "", "notes", info.Has("notes") ? String(info["notes"]) : "")
+        try {
+            DirCreate(this.root "\data")
+            Updater._WriteText(this.root "\" Updater.WhatsNewFile, Json.Stringify(m))
+        }
+    }
+
+    static _WriteText(path, text) {
+        f := FileOpen(path, "w", "UTF-8-RAW")
+        if !IsObject(f)
+            throw Error("cannot write " RegExReplace(path, "^.*\\"))
+        f.Write(text)
+        f.Close()
+    }
+
+    ; -> Map(version, tag, notes) when data\whatsnew.json is for `version`,
+    ; else "". The file is deleted either way (shown once).
+    static TakeWhatsNew(root, version) {
+        path := RTrim(root, "\/") "\" Updater.WhatsNewFile
+        if !FileExist(path)
+            return ""
+        m := ""
+        try m := Json.Parse(FileRead(path, "UTF-8"))
+        try FileDelete(path)
+        if !(m is Map && m.Has("version") && Updater.Compare(m["version"], version) = 0)
+            return ""
+        return Map("version", String(m["version"]), "tag", m.Has("tag") ? String(m["tag"]) : ""
+            , "notes", m.Has("notes") && m["notes"] is String ? m["notes"] : "")
+    }
+
+    ; Release notes (GitHub markdown) as plain text for a read-only box:
+    ; headings lose their #, **bold** / `code` marks go, [text](link) keeps
+    ; the text, bullets stay (as "- "). CRLF line ends, at most NotesMax chars.
+    static NotesText(md) {
+        t := StrReplace(StrReplace(String(md), "`r`n", "`n"), "`r", "`n")
+        out := ""
+        blank := 0
+        for line in StrSplit(t, "`n") {
+            line := RTrim(line, " `t")
+            if RegExMatch(line, "^\s*([-*_])(\s*\1){2,}\s*$")      ; --- rule
+                line := ""
+            line := RegExReplace(line, "^\s{0,3}#{1,6}(\s+|$)", "")
+            line := RegExReplace(line, "^(\s*)[*+]\s+", "$1- ")
+            line := StrReplace(line, "**", "")
+            line := StrReplace(line, "``", "")
+            line := RegExReplace(line, "!?\[([^\]]*)\]\([^)]*\)", "$1")
+            if (Trim(line) = "") {
+                if (out = "" || ++blank > 1)
+                    continue
+                out .= "`r`n"
+                continue
+            }
+            blank := 0
+            out .= line "`r`n"
+        }
+        out := RTrim(out, "`r`n")
+        return StrLen(out) > Updater.NotesMax ? SubStr(out, 1, Updater.NotesMax) "..." : out
+    }
+
+    ; ---- go back to the last version ---------------------------------------------
+
+    ; Newest backup\<ver>\ with a manifest made by the update to this version.
+    LastBackup() {
+        best := "", bestMade := ""
+        loop Files, this.root "\backup\*", "D" {
+            mf := A_LoopFilePath "\manifest.json"
+            if !FileExist(mf)
+                continue
+            m := ""
+            try m := Json.Parse(FileRead(mf, "UTF-8"))
+            if !(m is Map && m.Has("from") && m.Has("to") && m.Has("replaced") && m.Has("added")
+                && m["replaced"] is Array && m["added"] is Array)
+                continue
+            if (Updater.Compare(m["to"], this.version) != 0 || Updater.ParseVersion(m["from"]) = "")
+                continue
+            made := m.Has("made") ? String(m["made"]) : ""
+            if (best = "" || StrCompare(made, bestMade) >= 0) {
+                best := Map("dir", A_LoopFilePath, "from", String(m["from"]), "to", String(m["to"])
+                    , "replaced", m["replaced"], "added", m["added"])
+                bestMade := made
+            }
+        }
+        return best
+    }
+
+    ; A manifest path we may touch: relative, inside root, not a user file.
+    static _SafeRel(rel) {
+        if !(rel is String) || rel = "" || InStr(rel, ":") || InStr(rel, "..") || RegExMatch(rel, "^[\\/]")
+            return false
+        return !Updater.IsProtected(rel)
+    }
+
+    Rollback() {
+        if !this._stopped.Call()
+            return this._Fail("Go back: stop the macro first")
+        b := this.LastBackup()
+        if !IsObject(b)
+            return this._Fail("Go back: no backup of the last version")
+        replaced := [], added := []
+        for rel in b["replaced"] {
+            if !Updater._SafeRel(rel)
+                continue
+            if !FileExist(b["dir"] "\" rel)
+                return this._Fail("Go back: the backup is missing " rel ", nothing changed")
+            replaced.Push(rel)
+        }
+        for rel in b["added"] {
+            if Updater._SafeRel(rel)
+                added.Push(rel)
+        }
+        ; keep the current files first, so a failure can put them back
+        undo := this.root "\update_tmp\undo"
+        kept := []            ; [rel, existedBefore]
+        try {
+            try DirDelete(this.root "\update_tmp", true)
+            DirCreate(undo)
+            for list in [replaced, added] {
+                for rel in list {
+                    dst := this.root "\" rel
+                    existed := FileExist(dst) ? true : false
+                    if existed {
+                        DirCreate(Updater._Dir(undo "\" rel))
+                        this._copy.Call(dst, undo "\" rel)
+                    }
+                    kept.Push([rel, existed])
+                }
+            }
+            for rel in replaced {
+                DirCreate(Updater._Dir(this.root "\" rel))
+                this._copy.Call(b["dir"] "\" rel, this.root "\" rel)
+            }
+            for rel in added {
+                if FileExist(this.root "\" rel)
+                    FileDelete(this.root "\" rel)
+            }
+        } catch Any as e {
+            this._Restore(undo, kept)
+            try DirDelete(this.root "\update_tmp", true)
+            return this._Fail("Go back failed, kept v" this.version ": " (e is Error ? e.Message : String(e)))
+        }
+        for rel in added
+            this._PruneDirs(Updater._Dir(this.root "\" rel))
+        try DirDelete(this.root "\update_tmp", true)
+        try DirDelete(b["dir"], true)
+        try FileDelete(this.root "\" Updater.WhatsNewFile)
+        this.Log("Went back to v" b["from"] "; restarting")
+        try this._restart.Call()
+        return Map("ok", true, "msg", "went back", "version", b["from"])
+    }
+
+    ; Remove folders an update added once they are empty (never root itself).
+    _PruneDirs(dir) {
+        while (StrLen(dir) > StrLen(this.root) && SubStr(dir, 1, StrLen(this.root) + 1) = this.root "\") {
+            try DirDelete(dir, false)
+            catch
+                return
+            dir := Updater._Dir(dir)
+        }
     }
 
     _Fail(msg) {

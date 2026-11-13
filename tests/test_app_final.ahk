@@ -641,3 +641,28 @@ Test_App_V17_RemoteStartWhilePausedSaysResumed() {
     AssertEq(h["start"].Call("", ""), "Resumed.", "resumed")
     t.app.Stop("test")
 }
+
+; idea 8 (2026-11-13): Home's NEXT UP names the soonest timed task
+Test_App_V17_NextUp() {
+    t := AppTestMake()
+    AssertEq(t.app.NextUp(), "", "stopped: nothing")
+    t.app.Start()
+    for k in ["quests", "obby", "memorymatch"]
+        if t.app._taskMap.Has(k)
+            t.app._taskMap.Delete(k)
+    t.app._taskMap["quests"] := {name: "quests"}
+    t.app.cfg.Set("quests.enabled", 1)
+    t.app.cfg.Set("Obby.enabled", 0)
+    t.app.cfg.Set("MemoryMatch.enabled", 0)
+    t.app.state.questIntervalMs := 30 * 60000
+    t.app.state.lastRun["quests"] := t.app.Now() - 18 * 60000
+    AssertEq(t.app.NextUp(), "Quests in 12 min", "minutes")
+    t.app.state.lastRun["quests"] := t.app.Now() - 31 * 60000
+    AssertEq(t.app.NextUp(), "Quests now", "due")
+    t.app.state.questIntervalMs := 150 * 60000
+    t.app.state.lastRun["quests"] := t.app.Now()
+    AssertEq(t.app.NextUp(), "Quests in 2h 30m", "hours")
+    t.app.cfg.Set("quests.enabled", 0)
+    AssertEq(t.app.NextUp(), "", "nothing on")
+    t.app.Stop("test")
+}

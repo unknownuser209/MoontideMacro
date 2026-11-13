@@ -6862,3 +6862,25 @@ Test_Minions_EquipFirstFindsEdenUnderTheSpecialTab() {
     AssertEq(m.s.State().eq, "Glock", "Glock back on after")
     AssertEq(QmObbyAuraReads(reads), 0, "no name / button read")
 }
+
+; speed (2026-11-13): with Input.FastReset every respawn (sell, craft,
+; Memory Match...) takes QuickReset's waits and syncs the respawn log first
+Test_Minions_FastResetForEveryRespawn() {
+    synced := 0
+    try {
+        Input.FastReset := true
+        Input.RespawnSyncFn := () => synced++
+        io := MnQuickIO()
+        Input.SettledFn := () => io.enterAt.Length && io.t - io.enterAt[1] >= 1700
+        AssertEq(Input.ResetToSpawn(SchedCtx(), io), true, "respawned")
+        AssertEq(io.enterAt[1], 700, "Enter as soon as the quick waits allow")
+        AssertEq(synced, 1, "the respawn log synced first")
+        AssertEq(io.Count("click@52,621") " " io.Count("click@525,158") " " io.collUp " " io.promptUp, "1 1 0 0", "opened, closed, nothing left up")
+        AssertEq(Input._quick, false, "quick waits not left on")
+        plain := MnQuickIO()
+        AssertEq(Input.ResetToSpawn(SchedCtx(), plain, true), true, "blind")
+    } finally {
+        Input.FastReset := false
+        Input.SettledFn := "", Input.RespawnSyncFn := ""
+    }
+}

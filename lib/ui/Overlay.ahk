@@ -112,7 +112,7 @@ class Overlay {
         if (key == this._key)
             return
         this._key := key
-        pl := (st = "Paused") ? "Resume" : "Pause"
+        pl := I18n.T((st = "Paused") ? "Resume" : "Pause")
         if (this._pauseBtn.Text != pl)
             this._pauseBtn.Text := pl
         switch st {
@@ -120,12 +120,12 @@ class Overlay {
             case "Paused": bg := Theme.PanelC, fg := Theme.Text
             default: bg := Theme.OffBg, fg := Theme.Muted
         }
-        pill := Chr(0x25CF) " " StrUpper(st)
+        pill := Chr(0x25CF) " " StrUpper(I18n.T(st))
         if (this._pill.Text != pill) {
             this._pill.Text := pill
             Theme.SetColors(this._pill, bg, fg)
         }
-        Theme.SetText(this._task, task = "" ? Chr(0x2014) : task)
+        Theme.SetText(this._task, task = "" ? Chr(0x2014) : I18n.T(task))
         b := biome = "" ? Chr(0x2014) : biome (rare ? "  " Chr(0x2726) : "")
         if (this._biome.Text != b) {
             this._biome.Text := b

@@ -348,7 +348,7 @@ class SellTask {
     static PopupRe := "i)re[ao]\s*[lI1|]*\s*y\b|w[ao]nt\s*t[o0]\s*sell|c[o0]nf[iIl1|]rm"
     ; The popup's Cancel button reads "Concel" in the game font (tests\screens).
     static CancelRe := "i)c[ao]nc[ae][lI1|]"
-    static ShopChecks :={pollMs: 150, openMs: 6000, settleMs: 300, popupMs: 3000, afterSellMs: 600
+    static ShopChecks :={pollMs: 150, openMs: 6000, settleMs: 150, popupMs: 3000, afterSellMs: 350
         , confirmTries: 3, cancel: [1492, 830], cancelBox: {dx: -150, dy: -35, w: 300, h: 70}
         , title: {x: 570, y: 325, w: 380, h: 70, words: ["fishing", "shop"]}
         , popup: {x: 970, y: 585, w: 640, h: 165, re: SellTask.PopupRe}}

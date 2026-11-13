@@ -43,6 +43,7 @@
 class FishingTask {
     name := "fishing"
     priority := 99
+    _cardGone := false          ; the last catch card was seen closing (no leftover check before the next cast)
 
     __New(cfg, state, deps := "") {
         this.cfg := cfg
@@ -217,6 +218,9 @@ class FishingTask {
     ; Checked besides failWords, so data\coords.json stays as shipped.
     static FailRe := "i)f[ao][il1|]{2}ed|g[o0]ne\b"     ; also "FoiIed" (l read as I)
     static CardScale := 2
+    ; the card's X takes a click only after the mouse has rested on it ~1 s
+    ; (live 2026-11-13: closePreMs 450 -> card 3.9 s, 700 + quick retries ->
+    ; 2.5 s; the measured 1100 stays: 2.1 s)
     static CloseTries := 3
     static CloseGoneMs := 1500
 
@@ -234,6 +238,7 @@ class FishingTask {
             return
         if !FishLogic.FocusOrWait(d, ctx, "fishing")
             return
+        this._cardGone := false             ; a new run: look for a leftover card once
         caught := 0
         Loop {
             if (ctx.ShouldStop() || this._SellDue())
@@ -270,8 +275,11 @@ class FishingTask {
         ; all = not at the fishing spot (snow-proof, unlike the old white
         ; pixel): re-path now. Button reads Exit = the line is already out:
         ; do not click (that would reel it in), just wait for the bite.
-        if (this._CloseLeftoverCard(ctx) < 0)
+        ; the last catch's card was seen closing (speed, 2026-11-13): no
+        ; second read of the whole card area before this cast
+        if (!this._cardGone && this._CloseLeftoverCard(ctx) < 0)
             return "stopped"
+        this._cardGone := false
         fb := this._WaitFishButton(ctx)
         if (fb < 0)
             return "stopped"
@@ -483,8 +491,10 @@ class FishingTask {
                 return 1
             waited := 0
             Loop {
-                if !this._CardUp()
+                if !this._CardUp() {
+                    this._cardGone := true
                     return 1
+                }
                 if (waited >= FishingTask.CloseGoneMs)
                     break
                 if !io.Wait(pollMs, ctx)

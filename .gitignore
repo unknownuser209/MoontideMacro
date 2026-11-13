@@ -20,8 +20,11 @@ update_tmp/
 data/*.bak
 clips_for_user/
 logs/
+exports/
 
 # v1.6 local state
 data/stats.json
 data/summary_last.txt
 data/schedule_state.txt
+MoontideMacro.exe
+video/

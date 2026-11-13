@@ -148,6 +148,10 @@ class ObbyTask {
     ; ("Sailor: tchman" at 2, "Sailor:" at 4)
     static NameScales := [2, 3, 1]
     static PickMs := 400           ; after clicking a tile, before its name is read
+    ; Speed (2026-11-13): this._tileHint = the tile each aura was last found
+    ; on, per tab ("sailor|1" -> 11). _FindTile checks it first: Sailor was
+    ; result 11 on all 52 logged swaps, ~25 s of tile reads every obby run.
+
     static LogPickEquips := 6      ; _LogPick: at most this many unread results equipped
     static ButtonBox := {dx: -150, dy: -35, w: 300, h: 70}
     ; "[ Information ]" lines under the name (2560x1440, live 2026-11-01:
@@ -183,6 +187,8 @@ class ObbyTask {
     logoOk := false              ; first result accepted when its name is an unreadable logo (_FindTile)
 
     __New(deps := "") {
+        this._tileHint := Map()
+        this._tabHint := Map()       ; aura -> the storage tab it was last found on (searched first)
         this._env := TaskEnv(deps)
         this._auraFn := TaskEnv.Dep(deps, "aura", "")
         if !IsObject(this._auraFn)
@@ -593,6 +599,13 @@ class ObbyTask {
         return {v: ObbyTask.NameVerdict(texts, aura), text: texts[1], all: all}
     }
 
+    ; Speed (2026-11-13): the search starts on the tab the aura was found on
+    ; last time (Eden: Special; the Regular pass before it cost ~4 s a swap).
+    _TabOffset(aura) {
+        t := this._tabHint.Has(StrLower(aura)) ? this._tabHint[StrLower(aura)] : 1
+        return t - 1
+    }
+
     ; Clicks the result tiles in turn until the selected aura's name is
     ; `aura` (it stays selected). -> its tile number | 0 none of the first
     ; ScanTiles | -1 stopped. first = the first tile's name (for the log).
@@ -607,10 +620,17 @@ class ObbyTask {
         this._tileReads := Map()
         seen := "", last := ""
         tabName := (this._tab = 2 ? "Special" : "Regular")
-        Loop ObbyTask.ScanTiles {
+        hintKey := StrLower(aura) "|" this._tab
+        hint := this._tileHint.Has(hintKey) ? this._tileHint[hintKey] : 0
+        order := []
+        if (hint > 1 && hint <= ObbyTask.ScanTiles && this._TileHere(ObbyTask.TileRect(c.aura_tile_rect, hint)))
+            order.Push(hint)                     ; where it was last time, first
+        Loop ObbyTask.ScanTiles
+            if !(order.Length && A_Index = hint)
+                order.Push(A_Index)
+        for k in order {
             if ctx.ShouldStop()
                 return -1
-            k := A_Index
             r := ObbyTask.TileRect(c.aura_tile_rect, k)
             if !this._TileHere(r) {
                 ; an empty slot: no more results on this tab (and never a
@@ -636,6 +656,8 @@ class ObbyTask {
             seen .= (seen = "" ? "" : ", ") k " '" SubStr(Trim(RegExReplace(text, "\s+", " ")), 1, 24) "'"
             if (rd.v = "same") {
                 env.Log("obby: " aura " is result " k " on the " tabName " tab (its name read)")
+                this._tileHint[hintKey] := k
+                this._tabHint[StrLower(aura)] := this._tab
                 return k
             }
             ; the name in the first read but no match: every scale's read, to
@@ -1187,7 +1209,7 @@ class ObbyTask {
             ; the storage has two tabs and searches only the open one: Eden
             ; is under Special (live 2026-10-31), Sailor under Regular. The
             ; tries take Regular, Special, Regular, ... in turn.
-            this._tab := Mod(A_Index - 1, ObbyTask.Tabs.Length) + 1
+            this._tab := Mod(A_Index - 1 + this._TabOffset(aura), ObbyTask.Tabs.Length) + 1
             tab := ObbyTask.Tabs[this._tab]
             if !this._Click({x: c.aura_search.x + tab.dx, y: c.aura_search.y + tab.dy}, ctx, c)
                 return -1
@@ -1321,7 +1343,7 @@ class ObbyTask {
         Loop ObbyTask.SearchTries {
             if (ctx.ShouldStop() || done)
                 break
-            this._tab := Mod(A_Index - 1, ObbyTask.Tabs.Length) + 1
+            this._tab := Mod(A_Index - 1 + this._TabOffset(aura), ObbyTask.Tabs.Length) + 1
             tab := ObbyTask.Tabs[this._tab]
             tabName := (this._tab = 2 ? "Special" : "Regular")
             if !this._Click({x: c.aura_search.x + tab.dx, y: c.aura_search.y + tab.dy}, ctx, c)
@@ -1464,6 +1486,7 @@ class ObbyTask {
                 return -1
             if (ObbyTask.SameAura(got, aura) || (got = "?" && ObbyTask.SameAura(before, aura))) {
                 this._set := {name: aura, at: env.Now()}
+                this._tabHint[StrLower(aura)] := this._tab
                 env.Log("obby: " aura " found by the log (its name did not read)")
                 return 1
             }

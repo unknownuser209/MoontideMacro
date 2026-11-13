@@ -7,7 +7,7 @@
 ;   Splash.Show(opts := "")  BLOCKS until it is over. opts is a Map; key
 ;                            "animations" = 0 shows it 600 ms with no fades.
 ;                            Tests only: "noshow" = 1 never shows the window,
-;                            "holdMs" overrides the 1000 ms hold, "hook" is
+;                            "holdMs" overrides the 500 ms hold, "hook" is
 ;                            called (g, clickControl) once built, before showing.
 ;                            Otherwise: fade in 300 ms, hold 1000 ms, fade out
 ;                            300 ms. A click skips it. App.Boot calls it before
@@ -29,7 +29,7 @@ class Splash {
     static Show(opts := "") {
         o := (opts is Map) ? opts : Map()
         fade := !(o.Has("animations") && o["animations"] = 0)
-        hold := o.Has("holdMs") ? o["holdMs"] : 1000
+        hold := o.Has("holdMs") ? o["holdMs"] : 500      ; speed (2026-11-13): was 1000 (startup waits on it)
         st := {skip: false, phase: false, click: ""}
         g := Splash._Build(st)
         try {
@@ -73,7 +73,7 @@ class Splash {
         if st.skip
             return
         st.phase := false
-        Anim.Tween(key, 300, (p) => Splash._Alpha(g, Round(255 * (out ? 1 - p : p))), () => st.phase := true, false)
+        Anim.Tween(key, 200, (p) => Splash._Alpha(g, Round(255 * (out ? 1 - p : p))), () => st.phase := true, false)
         t0 := A_TickCount
         while (!st.phase && !st.skip && A_TickCount - t0 < 600)      ; deadline: startup can never hang here
             Sleep(10)

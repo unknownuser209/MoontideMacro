@@ -51,7 +51,7 @@ class SetupWizard {
     Ctrl(id) => this._ids[id]
 
     _Build() {
-        g := Theme.Window(Brand.Name " setup", "-MinimizeBox -MaximizeBox")
+        g := Theme.Window(I18n.F("{1} setup", Brand.Name), "-MinimizeBox -MaximizeBox")
         this._gui := g
         g.OnEvent("Close", (*) => this.Skip())
         g.OnEvent("Escape", (*) => this.Skip())
@@ -128,11 +128,11 @@ class SetupWizard {
         for i, ctrls in this._pages
             for c in ctrls
                 c.Visible := (i = n)
-        Theme.SetText(this._ids["title"], SetupWizard.Titles[n])
-        Theme.SetText(this._ids["stepText"], "Step " n " of " SetupWizard.Steps)
+        Theme.SetText(this._ids["title"], n = 1 ? I18n.F("Welcome to {1}", Brand.Name) : I18n.T(SetupWizard.Titles[n]))
+        Theme.SetText(this._ids["stepText"], I18n.F("Step {1} of {2}", n, SetupWizard.Steps))
         this._ids["back"].Visible := (n > 1)
         this._ids["skipAll"].Visible := (n < SetupWizard.Steps)
-        Theme.SetText(this._ids["next"], n = SetupWizard.Steps ? "Finish" : n = 1 ? "Start" : "Next")
+        Theme.SetText(this._ids["next"], I18n.T(n = SetupWizard.Steps ? "Finish" : n = 1 ? "Start" : "Next"))
         this._Load(n)
     }
 
@@ -141,14 +141,15 @@ class SetupWizard {
             case 3:
                 cur := this.cfg.Get("General.privateServer", "")
                 this._ids["ps"].Value := ""
-                Theme.SetText(this._ids["psNow"], cur = "" ? "Now: not set (Next with an empty box skips this)" : "Now: " UiLogic.MaskSecret(cur) " (leave the box empty to keep it)")
+                Theme.SetText(this._ids["psNow"], cur = "" ? I18n.T("Now: not set (Next with an empty box skips this)") : I18n.F("Now: {1} (leave the box empty to keep it)", UiLogic.MaskSecret(cur)))
                 Theme.SetText(this._ids["psWhy"], "")
             case 4:
                 n := 0
                 for h in this.cfg.Webhooks()
                     n += (h.Has("url") && UiLogic.IsWebhookUrl(h["url"])) ? 1 : 0
                 this._ids["hook"].Value := ""
-                Theme.SetText(this._ids["hookNow"], n ? "Now: " n " webhook" (n = 1 ? "" : "s") " set (a new URL is added as another one)" : "Now: none (Next with an empty box skips this)")
+                Theme.SetText(this._ids["hookNow"], n ? I18n.F(n = 1 ? "Now: {1} webhook set (a new URL is added as another one)" : "Now: {1} webhooks set (a new URL is added as another one)", n)
+                    : I18n.T("Now: none (Next with an empty box skips this)"))
                 Theme.SetText(this._ids["hookWhy"], "")
             case 5:
                 for k in SetupWizard.RunKeys
@@ -195,7 +196,7 @@ class SetupWizard {
     }
 
     _Why(id, text) {
-        Theme.SetText(this._ids[id], text)
+        Theme.SetText(this._ids[id], I18n.T(text))
         return "bad"
     }
 
@@ -238,7 +239,7 @@ class SetupWizard {
     _Check() {
         out := this._ids["checkOut"]
         if !this._cb.Has("checkSetup") {
-            out.Value := "The check is not available here."
+            out.Value := I18n.T("The check is not available here.")
             return
         }
         res := ""
@@ -253,7 +254,7 @@ class SetupWizard {
                     text .= "       " r.fix "`r`n"
             }
         }
-        out.Value := (text = "") ? "Nothing to show." : text
+        out.Value := (text = "") ? I18n.T("Nothing to show.") : text
     }
 
     Show(owner := "") {

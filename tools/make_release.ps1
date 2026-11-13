@@ -16,7 +16,7 @@ $version = $Matches[1]
 # biomes): a fresh install needs them, and the updater never overwrites a
 # user's own copy (Updater.Protected).
 $exclude = @(
-    '^settings\.ini$', '^logs/', '^backup/', '^dist/', '^update_tmp/',
+    '^settings\.ini$', '^logs/', '^exports/', '^backup/', '^dist/', '^update_tmp/',
     '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/',
     '^\.gitattributes$', '^\.gitignore$',
     '^data/auras_had\.txt$', '^data/[^/]*state[^/]*\.json$',
@@ -54,6 +54,19 @@ try {
         # forward slashes inside the zip, files at the zip root (Vesper.ahk on top)
         [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
             $arc, (Join-Path $src $f), $f, [System.IO.Compression.CompressionLevel]::Optimal)
+    }
+    # MoontideMacro.exe: AutoHotkey v2 itself (signed by its authors), renamed
+    # so it runs MoontideMacro.ahk next to it: players install nothing. Its
+    # license ships beside it.
+    $ahk = Join-Path $env:ProgramFiles 'AutoHotkey\v2\AutoHotkey64.exe'
+    $lic = Join-Path $env:ProgramFiles 'AutoHotkey\license.txt'
+    if (-not (Test-Path $ahk)) { throw "AutoHotkey v2 not found at $ahk (needed for MoontideMacro.exe)" }
+    if ($files -notcontains 'MoontideMacro.ahk') { throw 'MoontideMacro.ahk is not tracked; refusing to build' }
+    [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $arc, $ahk, 'MoontideMacro.exe', [System.IO.Compression.CompressionLevel]::Optimal)
+    if (Test-Path $lic) {
+        [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $arc, $lic, 'AutoHotkey license.txt', [System.IO.Compression.CompressionLevel]::Optimal)
     }
 } finally {
     $arc.Dispose()
