@@ -325,3 +325,12 @@ Test_Screen_PanelModes16by10() {
         ScrnPtIs(Screen.Pt(2169, 1081), 1627, 811, "S at 16:9")
     ))
 }
+
+; The HDR self-check never throws and says one of three things (whatever this
+; PC's display is set to).
+Test_Screen_HdrCheckAnswers() {
+    h := Screen.HdrOn()
+    AssertTrue(h = 1 || h = 0 || h = "", "1, 0 or unknown (" h ")")
+    t := Screen.HdrText()
+    AssertTrue(t = "HDR on" || t = "HDR off" || t = "HDR unknown", t)
+}

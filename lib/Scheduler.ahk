@@ -120,11 +120,14 @@ class SchedState {
         this.ghost := false       ; App: the last join was not the private server (RecoveryTask rejoins)
         this.limboMode := false   ; App: Limbo.enabled (Sched.LimboModeOk only)
         this.stats := Map()       ; session counters for the stop summary (App resets on Start)
+        this.onBump := ""         ; App: (key, n) -> the day counters too (DailyStats)
     }
 
-    ; stats[key] += n
+    ; stats[key] += n (and onBump, when set)
     Bump(key, n := 1) {
         this.stats[key] := (this.stats.Has(key) ? this.stats[key] : 0) + n
+        if IsObject(this.onBump)
+            try this.onBump.Call(key, n)
     }
 }
 

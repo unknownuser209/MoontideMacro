@@ -4027,6 +4027,24 @@ Test_Minions_FightCameraRecipe() {
     AssertEq(io.locked, 0, "none with the lock on")
 }
 
+; a big aura (Equinox, Luminosity: Minions.bigAuras) fills the view: the
+; camera stays zoomed all the way out, no notches back in
+Test_Minions_FightCameraBigAuraStaysOut() {
+    for aura in ["Equinox", "Equinox : You Are An Idiot", "luminosity"] {
+        io := MnLockIO()
+        m := MnTask(, Map("Minions.aura", aura), , io)
+        m.t._lock := true
+        m.t._swap.wear := aura
+        AssertTrue(m.t._FightCamera(SchedCtx()), aura ": done")
+        n := Map()
+        for e in io.log
+            n[e] := n.Get(e, 0) + 1
+        AssertEq(n.Get("wheel down 1", 0) " " n.Get("wheel up 1", 0), "25 0", aura ": out to the end, none back in")
+    }
+    AssertTrue(!MinionsTask.IsBig("", "Eden"), "Eden is not big")
+    AssertTrue(!MinionsTask.IsBig("", ""), "no aura is not big")
+}
+
 Test_Minions_FightCameraNeedsShiftLock() {
     m := MnTask()
     m.t._lock := false

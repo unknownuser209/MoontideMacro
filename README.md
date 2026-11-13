@@ -88,6 +88,88 @@ The dashboard groups its pages into hubs in the sidebar, and a hub with
 several pages shows them as tabs. The **Animations** switch (Setup > Settings) turns
 all fades and motion off (the splash then just shows for a moment).
 
+**Themes** (Setup > Settings > Look): Moontide (navy and gold), Overdrive
+(red), Glitch (green), Dream (pink) and Cyber (blue). Each changes every colour
+and the background picture (Sol's RNG art). Press **Apply now** while the macro
+is stopped, or it shows at the next start.
+
+The sidebar hubs:
+
+- **Home**: Run (status, Start / Pause / Stop, potion dry run, updates) and
+  **Stats** (today, this run and the last 7 days).
+- **Automate**: Fishing, Crafting, Quests, Merchants, Biome items, Obby &
+  Memory, Limbo.
+- **Limited**: features that only exist during a game event. **Hunting**
+  (Halloween orbs, minions and the Graveyard boss) is here; Sol's RNG removes
+  it later in November and this tab goes with it.
+- **Alerts**: Biomes, Discord, Clips, **Daily summary**, **Remote**.
+- **Setup**: **Check & help**, Calibrate, Routes, **Schedule**, Settings,
+  Dev tools.
+
+## Setup wizard
+
+The first time you start the macro a short wizard opens: a check of your PC,
+your private server link, a Discord webhook and what to run. Every step can be
+skipped (Next with an empty box keeps what you had) and **Skip setup** closes
+it for good. Run it again any time from **Setup > Check & help**.
+
+## Check & help
+
+**Check now** looks at Roblox (open, size, fullscreen), Windows display scale
+and HDR, the Roblox logs, your private server link, your Discord webhooks,
+calibration and apps known to pull focus away from Roblox (Microsoft PC
+Manager's floating toolbar does this). It sends no input. `[!]` may cause
+trouble, `[X]` will not work, each with what to do.
+
+**Make support zip** writes `logs\support_<date>.zip`: your log, a few recent
+screenshots, this check and your settings with webhook links, server links,
+the bot token and your Windows user name taken out. Send that zip to whoever
+helps you.
+
+## Stats and the daily summary
+
+**Home > Stats** counts fish caught and missed, reel success, fish per hour,
+sell trips, biomes and rare biomes, rare auras rolled, rejoins and run time,
+for today, for this run and for the last 7 days (kept in `data\stats.json`).
+
+**Alerts > Daily summary**: once a day at the time you pick, one Discord
+message with that day's numbers. It goes to the webhooks that have **Stop**
+(start / stop messages) ticked. **Send one now** sends today's so far.
+
+## Run schedule
+
+**Setup > Schedule**: the macro starts by itself at the start time (it brings
+Roblox to the front first, like pressing F1) and stops at the stop time.
+Overnight windows such as 22:00 to 08:00 work; the same start and stop time
+means all day. If you stop it yourself inside the window it stays stopped until
+the next one. **Stop after** ends any run after that many hours (0 = no
+limit).
+
+## Discord remote control
+
+Control the macro from your phone with your own Discord bot (**Alerts >
+Remote**):
+
+1. https://discord.com/developers: **New Application**, then **Bot**: **Reset
+   Token** and paste the token into the macro. It is stored only in
+   `settings.ini`, never shown or logged.
+2. On the Bot page turn on **MESSAGE CONTENT INTENT**.
+3. **OAuth2 > URL Generator**: tick `bot`, then View Channels, Send Messages,
+   Attach Files and Read Message History. Open the link and add the bot to your
+   server.
+4. Discord **Settings > Advanced > Developer Mode** on. Right-click your channel:
+   **Copy Channel ID**. Right-click yourself: **Copy User ID**. Paste both.
+5. Save, then **Test connection**.
+
+Commands (only from the user ids you listed): `!status`, `!stats`,
+`!screenshot`, `!log`, `!start`, `!stop`, `!pause`, `!resume`, `!help`.
+
+## Roblox updates
+
+When Roblox updates while the macro runs, auto-rejoin waits for the Roblox
+launcher (or Bloxstrap / Fishstrap) to finish installing before it counts a
+failed join, and logs that Roblox is updating.
+
 ## First run checklist (in this order)
 
 ### 1. Settings
@@ -385,7 +467,8 @@ it was clipped.
 | You see | Do this |
 |---|---|
 | Paused: **Not fullscreen** | Make Roblox fullscreen (F11), press **F2**. |
-| Paused: **Roblox lost focus** | You alt-tabbed. Click into Roblox, press **F2**. |
+| Paused: **Roblox lost focus** | You alt-tabbed. Click into Roblox, press **F2**. The log says which app was in front; Microsoft PC Manager's toolbar takes focus by itself: close PC Manager or turn its toolbar off. |
+| Something does not work and you need help | **Setup > Check & help**: **Check now**, then **Make support zip** and send the zip. |
 | Paused: **Roblox not found** | Open Roblox. With a private server link set, it rejoins by itself. |
 | Paused: **Scheduler error** | Read the log line, fix the cause, press **F2**. |
 | Log: `quests: the board did not open` | Press **Test** next to quest_board (Setup > Routes). If it walks wrong, record the route again. |

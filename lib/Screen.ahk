@@ -233,6 +233,47 @@ class Screen {
         return r
     }
 
+    ; Windows HDR on any active display? -> 1 | 0 | "" (unknown). Diagnostic
+    ; only: with HDR on, screen captures of the game can come back in other
+    ; colours (a friend's PC, 2026-11-11: the reel's white border read 133).
+    ; QueryDisplayConfig + DisplayConfigGetDeviceInfo: Windows 11 24H2+
+    ; GET_ADVANCED_COLOR_INFO_2 (type 15, 36 bytes, activeColorMode 2 = HDR;
+    ; its older "advanced colour" bit is also set by colour management
+    ; without HDR), else GET_ADVANCED_COLOR_INFO (type 9, 32 bytes, bit 1).
+    ; Path info 72 bytes, mode info 64.
+    static HdrOn() {
+        try {
+            if DllCall("GetDisplayConfigBufferSizes", "UInt", 2, "UInt*", &np := 0, "UInt*", &nm := 0, "Int")
+                return ""
+            paths := Buffer(np * 72, 0), modes := Buffer(nm * 64, 0)
+            if DllCall("QueryDisplayConfig", "UInt", 2, "UInt*", &np, "Ptr", paths, "UInt*", &nm, "Ptr", modes, "Ptr", 0, "Int")
+                return ""
+            seen := false
+            Loop np {
+                p := paths.Ptr + (A_Index - 1) * 72
+                for t in [[15, 36], [9, 32]] {
+                    pk := Buffer(t[2], 0)
+                    NumPut("UInt", t[1], pk, 0), NumPut("UInt", t[2], pk, 4)
+                    NumPut("UInt", NumGet(p, 20, "UInt"), pk, 8), NumPut("Int", NumGet(p, 24, "Int"), pk, 12)
+                    NumPut("UInt", NumGet(p, 28, "UInt"), pk, 16)
+                    if DllCall("DisplayConfigGetDeviceInfo", "Ptr", pk, "Int")
+                        continue
+                    seen := true
+                    if (t[1] = 15 ? NumGet(pk, 32, "UInt") = 2 : NumGet(pk, 20, "UInt") & 2)
+                        return 1
+                    break
+                }
+            }
+            return seen ? 0 : ""
+        }
+        return ""
+    }
+
+    static HdrText() {
+        h := Screen.HdrOn()
+        return h = 1 ? "HDR on" : h = 0 ? "HDR off" : "HDR unknown"
+    }
+
     ; 0 unaware, 1 system, 2 per monitor, -1 unknown
     static Awareness() {
         try return DllCall("GetAwarenessFromDpiAwarenessContext", "Ptr", DllCall("GetThreadDpiAwarenessContext", "Ptr"), "Int")

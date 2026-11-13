@@ -71,10 +71,20 @@
 ;   If CanRun was not polled for GapMs (2 min: macro paused, or one long
 ;   task) the clock is restarted, so unpausing never causes a false reset.
 ;   Run() uses the state object most recently passed to CanRun.
+;
+;   ROBLOX UPDATE: a rejoin after a Roblox update starts the launcher /
+;   installer, which downloads the update before any game window exists. While
+;   no window is up and one of RecoveryTask.Launchers is running, the window
+;   wait keeps going (that time does not count toward WindowWaitMs: no failed
+;   rejoin, no second Run(link)), for at most UpdateMaxMs (10 min) in total;
+;   logged once as "Roblox is updating - waiting for it to finish". Dep
+;   procs(name) -> bool, a process with that name runs (default ProcessExist).
 ; ---------------------------------------------------------------------------
 
 class RecoveryTask {
     static WindowWaitMs := 90000
+    static UpdateMaxMs := 600000    ; most time a Roblox update may add to the window wait
+    static Launchers := ["RobloxPlayerInstaller.exe", "RobloxPlayerLauncher.exe", "Bloxstrap.exe", "Fishstrap.exe", "Voidstrap.exe"]
     static RetryMs := 60000         ; hold after a failed/refused rejoin
     static GapMs := 120000
     static PixelTol := 30
@@ -102,6 +112,9 @@ class RecoveryTask {
         this._focusFn := TaskEnv.Dep(deps, "focus", "")
         if !IsObject(this._focusFn)
             this._focusFn := () => Roblox.Focus()
+        this._procsFn := TaskEnv.Dep(deps, "procs", "")
+        if !IsObject(this._procsFn)
+            this._procsFn := (name) => ProcessExist(name) ? true : false
         this._closeFn := TaskEnv.Dep(deps, "close", "")
         if !IsObject(this._closeFn)
             this._closeFn := () => RecoveryTask._CloseRoblox()
@@ -351,6 +364,17 @@ class RecoveryTask {
         return ok
     }
 
+    ; A Roblox launcher / installer is running (the update is downloading).
+    _Updating() {
+        for name in RecoveryTask.Launchers {
+            running := false
+            try running := (this._procsFn)(name) ? true : false
+            if running
+                return true
+        }
+        return false
+    }
+
     ; ---- rejoin ---------------------------------------------------------------
 
     ; -> true when the window is back and the game was reset to spawn.
@@ -427,7 +451,21 @@ class RecoveryTask {
         }
 
         deadline := env.Now() + RecoveryTask.WindowWaitMs
+        lastTick := env.Now()
+        updMs := 0
+        updTold := false
         while !(this._hwndFn)() {
+            tick := env.Now()
+            if (updMs < RecoveryTask.UpdateMaxMs && this._Updating()) {
+                if !updTold {
+                    updTold := true
+                    env.Log("recovery: Roblox is updating - waiting for it to finish")
+                    Auras.Quiet(RecoveryTask.UpdateMaxMs)
+                }
+                updMs += tick - lastTick
+                deadline += tick - lastTick      ; update time is not a failed wait
+            }
+            lastTick := tick
             if (env.Now() >= deadline) {
                 this._holdUntil := env.Now() + RecoveryTask.RetryMs
                 env.Log("recovery: Roblox window did not appear in 90 s")
@@ -463,6 +501,8 @@ class RecoveryTask {
         this._limitTold := false
         Auras.Quiet(Auras.JoinQuietMs)
         env.Log("recovery: rejoined")
+        if (IsObject(this._state) && HasMethod(this._state, "Bump"))
+            this._state.Bump("rejoins")         ; Stats / daily summary
         if !this._leaving
             env.Report("errors", "Recovery: rejoined", "Roblox window is back, reset to spawn", 0xF2A93B)
         return true

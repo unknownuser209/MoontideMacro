@@ -381,6 +381,25 @@ class MinionsTask {
     static CamLookGapMs := 16
     static CamZoomOut := 25
     static CamZoomIn := 5
+    ; Big auras (Minions.bigAuras, default BigAuras) fill the view at the
+    ; usual zoom: the camera stays zoomed all the way out (no notches back
+    ; in). The user, 2026-11-11: a friend's Equinox / Luminosity hunts.
+    static BigAuras := "Equinox,Luminosity"
+    static BigZoomIn := 0
+    static IsBig(cfg, aura) {
+        list := MinionsTask.BigAuras
+        if IsObject(cfg)
+            try list := cfg.Get("Minions.bigAuras", MinionsTask.BigAuras)
+        a := GameLists.Fold(Trim(String(aura)))
+        if (a = "")
+            return false
+        for name in StrSplit(String(list), ",") {
+            n := GameLists.Fold(Trim(name))
+            if (n != "" && (a = n || InStr(a, n) = 1))      ; "Equinox : You Are An Idiot" too
+                return true
+        }
+        return false
+    }
     ; The user, L52: orbs found, every skill from long range, nothing hit. L52
     ; 09:51:30-09:52:05: 14 casts "beside" a 160-184 px orb, the minions at 1.00;
     ; the frame where E landed has the orb bar near 230 px, minions either side
@@ -1139,7 +1158,8 @@ class MinionsTask {
         }
         if !env.Wait(200, ctx)
             return false
-        Loop MinionsTask.CamZoomIn {
+        zoomIn := MinionsTask.IsBig(env.cfg, IsObject(this._swap) ? this._swap.wear : "") ? MinionsTask.BigZoomIn : MinionsTask.CamZoomIn
+        Loop zoomIn {
             io.Wheel("up", 1, 0)
             if !env.Wait(60, ctx)
                 return false

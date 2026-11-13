@@ -64,6 +64,7 @@
 #Include test_screen.ahk
 #Include test_resample.ahk
 #Include test_presets.ahk
+#Include test_stats.ahk
 
 Main()
 
@@ -106,3 +107,6 @@ DiscoverTests() {
 Out(line) {
     FileAppend(line "`n", "*")
 }
+#Include test_remote.ahk
+#Include test_setupcheck.ahk
+#Include test_logbundle.ahk

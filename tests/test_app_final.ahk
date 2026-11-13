@@ -473,3 +473,113 @@ Test_App_ObbyIntervalFromSettings() {
     t.app.Start()
     AssertEq(t.app.state.obbyIntervalMs, 1200000, "Start applies it too")
 }
+
+; ---- v1.6 services (lib\Stats.ahk, Schedule.ahk, DailySummary.ahk, Remote.ahk)
+
+class AfFakeSched {
+    __New() {
+        this.acts := []
+        this.notes := []
+    }
+    Tick(now, running, runMs) => this.acts.Length ? this.acts.RemoveAt(1) : ""
+    NoteStart(bySchedule) => this.notes.Push("start:" (bySchedule ? 1 : 0))
+    NoteStop() => this.notes.Push("stop")
+}
+
+Test_App_V16_DayCountersFollowBumpsAndRuns() {
+    dir := A_Temp "\vesper_v16_" A_TickCount
+    DirCreate(dir)
+    try {
+        t := AppTestMake()
+        daily := DailyStats(dir "\stats.json")
+        t.app.daily := daily
+        t.app.state.onBump := ObjBindMethod(t.app, "_DailyAdd")
+        t.app.Start()
+        t.app.state.Bump("fishCaught", 2)
+        t.app.state.Bump("rejoins")
+        AssertEq(daily.Day()["fishCaught"], 2, "fish counted for today")
+        AssertEq(daily.Session()["rejoins"], 1, "rejoin counted for this run")
+        AssertEq(t.app.state.stats["fishCaught"], 2, "session stats as before")
+        t.app.Stop("test")
+        AssertTrue(FileExist(dir "\stats.json"), "saved on stop")
+    } finally
+        try DirDelete(dir, true)
+}
+
+Test_App_V16_ScheduleStartsAndStops() {
+    t := AppTestMake()
+    s := AfFakeSched()
+    t.app.sched := s
+    s.acts.Push("start")
+    t.app._ScheduleTick()
+    AssertTrue(t.app._started, "started by the schedule")
+    AssertTrue(t.rb.focusCalls >= 1, "Roblox brought to the front first")
+    AssertEq(s.notes[1], "start:1", "noted as a schedule start")
+    s.acts.Push("stop")
+    t.app._ScheduleTick()
+    AssertTrue(!t.app._started, "stopped by the schedule")
+    AssertEq(s.notes[2], "stop", "stop noted")
+    t.app.Start()
+    AssertEq(s.notes[3], "start:0", "a manual start is not the schedule's")
+    t.app.Stop("test")
+}
+
+Test_App_V16_SummaryNeedsAStopWebhook() {
+    t := AppTestMake()
+    t.app.daily := DailyStats(A_Temp "\vesper_v16_none_" A_TickCount ".json")
+    t.wh.Route := (self, ev) => []
+    AssertTrue(InStr(t.app.SendSummary(), "no webhook has Stop ticked"), "says why")
+    AssertEq(t.wh.sent.Length, 0, "nothing sent")
+    t.wh.Route := (self, ev) => [Map("url", "x")]
+    AssertEq(t.app.SendSummary(), "Sent to 1 webhook", "sent")
+    AssertEq(t.wh.sent[t.wh.sent.Length], "startstop", "on the start / stop webhooks")
+}
+
+Test_App_V16_RemoteCommands() {
+    t := AppTestMake()
+    h := t.app._RemoteHandlers()
+    AssertTrue(InStr(h["status"].Call("", ""), "Stopped"), "status while stopped")
+    AssertEq(h["start"].Call("", ""), "Started.", "start")
+    AssertTrue(t.app._started, "running")
+    AssertEq(h["start"].Call("", ""), "Already running.", "start twice")
+    AssertTrue(InStr(h["status"].Call("", ""), "Running"), "status while running")
+    AssertEq(h["pause"].Call("", ""), "Paused.", "pause")
+    AssertEq(h["stop"].Call("", ""), "Stopped.", "stop")
+    AssertEq(h["stop"].Call("", ""), "It was not running.", "stop twice")
+    for k in ["status", "stats", "start", "stop", "pause", "resume", "screenshot", "log"]
+        AssertTrue(h.Has(k), "handler " k)
+}
+
+Test_App_V16_FocusPauseNamesTheApp() {
+    AssertEq(App.FrontNote(() => "MSPCManager.exe"), " In front: MSPCManager.exe. Microsoft PC Manager's toolbar takes focus: close PC Manager or turn its toolbar off.", "PC Manager named with a hint")
+    AssertEq(App.FrontNote(() => "notepad.exe"), " In front: notepad.exe.", "other apps: the name only")
+    AssertEq(App.FrontNote(() => ""), "", "unknown: nothing")
+}
+
+; PC Manager's toolbar took the focus after every F1: Roblox is put back in
+; front (no pause), at most 3 times a minute; other apps still pause.
+Test_App_V16_FocusThiefRefocused() {
+    t := AppTestMake()
+    t.app._frontFn := () => "MSPCManager.exe"
+    t.app.Start()
+    t.app.Tick()                                   ; fishing starts (the start focuses Roblox itself)
+    Loop 3 {
+        t.rb.activeOk := false
+        t.app.Tick()
+        AssertTrue(!t.app.ctx.IsPaused(), "refocus " A_Index ": not paused")
+        AssertTrue(t.rb.activeOk, "refocus " A_Index ": Roblox in front again")
+    }
+    AssertEq(t.app._refocusAt.Length, 3, "three refocuses")
+    t.rb.activeOk := false
+    t.app.Tick()
+    AssertTrue(t.app.ctx.IsPaused(), "the fourth in a minute pauses")
+    t.app.Stop("test")
+    t2 := AppTestMake()
+    t2.app._frontFn := () => "notepad.exe"
+    t2.app.Start()
+    t2.app.Tick()
+    t2.rb.activeOk := false
+    t2.app.Tick()
+    AssertTrue(t2.app.ctx.IsPaused(), "another app: paused as before")
+    t2.app.Stop("test")
+}

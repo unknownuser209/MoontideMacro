@@ -153,6 +153,7 @@ class Config {
         mn["putBack"] := "0"          ; 1 = the aura from before back after the hunt
         mn["shiftLock"] := "1"        ; 1 = shift lock on in fights (Roblox's Shift Lock Switch setting on)
         mn["boss"] := "1"             ; 1 = look for (and fight) the boss once per GRAVEYARD start
+        mn["bigAuras"] := "Equinox,Luminosity"   ; big auras: the fight camera stays zoomed all the way out (and a warning)
         d["Minions"] := mn
         ; Aura swaps (ObbyTask's storage swap: Sailor for the obby, the
         ; Minions combat aura, putting the aura from before back).
@@ -179,7 +180,30 @@ class Config {
         ; UI (lib/ui/Anim.ahk): animations.
         u := Config._CIMap()
         u["animations"] := "1"        ; 0 = no UI animations
+        u["setupDone"] := "0"         ; 1 = the first-run setup wizard was finished or skipped
+        u["theme"] := "Moontide"      ; colour theme (Theme.Names): Moontide, Overdrive, Glitch, Dream, Cyber
         d["UI"] := u
+        ; Run schedule (lib/Schedule.ahk): start / stop by the clock, stop after N hours.
+        sc := Config._CIMap()
+        sc["enabled"] := "0"
+        sc["start"] := "22:00"        ; HH:mm, local time
+        sc["end"] := "08:00"          ; HH:mm; start = end means all day
+        sc["maxHours"] := "0"         ; stop after this many hours of running (0 = no limit)
+        d["Schedule"] := sc
+        ; Daily Discord summary (lib/DailySummary.ahk), to the webhooks with Start/Stop on.
+        su := Config._CIMap()
+        su["enabled"] := "0"
+        su["time"] := "23:55"         ; HH:mm, local time
+        d["Summary"] := su
+        ; Discord remote control (lib/Remote.ahk): a bot polls one channel.
+        rm := Config._CIMap()
+        rm["enabled"] := "0"
+        rm["token"] := ""             ; SECRET: the bot token, never shown or logged
+        rm["channel"] := ""           ; channel id the bot reads
+        rm["users"] := ""             ; comma list of Discord user ids allowed to command
+        rm["prefix"] := "!"
+        rm["pollSec"] := "5"
+        d["Remote"] := rm
         ; Auto-updater (lib/Updater.ahk). repo empty = no update checks at all.
         up := Config._CIMap()
         up["repo"] := "unknownuser209/MoontideMacro"   ; GitHub owner/name whose Releases to follow ("" = never check)

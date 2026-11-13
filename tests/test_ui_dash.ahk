@@ -8,6 +8,7 @@
 #Include ..\lib\ui\Dashboard.ahk
 #Include ..\lib\ui\Overlay.ahk
 #Include ..\lib\tasks\Craft.ahk
+#Include ..\lib\ui\Wizard.ahk
 
 UiDashTmp() {
     d := A_Temp "\vesper_uidash_" A_TickCount "_" Random(100000, 999999)
@@ -515,11 +516,11 @@ UiDashPos(c) {
 }
 
 Test_Hubs_EveryPageReachable() {
-    AssertEq(Dashboard.Hubs.Length, 6, "six hubs")
+    AssertEq(Dashboard.Hubs.Length, 7, "seven hubs")
     names := []
     for h in Dashboard.Hubs
         names.Push(h.name)
-    AssertEq(UiLogic.ArrayToCsv(names), "Home,Automate,Alerts,Setup,Log,About", "hub names in order")
+    AssertEq(UiLogic.ArrayToCsv(names), "Home,Automate,Limited,Alerts,Setup,Log,About", "hub names in order")
     for name in Dashboard.Pages {
         n := 0, at := 0
         for i, h in Dashboard.Hubs
@@ -538,8 +539,14 @@ Test_Hubs_EveryPageReachable() {
     AssertEq(Dashboard.Hubs[2].pages[7], "Limbo", "Limbo is the last Automate tab")
     AssertEq(Dashboard.Hubs[2].pages[6], "Obby & Memory", "Obby & Memory follows Biome items")
     AssertEq(Dashboard.Hubs[2].pages[5], "Biome items", "Biome items before Obby & Memory")
-    AssertEq(Dashboard.Hubs[3].pages[3], "Clips", "Clips is an Alerts tab")
-    AssertEq(Dashboard.Hubs[4].pages[4], "Dev tools", "Dev tools is the last Setup tab")
+    AssertEq(Dashboard.Hubs[4].pages[3], "Clips", "Clips is an Alerts tab")
+    AssertEq(Dashboard.Hubs[5].pages[6], "Dev tools", "Dev tools is the last Setup tab")
+    ; v1.6: Stats on Home, the Limited hub (Hunting), summary + remote under
+    ; Alerts, Check & help first under Setup, Schedule before Settings
+    AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[1].pages), "Run,Stats", "Home tabs")
+    AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[3].pages), "Hunting", "Limited holds Hunting")
+    AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[4].pages), "Biomes & Potions,Webhooks,Clips,Summary,Remote", "Alerts tabs")
+    AssertEq(UiLogic.ArrayToCsv(Dashboard.Hubs[5].pages), "Check,Calibrate,Tools,Schedule,Settings,Dev tools", "Setup tabs")
 }
 
 Test_Hubs_TabLabels() {
@@ -586,10 +593,10 @@ Test_Hubs_SelectHubAndTab() {
         AssertEq(d.ActivePage, "Merchants", "Automate reopens on its last tab")
         ; SelectPage of a page in another hub moves the hub too
         d.SelectPage(UiDashPageIdx("Clips"))
-        AssertEq(d.ActiveHub, 3, "Clips -> Alerts hub")
+        AssertEq(d.ActiveHub, 4, "Clips -> Alerts hub")
         AssertTrue(d.Ctrl("Medal.clipHotkey").Visible, "Clips controls shown")
         d.SelectPage(Dashboard.LogPage)
-        AssertEq(d.ActiveHub, 5, "Log hub")
+        AssertEq(d.ActiveHub, 6, "Log hub")
     } finally {
         UiDashClose(d)
         try DirDelete(dir, true)
@@ -1306,7 +1313,7 @@ Test_ObbyMemory_Page() {
         AssertEq(d.PageOf(d.Ctrl("Obby.intervalMin")), "Obby & Memory", "interval on the page")
         AssertEq(d.PageOf(d.Ctrl("Obby.retries")), "Obby & Memory", "retries on the page")
         AssertEq(d.PageOf(d.Ctrl("MemoryMatch.enabled")), "Obby & Memory", "Memory Match switch on the page")
-        AssertEq(d.PageOf(d.Ctrl("Minions.normal")), "Obby & Memory", "NORMAL hunt switch on the page")
+        AssertEq(d.PageOf(d.Ctrl("Minions.normal")), "Hunting", "NORMAL hunt switch on Limited > Hunting")
         AssertEq(d.Ctrl("Minions.normal").Value, 0, "NORMAL not hunted by default")
         AssertEq(d.PageOf(d.Ctrl("Auras.equipFirst")), "Obby & Memory", "equip-first switch on the page")
         AssertEq(d.Ctrl("Auras.equipFirst").Value, 0, "equip first off by default")
@@ -1344,6 +1351,38 @@ Test_ObbyMemory_Page() {
 
 ; 2026-11-11 (the owner's ask): Minion hunting and Memory Match are still
 ; buggy; turning either on warns first, and "Keep off" leaves it off
+; 2026-11-11: a friend's Equinox hunts failed. A big combat aura asks first
+; (once per name); "Change it" puts the saved aura back
+Test_Dashboard_BigAuraWarns() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg, Map())
+        e := d.Ctrl("Minions.aura")
+        asked := []
+        d._confirmBig := (title, text) => (asked.Push(text), false)
+        e.Value := "Eden"
+        d._BigAuraCheck(e)
+        AssertEq(asked.Length, 0, "Eden: no warning")
+        e.Value := "Equinox"
+        d._BigAuraCheck(e)
+        AssertEq(asked.Length, 1, "Equinox: warned")
+        AssertTrue(InStr(asked[1], "fail much more often"), "says it fails more")
+        AssertEq(e.Value, "Eden", "Change it: the saved aura back")
+        d._confirmBig := (title, text) => (asked.Push(text), true)
+        e.Value := "Luminosity"
+        d._BigAuraCheck(e)
+        AssertEq(e.Value, "Luminosity", "Use it: kept")
+        d._BigAuraCheck(e)
+        AssertEq(asked.Length, 2, "asked once per name")
+        AssertTrue(MinionsTask.IsBig("", "Equinox : You Are An Idiot"), "the event Equinox too")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
 Test_Dashboard_BuggyPartsWarnBeforeTheyGoOn() {
     dir := UiDashTmp()
     d := ""
@@ -1369,6 +1408,170 @@ Test_Dashboard_BuggyPartsWarnBeforeTheyGoOn() {
         AssertEq(asked.Length, 2, "turning off never asks")
         AssertEq(sw.Value, 0, "off")
     } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; ---- v1.6 pages: Stats, Hunting, Daily summary, Remote, Check & help, Schedule
+
+Test_Dashboard_V16Pages() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        calls := []
+        cb := Map("checkSetup", () => (calls.Push("check"), [{level: "ok", name: "Roblox open", detail: "1920x1080 fullscreen", fix: ""}
+                , {level: "warn", name: "Focus", detail: "PC Manager is running", fix: "Close it"}, {level: "fail", name: "Private server", detail: "not set", fix: "Paste your link"}])
+            , "logBundle", () => (calls.Push("zip"), {ok: 1, path: dir "\logs\support_1.zip", msg: ""})
+            , "sendSummary", () => "Sent to 1 webhook"
+            , "testRemote", () => "Connected as Bot")
+        d := Dashboard(cfg, cb)
+        ; Check & help
+        d._CheckNow()
+        out := d.Ctrl("checkOut").Value
+        AssertTrue(InStr(out, "[OK]  Roblox open: 1920x1080 fullscreen") && InStr(out, "[!]  Focus") && InStr(out, "[X]  Private server"), "check lines tagged")
+        AssertTrue(InStr(out, "Close it") && InStr(out, "Paste your link"), "fixes shown for problems")
+        AssertEq(d.Ctrl("checkSummary").Text, "1 ok, 1 warning, 1 problem", "summary line")
+        d._LogZip()
+        AssertTrue(InStr(d.Ctrl("zipStatus").Text, "support_1.zip"), "zip name shown")
+        ; Daily summary: time checked
+        d.Ctrl("Summary.time").Value := "25:00"
+        AssertEq(d.SavePage("Summary"), false, "25:00 refused")
+        d.Ctrl("Summary.time").Value := "7:30"
+        AssertTrue(d.SavePage("Summary"), "7:30 saved")
+        d._SummaryNow()
+        AssertEq(d.Ctrl("summaryStatus").Text, "Sent to 1 webhook", "send now reports")
+        ; Schedule
+        d.Ctrl("Schedule.start").Value := "nope"
+        AssertEq(d.SavePage("Schedule"), false, "bad start refused")
+        d.Ctrl("Schedule.start").Value := "21:00"
+        d.Ctrl("Schedule.maxHours").Value := "49"
+        AssertEq(d.SavePage("Schedule"), false, "49 h refused")
+        d.Ctrl("Schedule.maxHours").Value := "6"
+        AssertTrue(d.SavePage("Schedule"), "schedule saved")
+        AssertEq(Config.Load(dir).Get("Schedule.start", ""), "21:00", "start written")
+        ; Remote: ids checked, token secret
+        d.Ctrl("Remote.enabled").Value := 1
+        d.Ctrl("Remote.channel").Value := "123456789012345678"
+        d.Ctrl("Remote.users").Value := "234567890123456789"
+        AssertEq(d.SavePage("Remote"), false, "on without a token refused")
+        tok := "MTIzNDU2Nzg5.FAKE.TOKENtokenTOKEN1234"
+        d.Ctrl("remoteToken").Value := tok
+        d.Ctrl("Remote.users").Value := "abc"
+        AssertEq(d.SavePage("Remote"), false, "user id not a number refused")
+        d.Ctrl("Remote.users").Value := "234567890123456789, 345678901234567890"
+        AssertTrue(d.SavePage("Remote"), "remote saved")
+        AssertEq(Config.Load(dir).Get("Remote.token", ""), tok, "token stored")
+        AssertEq(d.Ctrl("remoteToken").Value, "", "token field emptied")
+        AssertTrue(!InStr(d.Ctrl("remoteTokenMask").Text, "TOKENtoken"), "token masked")
+        d.Log("leak " tok)
+        AssertTrue(!InStr(d.LogText(), tok), "token scrubbed from the log")
+        ; Stats
+        day := Map("fishCaught", 42, "fishFailed", 8, "reelRate", 84, "fishPerHour", 12.25, "uptimeText", "3h 26m")
+        d.SetStatsPage(day, Map(), [{label: "12 Nov", m: day}])
+        AssertEq(d.Ctrl("stats:day:fishCaught").Text, "42", "fish today")
+        AssertEq(d.Ctrl("stats:day:reelRate").Text, "84%", "reel rate")
+        AssertEq(d.Ctrl("stats:day:fishPerHour").Text, "12.3", "fish per hour")
+        AssertEq(d.Ctrl("stats:run:reelRate").Text, "-", "no tries yet")
+        AssertEq(d.Ctrl("stats:run:uptimeText").Text, "0m", "no uptime yet")
+        AssertEq(d.Ctrl("stats:history").GetCount(), 1, "one history row")
+        ; Hunting moved to the Limited hub
+        AssertEq(d.PageOf(d.Ctrl("Minions.enabled")), "Hunting", "hunting switch on Hunting")
+        d.Ctrl("Minions.maxSec").Value := "30"
+        AssertEq(d.SavePage("Hunting"), false, "30 s refused")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; ---- setup wizard (lib\ui\Wizard.ahk) ---------------------------------------
+
+Test_Wizard_StepsSaveAndSkip() {
+    dir := UiDashTmp()
+    dir2 := ""
+    w := "", w2 := ""
+    try {
+        cfg := Config.Load(dir)
+        AssertTrue(SetupWizard.ShouldShow(cfg), "shown on a new install")
+        done := []
+        w := SetupWizard(cfg, Map("checkSetup", () => [{level: "warn", name: "Focus", detail: "PC Manager", fix: "Close it"}], "done", (f) => done.Push(f)))
+        AssertEq(w.Step, 1, "starts on Welcome")
+        w.Next()
+        w._Check()
+        AssertTrue(InStr(w.Ctrl("checkOut").Value, "[!]  Focus: PC Manager"), "check shown")
+        w.Next()
+        AssertEq(w.Step, 3, "private server page")
+        w.Ctrl("ps").Value := "not a link"
+        AssertEq(w.Next(), false, "a non-Roblox link stays on the page")
+        link := "https://www.roblox.com/share?code=WIZCODE123&type=Server"
+        w.Ctrl("ps").Value := link
+        AssertTrue(w.Next(), "a Roblox link moves on")
+        AssertEq(Config.Load(dir).Get("General.privateServer", ""), link, "link saved")
+        w.Ctrl("hook").Value := "https://example.com/hook"
+        AssertEq(w.Next(), false, "not a webhook URL")
+        w.Ctrl("hook").Value := ""
+        AssertTrue(w.Next(), "empty webhook skips")
+        AssertEq(Config.Load(dir).Webhooks().Length, cfg.Webhooks().Length, "no webhook added")
+        w.Ctrl("run:MemoryMatch.enabled").Value := 1
+        w.Ctrl("run:Quests.enabled").Value := 0
+        w.Next()
+        c2 := Config.Load(dir)
+        AssertEq(c2.Get("MemoryMatch.enabled", 0), 1, "memory match on")
+        AssertEq(c2.Get("Quests.enabled", 1), 0, "quests off")
+        AssertEq(w.Step, 6, "done page")
+        w.Next()
+        AssertEq(done.Length, 1, "done called once")
+        AssertEq(done[1], 1, "finished")
+        AssertTrue(!SetupWizard.ShouldShow(Config.Load(dir)), "not shown again")
+        w := ""
+        ; Skip setup on page 1: nothing else changes, never shown again
+        dir2 := UiDashTmp()
+        c3 := Config.Load(dir2)
+        w2 := SetupWizard(c3, Map("done", (f) => done.Push(f)))
+        w2.Skip()
+        AssertEq(done[2], 0, "skipped")
+        AssertEq(Config.Load(dir2).Get("UI.setupDone", 0), 1, "skip remembered")
+        AssertEq(Config.Load(dir2).Get("General.privateServer", ""), "", "nothing else written")
+        w2 := ""
+    } finally {
+        try w.Destroy()
+        try w2.Destroy()
+        try DirDelete(dir, true)
+        if (dir2 != "")
+            try DirDelete(dir2, true)
+    }
+}
+
+; ---- colour themes (Theme.Use, Settings > Look) --------------------------------
+
+Test_Theme_PresetsAndPicker() {
+    root := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "")
+    dir := UiDashTmp()
+    d := ""
+    try {
+        for n in Theme.Names {
+            p := Theme.Presets[n]
+            for k in Theme.ThemeKeys
+                AssertTrue(p.HasProp(k), n " has " k)
+            AssertTrue(FileExist(root "\assets\" p.BgImage) != "", n " background exists")
+            AssertTrue(FileGetSize(root "\assets\" p.BgImage) < 300 * 1024, n " background under 300 KB")
+        }
+        AssertEq(Theme.Use("overdrive"), "Overdrive", "any case")
+        AssertEq(Theme.Accent, "FF4D57", "red accent")
+        AssertEq(Theme.BgImage, "themes\overdrive.png", "red background")
+        AssertEq(Theme.Use("nope"), "Moontide", "unknown -> Moontide")
+        AssertEq(Theme.Accent, "F2A93B", "gold again")
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        AssertEq(d.Ctrl("UI.theme").Text, "Moontide", "picker shows the saved theme")
+        d.Ctrl("UI.theme").Choose("Cyber")
+        AssertTrue(d.SavePage("Settings"), "saved")
+        AssertEq(Config.Load(dir).Get("UI.theme", ""), "Cyber", "theme written")
+        AssertTrue(InStr(d.Ctrl("themeNote").Text, "Cyber shows after Apply now"), "says when it shows")
+    } finally {
+        Theme.Use("Moontide")
         UiDashClose(d)
         try DirDelete(dir, true)
     }

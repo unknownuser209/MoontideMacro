@@ -85,11 +85,16 @@ class FishingTask {
     ; client rect); the whole coords Map with it for FishLogic.Settings.
     _Fc() {
         fc := this._coords["fishing"]
-        if Screen.IsIdentity()
+        dy := FishingTask.ReelDy
+        if (Screen.IsIdentity() && !dy)
             return fc
-        key := Screen.cx "," Screen.cy "," Screen.cw "," Screen.ch
-        if (this._fcKey != key)
-            this._fcMapped := FishingTask.MapFishing(fc), this._fcKey := key
+        key := Screen.cx "," Screen.cy "," Screen.cw "," Screen.ch "," dy
+        if (this._fcKey != key) {
+            m := Screen.IsIdentity() ? FishingTask._Copy(fc) : FishingTask.MapFishing(fc)
+            if dy
+                FishingTask._ShiftReel(m["reel"], dy)
+            this._fcMapped := m, this._fcKey := key
+        }
         return this._fcMapped
     }
 
@@ -581,7 +586,7 @@ class FishingTask {
         pathingMs := opt.pathingSec * 1000
         start := now.Call()
         failsafeRan := false
-        hits := 0
+        hits := 0, lastBtn := start
         Loop {
             if ctx.ShouldStop()
                 return "stopped"
@@ -591,6 +596,14 @@ class FishingTask {
                     break
             } else {
                 hits := 0
+                ; the minigame running (its button reads "Click / Touch
+                ; Screen to Reel") with no bar seen: measured and said once
+                if (!opt.legacyReel && !this._dimTried && HasMethod(io, "Ocr")
+                    && now.Call() - start >= FishingTask.UnseenAfterMs && now.Call() - lastBtn >= FishingTask.UnseenEveryMs) {
+                    lastBtn := now.Call()
+                    if RegExMatch(String(io.Ocr(fc["fishButton"]["rect"]*)), FishingTask.ReelRe)
+                        this._ReelUnseen()
+                }
             }
             elapsed := now.Call() - start
             if (elapsed > pathingMs) {
@@ -629,6 +642,111 @@ class FishingTask {
                 return "stopped"
         }
         return "bite"
+    }
+
+    ; The reel is up (its button says so) but _ReelUp saw no bar. The bar is
+    ; searched for in a band around where it should be: its top and bottom
+    ; white borders, one bar height apart (the only such pair there; the
+    ; panel's frame above has dark panel under it). Found: its row and
+    ; brightness (the level 90 % of the row reaches). A dimmer white (over
+    ; DimFloor) puts FishLogic.WhiteMin under it, a bar drawn higher or lower
+    ; (another Roblox top bar) moves the reel rows (FishingTask.ReelDy), both
+    ; for the session. Logged with the HDR state and a screenshot. Once per
+    ; task (this._dimTried). A friend's PC, 2026-11-11: border 133 at the
+    ; expected rows, nothing clicked.
+    static UnseenAfterMs := 3000
+    static UnseenEveryMs := 1500
+    static DimFloor := 100
+    static DimMargin := 15
+    static SearchUp := 45, SearchDown := 45, PairTol := 3, PairNear := 12
+    static ReelDy := 0
+    _dimTried := false
+    _ReelUnseen() {
+        this._dimTried := true
+        rc := this._Fc()["reel"]
+        io := this.deps.io
+        ref := rc["borderYs"][Min(3, rc["borderYs"].Length)]
+        gap := Max(1, FishingTask.MapY(1055) - FishingTask.MapY(1030))
+        ys := [], lv := []
+        y := ref - FishingTask.SearchUp
+        while (y <= ref + FishingTask.SearchDown + gap + FishingTask.PairTol)
+            ys.Push(y), y++
+        try {
+            for row in this.deps.grab.Call(rc["x1"], rc["x2"], ys, rc["stride"])
+                lv.Push(FishingTask._Level90(row))
+        }
+        bestI := 0, best := 0, top := 0
+        if (lv.Length = ys.Length) {
+            sc := []
+            for i, y in ys {
+                pair := 0
+                if (y <= ref + FishingTask.SearchDown) {
+                    k := i + gap - FishingTask.PairTol
+                    while (k <= i + gap + FishingTask.PairTol) {
+                        if (k >= 1 && k <= lv.Length)
+                            pair := Max(pair, lv[k])
+                        k++
+                    }
+                }
+                sc.Push(Min(lv[i], pair))
+                top := Max(top, sc[i])
+            }
+            for i, v in sc
+                if (v > FishingTask.DimFloor && v >= top - FishingTask.PairNear) {
+                    bestI := i, best := lv[i]
+                    break
+                }
+        }
+        here := 0
+        for y in rc["borderYs"] {
+            i := y - ys[1] + 1
+            if (i >= 1 && i <= lv.Length)
+                here := Max(here, lv[i])
+        }
+        shot := HasMethod(io, "Shot") ? io.Shot() : ""
+        dy := bestI ? ys[bestI] - ref : 0
+        this.deps.log.Call("fishing: the minigame is running (its button reads the reel prompt) but the bar was not seen: its border is "
+            here " bright here, white needs over " FishLogic.WhiteMin
+            . (bestI ? "; the bar's borders found " (dy = 0 ? "in place" : Abs(dy) " px " (dy > 0 ? "lower" : "higher")) ", " best " bright" : "; no bar border found near it")
+            . ", " Screen.HdrText() (shot != "" ? "; screen saved to " shot : ""))
+        if !bestI
+            return
+        if (best <= FishLogic.WhiteMin) {
+            FishLogic.WhiteMin := best - FishingTask.DimMargin
+            this.deps.log.Call("fishing: white lowered to " FishLogic.WhiteMin " for this session (a dimmer screen: HDR or colour settings?)")
+        }
+        if (Abs(dy) >= 2) {
+            FishingTask.ReelDy += dy
+            this.deps.log.Call("fishing: the reel rows moved " Abs(dy) " px " (dy > 0 ? "down" : "up") " for this session")
+        }
+    }
+
+    ; the level (min channel) 90 % of a row's pixels reach
+    static _Level90(row) {
+        hist := [], n := 0
+        Loop 256
+            hist.Push(0)
+        for c in row {
+            hist[Min((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF) + 1]++
+            n++
+        }
+        need := Ceil(n * 0.9), got := 0, v := 255
+        while (v > 0) {
+            got += hist[v + 1]
+            if (got >= need)
+                break
+            v--
+        }
+        return v
+    }
+
+    ; reel section shifted dy design px (arrow, bar and border rows)
+    static _ShiftReel(r, dy) {
+        r["arrowY"] += dy, r["barY"] += dy
+        ys := []
+        for y in r["borderYs"]
+            ys.Push(y + dy)
+        r["borderYs"] := ys
     }
 
     ; Point [x, y] inside rect [x, y, w, h].
@@ -687,9 +805,37 @@ class FishingTask {
                 t := Trim(RegExReplace(String(io.Ocr(this._Fc()["fishButton"]["rect"]*)), "\s+", " "))
                 if (t != "" && !InStr(StrLower(t), "fish"))     ; nothing / Fish: nothing to say
                     this.deps.log.Call("fishing: at Start the panel button reads '" SubStr(t, 1, 30) "'")
+                if RegExMatch(t, FishingTask.ReelRe) {
+                    this._ReelEndAtStart(ctx)
+                    return
+                }
             }
             this._LineInForNext(ctx, opt, 0, true)
         }
+    }
+
+    ; Start with a reel running ("Click / Touch Screen to Reel": stopped mid
+    ; reel): the fish is lost. Its "Fishing Failed" card comes when the reel
+    ; runs out; before, the sell respawned and walked with the reel up and
+    ; the card then rode along over Captain Flarg's dialog (live 1920x1080,
+    ; 2026-11-11 18:51). Waits up to ReelEndMs for that card, then closes it.
+    static ReelRe := "i)t[o0]u[cv]h|cl[il1|]ck\s*/|t[o0]\s*re[ae][lI1]"
+    static ReelEndMs := 20000
+    _ReelEndAtStart(ctx) {
+        io := this.deps.io
+        this.deps.log.Call("fishing: a reel was still running at Start - waiting for it to end before the first task")
+        cctx := CleanupCtx(ctx)
+        waited := 0
+        while !this._CardUp() {
+            if (waited >= FishingTask.ReelEndMs) {
+                this.deps.log.Call("fishing: the reel did not end within " (FishingTask.ReelEndMs // 1000) " s")
+                return
+            }
+            if !io.Wait(250, cctx)
+                return
+            waited += 250
+        }
+        this._CloseLeftoverCard(cctx)
     }
 
     ; blind: the line is out for sure (cast, waiting for the bite): when the

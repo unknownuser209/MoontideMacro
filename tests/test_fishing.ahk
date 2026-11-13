@@ -1231,6 +1231,47 @@ Test_Fishing_LineInAtStart() {
     }
 }
 
+; live 1920x1080 2026-11-11 18:51: F1 while a reel ran ("Click / Touch
+; Screen to Reel"): the sell respawned with the reel up and the "Fishing
+; Failed" card rode along over the shop. Start waits for the reel to end and
+; closes that card first; the button is never clicked.
+class FsReelAtStartIO extends FsPanelIO {
+    __New(endAt) {
+        super.__New()
+        this.endAt := endAt, this.cardClosed := false
+    }
+    Ocr(x, y, w, h, scale := 1) {
+        if (x = 1050)
+            return (this.clock < this.endAt) ? "Click / Touch Screen to Reel" : (this.cardClosed ? "Fish" : "")
+        if (x = 1000)
+            return (this.clock >= this.endAt + 500 && !this.cardClosed) ? "Fishing Failed`nThe fish is gone..." : ""
+        return super.Ocr(x, y, w, h, scale)
+    }
+    ClickHere() {
+        if (this.x = 1457 && this.y = 491 && this.clock >= this.endAt)
+            this.cardClosed := true
+        super.ClickHere()
+    }
+}
+
+Test_Fishing_ReelRunningAtStartWaitsAndClosesTheCard() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := FsReelAtStartIO(4000)
+        logs := []
+        FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).LineInAtStart(SchedCtx())
+        AssertTrue(io.cardClosed, "the Fishing Failed card closed")
+        AssertTrue(io.clock >= 4500, "waited for the reel to end")
+        AssertEq(io.casts + io.reeledIn, 0, "the panel button never clicked")
+        AssertTrue(FsHasLog(logs, "reel was still running"), "logged")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
 ; The 2560x1440 waiting panel: with the line out the button reads nothing
 ; ("It's quiet... too quiet." only); the title still reads Fishing.
 class FsQuietPanelIO extends FsPanelIO {

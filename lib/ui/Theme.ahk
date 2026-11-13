@@ -41,6 +41,49 @@ class Theme {
     static Ink := "0D1117"         ; text on gold
     static AccentHi := "F7BD5E"    ; gold hover
     static Face := "Segoe UI"
+    ; colour theme (Settings > Look, UI.theme): Theme.Use(name) before any
+    ; window is built swaps every colour above, the running pulse shade and
+    ; the dashboard background (assets\themes\, tools\make_theme_bg.py).
+    static Current := "Moontide"
+    static Pulse := "B5772A"       ; darker accent the Running pill pulses to
+    static BgImage := "moontide_bg_dim.png"
+    static Names := ["Moontide", "Overdrive", "Glitch", "Dream", "Cyber"]
+    static Presets := Map(
+        "Moontide", {Bg: "0D1117", PanelC: "0B2A5B", Text: "F7F1E8", Accent: "F2A93B", SideBg: "0A1628", CardBg: "0A1628", FieldBg: "0A1A36"
+            , FrameC: "1E4780", HoverBg: "143A73", OffBg: "1B2D4F", Muted: "A8A199", Ink: "0D1117", AccentHi: "F7BD5E", Pulse: "B5772A"
+            , BgImage: "moontide_bg_dim.png", Note: "Navy and gold"},
+        "Overdrive", {Bg: "120A0C", PanelC: "5B0B16", Text: "F7EDEB", Accent: "FF4D57", SideBg: "1F0A0E", CardBg: "1F0A0E", FieldBg: "2A0D13"
+            , FrameC: "80202E", HoverBg: "731426", OffBg: "4F1B26", Muted: "B09C9C", Ink: "120A0C", AccentHi: "FF7A82", Pulse: "B52A33"
+            , BgImage: "themes\overdrive.png", Note: "Red, Matrix : Overdrive"},
+        "Glitch", {Bg: "0A110C", PanelC: "0B5B2A", Text: "EEF7F0", Accent: "3BF27A", SideBg: "0A2814", CardBg: "0A2814", FieldBg: "0A361A"
+            , FrameC: "1E8047", HoverBg: "147340", OffBg: "1B4F2D", Muted: "9CAEA2", Ink: "0A110C", AccentHi: "6EF79C", Pulse: "2AB55A"
+            , BgImage: "themes\glitch.png", Note: "Green, Glitched"},
+        "Dream", {Bg: "140C14", PanelC: "5B0B4F", Text: "F7EEF6", Accent: "F25ED8", SideBg: "280A24", CardBg: "280A24", FieldBg: "360A30"
+            , FrameC: "801E6E", HoverBg: "731460", OffBg: "4F1B47", Muted: "B09CAC", Ink: "140C14", AccentHi: "F78BE4", Pulse: "B53A9E"
+            , BgImage: "themes\dream.png", Note: "Pink, Dreamspace"},
+        "Cyber", {Bg: "0A1014", PanelC: "0B465B", Text: "EEF5F7", Accent: "3BD9F2", SideBg: "0A2128", CardBg: "0A2128", FieldBg: "0A2B36"
+            , FrameC: "1E6A80", HoverBg: "145F73", OffBg: "1B414F", Muted: "9CAAAE", Ink: "0A1014", AccentHi: "6EE4F7", Pulse: "2A9FB5"
+            , BgImage: "themes\cyber.png", Note: "Blue, Cyberspace"})
+    static ThemeKeys := ["Bg", "PanelC", "Text", "Accent", "SideBg", "CardBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Muted", "Ink", "AccentHi", "Pulse", "BgImage"]
+
+    ; Theme name as listed (any case), "Moontide" when unknown.
+    static ThemeName(name) {
+        for n in Theme.Names
+            if (n = Trim(String(name)))
+                return n
+        return "Moontide"
+    }
+
+    ; Every colour of theme `name` (unknown -> Moontide). Call before windows
+    ; are built: existing controls keep their colours. -> the name used.
+    static Use(name) {
+        n := Theme.ThemeName(name)
+        p := Theme.Presets[n]
+        for k in Theme.ThemeKeys
+            Theme.%k% := p.%k%
+        Theme.Current := n
+        return n
+    }
 
     static Sink := ""
     static _hot := Map()           ; hwnd -> {gui, click, hover, enabled}

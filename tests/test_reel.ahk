@@ -134,6 +134,8 @@ class RlSim {
         this.onFish := 0
         this.lastClock := -1
         this.trace := ""
+        this.white := 0xFFFFFF       ; the arrow and the bar's borders (dimmer on some PCs)
+        this.dy := 0                 ; the reel drawn this many px lower (another top bar)
     }
     Step() {
         io := this.io
@@ -169,13 +171,14 @@ class RlSim {
         io := this.io
         if (x = 1536 && y = 1119)
             return (io.lastClick.Has("click@1161,1124") && io.clock >= io.lastClick["click@1161,1124"] + this.biteAfter) ? 0xFFFFFF : 0x101010
+        y -= this.dy
         if (y = 1025) {
             if (x = 1042)
                 this.Step()
-            return (this.firstGrab >= 0 && Abs(x - this.m) <= 13) ? 0xFFFFFF : 0x00000B
+            return (this.firstGrab >= 0 && Abs(x - this.m) <= 13) ? this.white : 0x00000B
         }
-        if (y = 1030)
-            return (this.firstGrab >= 0) ? 0xFFFFFF : 0x101010      ; bar top border
+        if (y = 1030 || y = 1055)
+            return (this.firstGrab >= 0) ? this.white : 0x101010      ; bar top / bottom border
         if (y = 1044) {
             fish := x >= this.f1 && x <= this.f1 + 76 && io.clock >= this.firstGrab + this.readyMs
             if (x <= this.m)
@@ -203,6 +206,111 @@ RlRun(swing, readyMs, &sim, &logs, momentum := false, biteAfter := 2000) {
         FsScreen.Restore()
         FsClean(t.dir)
     }
+}
+
+; A friend's PC (1920x1080, 2026-11-11): the minigame ran and nothing was
+; clicked. A dimmer white (0xC8C8C8 here) never counted as the bar's border.
+; The button reading the reel prompt with no bar seen: the border measured,
+; logged, white lowered for the session, and the fish reeled.
+class RlDimIO extends FsIO {
+    __New(biteAfter) {
+        super.__New()
+        this.biteAfter := biteAfter
+    }
+    Ocr(x, y, w, h, scale := 1) {
+        if (x = 1130)
+            return "Fishing"
+        if (x != 1050)
+            return ""
+        if !this.lastClick.Has("click@1161,1124")
+            return "Fish"
+        return (this.clock >= this.lastClick["click@1161,1124"] + this.biteAfter) ? "Click / Touch Screen to Reel" : "Exit"
+    }
+}
+
+Test_Reel_DimWhiteIsLearnt() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := RlDimIO(2000)
+        logs := []
+        sim := RlSim(io, 0, 0, false, 2000)
+        sim.white := 0xC8C8C8
+        sim.firstGrab := 0                          ; the reel drawn from the bite on
+        s := sim
+        FsScreen.fn := (x, y) => (io.lastClick.Has("click@1161,1124") && io.clock >= io.lastClick["click@1161,1124"] + 2000) ? s.Pixel(x, y) : 0x101010
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertTrue(FsHasLog(logs, "200 bright here"), "the border measured and logged")
+        AssertTrue(FsHasLog(logs, "borders found in place"), "found where it should be")
+        AssertEq(FishingTask.ReelDy, 0, "rows not moved")
+        AssertEq(FishLogic.WhiteMin, 185, "white lowered under the border")
+        AssertTrue(sim.clicks > 10, "it reels after (clicks=" sim.clicks ")")
+    } finally {
+        FishLogic.WhiteMin := 220
+        FishingTask.ReelDy := 0
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; The friend's numbers: white 133 at the expected rows. Here the bar is also
+; drawn 14 px lower (a Roblox top bar of another height): both are learnt
+; from the bar's two borders and the fish reeled.
+Test_Reel_ShiftedDimBarIsFound() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := RlDimIO(2000)
+        logs := []
+        sim := RlSim(io, 0, 0, false, 2000)
+        sim.white := 0x858585
+        sim.dy := 14
+        sim.firstGrab := 0
+        s := sim
+        FsScreen.fn := (x, y) => (io.lastClick.Has("click@1161,1124") && io.clock >= io.lastClick["click@1161,1124"] + 2000) ? s.Pixel(x, y) : 0x101010
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertTrue(FsHasLog(logs, "14 px lower, 133 bright"), "found lower and dimmer")
+        AssertEq(FishingTask.ReelDy, 14, "rows moved")
+        AssertEq(FishLogic.WhiteMin, 118, "white lowered")
+        AssertTrue(sim.clicks > 10, "it reels after (clicks=" sim.clicks ")")
+        AssertEq(r, "ok", "catch finished")
+    } finally {
+        FishLogic.WhiteMin := 220
+        FishingTask.ReelDy := 0
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; Nothing like a bar near it (the game world behind): nothing changed.
+Test_Reel_NoBarFoundChangesNothing() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := RlDimIO(2000)
+        logs := []
+        FsScreen.fn := (x, y) => (y = 1030) ? 0x909090 : 0x202020
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertTrue(FsHasLog(logs, "no bar border found"), "said so")
+        AssertEq(FishLogic.WhiteMin, 220, "white unchanged")
+        AssertEq(FishingTask.ReelDy, 0, "rows unchanged")
+    } finally {
+        FishLogic.WhiteMin := 220
+        FishingTask.ReelDy := 0
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; pure white: nothing measured, nothing lowered
+Test_Reel_WhiteStaysWhenTheBarIsSeen() {
+    sim := "", logs := ""
+    o := RlRun(0, 0, &sim, &logs)
+    AssertEq(FishLogic.WhiteMin, 220, "white unchanged")
+    AssertTrue(!FsHasLog(logs, "bright here"), "nothing to say")
 }
 
 Test_Reel_KeepsArrowOnTheFish() {

@@ -125,7 +125,7 @@ class ObbyTask {
     static ClickTries := 3         ; Equip / Unequip clicks while the button keeps its old word
     static HoverMs := 300          ; the mouse rests on Equip this long before the click
     static ClickHoverMs := 150     ; ... and on tabs / the search box / tiles (_Click)
-    static LogPickMs := 3000       ; the log has this long to name the aura after Equip
+    static LogPickMs := 6000       ; the log has this long to name the aura after Equip (~2 s live; a slow PC more)
     static LogLagMs := 150000      ; the log's "Equipped" line can lag an unequip this long
     static SearchTries := 4
     ; Regular / Special tab buttons from aura_search (2560x1440, live
@@ -179,6 +179,7 @@ class ObbyTask {
     name := "obby"
     priority := 5
     wear := ObbyTask.Sailor      ; the aura PutOnSailor puts on (MinionsTask reuses the swap with its own)
+    _logMute := false            ; _LogPick saw no log line after an equip (this swap): no more equips
     logoOk := false              ; first result accepted when its name is an unreadable logo (_FindTile)
 
     __New(deps := "") {
@@ -1161,6 +1162,7 @@ class ObbyTask {
         io := env.io
         this._why := ""
         was := ""
+        this._logMute := false                  ; _LogPick: no log line once -> no more equips in this swap
         if ObbyTask.EquipFirst(env.cfg)
             return this._SetAuraFirst(c, aura, equip, ctx, &was)
         ; left open (a halted run): no click on its button (it would close it);
@@ -1348,6 +1350,7 @@ class ObbyTask {
                 return -1
             if this._Refused(c)
                 return -1
+            before := this._LogAura()
             Auras.Quiet(Auras.QuietMs)
             io.ClickHere()
             was := equip ? "off" : "on"
@@ -1356,15 +1359,12 @@ class ObbyTask {
                 env.Log("obby: equip first: the first result for '" text "' on the " tabName " tab unequipped as " aura " (names not read)")
                 break
             }
-            got := "", waited := 0
-            Loop {
-                if !env.Wait(250, ctx)
-                    return -1
-                waited += 250
-                got := this._LogAura()
-                if (got != "?" || waited >= ObbyTask.LogPickMs)
-                    break
-            }
+            ; the log's aura from before the click is no verdict: its new
+            ; line follows ~2 s later (a 250 ms read named the old aura and
+            ; sent the swap on to the other tab's first result, which went on)
+            got := this._LogChange(before, ctx, &stopped)
+            if stopped
+                return -1
             ; the searched text in its name counts (the option takes what the
             ; search lists first: "Sailor: Admiral" for Sailor), anything else not
             if (got = "?" || ObbyTask.SameAura(got, aura) || InStr(GameLists.Fold(got), GameLists.Fold(text))) {
@@ -1419,7 +1419,7 @@ class ObbyTask {
     _LogPick(c, aura, ctx) {
         env := this._env
         io := env.io
-        if (this._LogAura() == "?")
+        if (this._LogAura() == "?" || this._logMute)
             return 0
         reads := (this.HasOwnProp("_tileReads") && this._tileReads is Map) ? this._tileReads : Map()
         equips := 0
@@ -1452,24 +1452,50 @@ class ObbyTask {
                 return -1
             if this._Refused(c)
                 return -1
+            before := this._LogAura()
             Auras.Quiet(Auras.QuietMs)
             equips++
             io.ClickHere()
-            waited := 0
-            Loop {
-                if !env.Wait(250, ctx)
-                    return -1
-                waited += 250
-                if ObbyTask.SameAura(this._LogAura(), aura) {
-                    this._set := {name: aura, at: env.Now()}
-                    env.Log("obby: " aura " found by the log (its name did not read)")
-                    return 1
-                }
-                if (waited >= ObbyTask.LogPickMs)
-                    break
+            ; only a CHANGE of the log's aura belongs to this click: a late
+            ; line for the result before, read while the next one was being
+            ; equipped, said "found" with that other aura on
+            got := this._LogChange(before, ctx, &stopped)
+            if stopped
+                return -1
+            if (ObbyTask.SameAura(got, aura) || (got = "?" && ObbyTask.SameAura(before, aura))) {
+                this._set := {name: aura, at: env.Now()}
+                env.Log("obby: " aura " found by the log (its name did not read)")
+                return 1
             }
+            if (got = "?") {
+                ; no line: which aura is on is unknown, so no more are tried
+                env.Log("obby: result " A_Index " equipped, but the Roblox log named no aura after it: no more results tried")
+                this._logMute := true
+                return 0
+            }
+            env.Log("obby: result " A_Index " is " got ", not " aura)
         }
         return 0
+    }
+
+    ; Waits up to LogPickMs for the log's aura to change from before (the
+    ; "Equipped" line follows the click by ~2 s, live 2026-11-10; the first
+    ; reads still name the aura from before). -> the new name ("" = none) |
+    ; "?" no change; stopped := true when halted.
+    _LogChange(before, ctx, &stopped) {
+        stopped := false, waited := 0
+        Loop {
+            if !this._env.Wait(250, ctx) {
+                stopped := true
+                return "?"
+            }
+            waited += 250
+            got := this._LogAura()
+            if (got != "?" && got != before)
+                return got
+            if (waited >= ObbyTask.LogPickMs)
+                return "?"
+        }
     }
 
     ; An aura is selected: its info lines read in InfoBox (from aura_equip).

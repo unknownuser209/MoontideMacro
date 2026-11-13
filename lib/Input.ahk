@@ -338,7 +338,22 @@ class Input {
 
     ; 1 ms Windows timer resolution while on (counted, so nested users are
     ; fine). Used while a route is recorded or played.
+    ; Windows 11 ignores timeBeginPeriod from a process whose windows are
+    ; all hidden or covered (fullscreen Roblox in front): the Waits then
+    ; overshot ~8 ms (2026-11-11, 1920x1080 fullscreen). The process opts out
+    ; of that throttling once (ProcessPowerThrottling,
+    ; PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION; this process only,
+    ; no system setting). Older Windows: the call fails, nothing changes.
+    static _timerOptOut := false
     static HiRes(on) {
+        if (on && !Input._timerOptOut) {
+            Input._timerOptOut := true
+            st := Buffer(12, 0)
+            NumPut("UInt", 1, st, 0)                  ; Version
+            NumPut("UInt", 0x4, st, 4)                ; ControlMask: IGNORE_TIMER_RESOLUTION
+            NumPut("UInt", 0, st, 8)                  ; StateMask 0: always honour the request
+            try DllCall("SetProcessInformation", "Ptr", DllCall("GetCurrentProcess", "Ptr"), "Int", 4, "Ptr", st, "UInt", 12)
+        }
         if on {
             if (Input._hiRes++ = 0)
                 DllCall("winmm\timeBeginPeriod", "UInt", 1)

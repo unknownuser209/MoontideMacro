@@ -128,6 +128,15 @@ Test_Updater_ZipballFallback() {
     }
 }
 
+; The real web call and unzip are static methods: passed as plain values
+; they kept the hidden `this` and every real check failed with "Missing a
+; required parameter" (a friend's log, 2026-11-11). Fakes hid it.
+Test_Updater_RealHelpersTakeTheirOwnArgs() {
+    u := Updater(Map("root", A_Temp))
+    AssertEq(u._http.MinParams, 1, "http(url)")
+    AssertEq(u._unzip.MinParams, 2, "unzip(zip, dest)")
+}
+
 Test_Updater_EmptyRepoDoesNothing() {
     r := UpdTmp()
     try {

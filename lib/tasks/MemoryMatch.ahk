@@ -240,19 +240,24 @@ class MemoryMatchTask {
                     if !ctx.ShouldStop() {
                         env.Log("memory match: respawn failed (" Input.LastResetError "): next try in " MemoryMatchTask.RetryMin " min")
                         this._Write(MemoryMatchTask.RetryMin * 60)
-                    }
+                    } else
+                        env.Log("memory match: stopped during the respawn (" MemoryMatchTask.StopWhy(ctx) ")")
                     return 0
                 }
-                if !Input.PlayRoute(steps, ctx, io)
+                if !Input.PlayRoute(steps, ctx, io) {
+                    env.Log("memory match: the walk was cut short (" MemoryMatchTask.StopWhy(ctx) ")")
                     return 0
+                }
                 entered := true
                 Input.Key(MemoryMatchTask.OpenKey, 80, io)
                 r := this._WaitNotify(MemoryMatchTask.OpenWaitMs, ctx)
                 if (r != 0)
                     break
             }
-            if (r < 0)
+            if (r < 0) {
+                env.Log("memory match: stopped while waiting for the notification (" MemoryMatchTask.StopWhy(ctx) ")")
                 return 0
+            }
             if !r {
                 env.Report("errors", "Memory Match", "the Start Memory Match notification did not show after E (check the memory_match route with Test)", 0xE74C3C)
                 env.Log("memory match: no Start Memory Match notification after E; nothing clicked")
@@ -290,15 +295,22 @@ class MemoryMatchTask {
                 this._Write(MemoryMatchTask.RetryMin * 60)
                 return 0
             }
-            env.Click(L.start)
-            ; the cursor left on Start rests on tile 12, whose hover corner
-            ; reads "open": the board never counted as dealt (2026-10-27 review)
-            io.MoveTo(L.park.x, L.park.y)
+            r := this._ClickStart(ctx)
+            if (r < 0)
+                return 0
+            if !r {
+                msg := "Start was clicked " MemoryMatchTask.StartTries " times, the notification stayed up"
+                env.Log("memory match: " msg "; next try in " MemoryMatchTask.RetryMin " min")
+                env.Report("errors", "Memory Match", msg, 0xE74C3C)
+                this._Write(MemoryMatchTask.RetryMin * 60)
+                return 0
+            }
             this._notify := false
             r := this._WaitDealt(ctx)
             if (r < 0)
                 return 0
             if !r {
+                env.Log("memory match: the board did not open after Start (or its tiles never settled); next try in " MemoryMatchTask.RetryMin " min")
                 env.Report("errors", "Memory Match", "the board did not open after Start (or its tiles never settled)", 0xE74C3C)
                 this._Write(MemoryMatchTask.RetryMin * 60)
                 return 0
@@ -420,6 +432,51 @@ class MemoryMatchTask {
 
     ; The notification is up: its title reads, or its button does (the title
     ; alone missed it on the 19:43 clip and the macro reset with it open).
+    ; Start, with the mouse resting on it first: Roblox drops a click that
+    ; lands right after the mouse arrives (Input.Click waits 30 ms). Live
+    ; 1920x1080 2026-11-11 19:03: the notification stayed up ~10 s after the
+    ; click and the run respawned with it open, nothing logged (the friend's
+    ; 16:49 run too). The cursor then parks: left on Start it rests on tile
+    ; 12, whose hover corner reads "open" (2026-10-27 review). Clicked again
+    ; while the notification is still up. -> 1 gone | 0 still up | -1 stopped
+    static StartHoverMs := 300
+    static StartGoneMs := 1500
+    static StartTries := 3
+    _ClickStart(ctx) {
+        env := this._env, io := env.io, L := MemoryMatchTask.Layout
+        Loop MemoryMatchTask.StartTries {
+            if (A_Index > 1)
+                env.Log("memory match: the notification is still up after Start - clicking it again")
+            io.MoveTo(L.start.x, L.start.y)
+            if !env.Wait(MemoryMatchTask.StartHoverMs, ctx)
+                return -1
+            env.Click(L.start)
+            io.MoveTo(L.park.x, L.park.y)
+            waited := 0
+            Loop {
+                if !env.Wait(MemoryMatchTask.PollMs, ctx)
+                    return -1
+                waited += MemoryMatchTask.PollMs
+                if !MemoryMatchTask.NotifyUp(this._Read(L.notify), this._Read(L.startBox))
+                    return 1
+                if (waited >= MemoryMatchTask.StartGoneMs)
+                    break
+            }
+        }
+        return 0
+    }
+
+    ; why ctx stopped a run, for the log
+    static StopWhy(ctx) {
+        w := ""
+        try w := ctx.IsPaused() ? "paused" : ""
+        if (w = "")
+            try w := ctx.IsHalted() ? "stopped" : ""
+        if (w = "")
+            try w := ctx.IsPreempted() ? "interrupted by another task" : ""
+        return (w = "") ? "no stop seen" : w
+    }
+
     static NotifyUp(title, btn) {
         return RegExMatch(title, MemoryMatchTask.NotifyRe) || RegExMatch(btn, MemoryMatchTask.CooldownRe)
             || RegExMatch(btn, MemoryMatchTask.ButtonRe)

@@ -11,9 +11,10 @@
 ;                            (StripGrab.Rows shape; default StripGrab.Rows)
 ;   MatchVision.Tile(i)      i = 1..20, row by row -> {x, y, w, h}
 ;   MatchVision.Center(i)    -> {x, y}: where a flip is clicked
-;   v.State(i)               the tile's corner pixel -> "hidden" (face down,
-;                            0x212121) | "open" (face up, 0x434343) |
-;                            "matched" (green, 0x56BB5E) | "" (animating)
+;   v.State(i)               the tile's corner against its bottom right ->
+;                            "hidden" (face down) | "open" (face up, or the
+;                            cursor on it) | "matched" (green, 0x56BB5E) |
+;                            "" (animating)
 ;   v.Sig(i)                 -> {icon, prof, width}: sampled pixels of the
 ;                            icon; the amount line as a column profile (white
 ;                            pixels per screen column, trimmed to the text),
@@ -54,13 +55,36 @@ class MatchVision {
         return {x: t.x + t.w // 2, y: t.y + t.h // 2}
     }
 
+    ; The corner (+10,+10) against the bottom right (+105,+118) of the same
+    ; tile, so a brighter or darker look does not matter. Face down: a grey
+    ; corner and a bottom right a little darker (0x222222 / 0x131313 on the
+    ; 2026-10-27 clip, 0x3E3E3E / 0x252525 live 1920x1080 2026-11-11 after
+    ; a game update: the fixed 0x212121 read every tile as "open" and the
+    ; board never counted as dealt). Face up (or the cursor on a face-down
+    ; tile): a lighter corner and a near-black bottom right (0x444444 /
+    ; 0x010101 on the clip). Green corner: matched.
+    static DownStep := [6, 42]     ; corner minus bottom right, face down (clip 15, live 25)
+    static DownMax := 0x58         ; a face-down corner is no lighter than this
     State(i) {
         t := MatchVision.Tile(i)
-        c := (this._grab)(t.x + 10, t.x + 10, [t.y + 10], 1)[1][1]
-        for name, ref in MatchVision.Colors
-            if MatchVision._Near(c, ref, MatchVision.CornerTol)
-                return name
+        rows := (this._grab)(t.x + 10, t.x + 105, [t.y + 10, t.y + 118], 95)
+        c := rows[1][1], lr := rows[2][rows[2].Length]
+        if MatchVision._Near(c, MatchVision.Colors["matched"], MatchVision.CornerTol)
+            return "matched"
+        if !(MatchVision._Grey(c) && MatchVision._Grey(lr))
+            return ""
+        d := (c & 0xFF) - (lr & 0xFF)
+        if (d >= MatchVision.DownStep[1] && d <= MatchVision.DownStep[2] && (c & 0xFF) <= MatchVision.DownMax)
+            return "hidden"
+        if (d > MatchVision.DownStep[2])
+            return "open"
         return ""
+    }
+
+    ; r, g, b within 10 of each other
+    static _Grey(c) {
+        r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+        return Max(r, g, b) - Min(r, g, b) <= 10
     }
 
     Sig(i) {
@@ -69,11 +93,18 @@ class MatchVision {
         y := t.y + 18
         while (y <= t.y + 96)
             iys.Push(y), y += 6
-        y := t.y + 100
+        ; the amount line one sample per SCREEN px: below 1440p a design-px
+        ; step read some screen columns twice, and which ones changed with
+        ; the tile's x, so two tiles of a pair drew different profiles
+        ; (Test_Resample_PixelReads "mm pairs"). Nudged 0.1 screen px off
+        ; the half-pixel ties of x0.75.
+        st := Screen.IsIdentity() ? 1 : 1 / Screen.s
+        nud := Screen.IsIdentity() ? 0 : 0.1 * st
+        y := t.y + 100 + nud
         while (y <= t.y + 126)
-            tys.Push(y), y += 1
+            tys.Push(y), y += st
         icon := MatchVision._Flat((this._grab)(t.x + 10, t.x + 112, iys, 3))
-        rows := (this._grab)(t.x + 6, t.x + 116, tys, 1)
+        rows := (this._grab)(t.x + 6 + nud, t.x + 116, tys, st)
         cols := []
         Loop rows[1].Length
             cols.Push(0)

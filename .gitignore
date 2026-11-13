@@ -20,3 +20,7 @@ update_tmp/
 data/*.bak
 clips_for_user/
 logs/
+
+# v1.6 local state
+data/stats.json
+data/summary_last.txt

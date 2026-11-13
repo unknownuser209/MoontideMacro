@@ -40,6 +40,7 @@ class MmBoard {
         this.slowPic := Map()       ; tile -> its own PicMs (lag: the picture keeps moving)
         this.slowGreen := Map()     ; tile -> its own GreenMs when it completes a pair
         this.gone := false          ; the Roblox window vanished: nothing of the board reads
+        this.startDrops := 0        ; Start clicks the game drops (the first n)
         this.io := MmIO(this)
         this.vision := MmVision(this)
     }
@@ -75,6 +76,10 @@ class MmBoard {
         L := MemoryMatchTask.Layout
         if (x = L.start.x && y = L.start.y && this.notify) {
             this.log.Push("start")
+            if (this.startDrops > 0) {          ; Roblox dropped the click
+                this.startDrops--
+                return
+            }
             if this.ready {
                 this.notify := false
                 this.started := true
@@ -453,6 +458,40 @@ Test_MM_ParksTheMouseAfterStart() {
     }
 }
 
+; live 1920x1080 2026-11-11 19:03: Roblox dropped the Start click, the
+; notification stayed up and the run respawned with it open, nothing logged.
+; Start is clicked again while the notification is up; never more than
+; StartTries times, and a notification that never goes is logged.
+Test_MM_DroppedStartIsClickedAgain() {
+    b := MmStd()
+    b.startDrops := 1
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played after the second Start")
+        n := 0
+        for e in b.log
+            n += (e = "start") ? 1 : 0
+        AssertEq(n, 2, "Start clicked twice")
+        AssertTrue(MmHasLog(m, "clicking it again"), "logged")
+    } finally {
+        MmClean(m)
+    }
+    b2 := MmStd()
+    b2.startDrops := 99
+    m2 := MmMake(b2)
+    try {
+        AssertEq(m2.t.Run(SchedCtx()), 0, "not played")
+        n := 0
+        for e in b2.log
+            n += (e = "start") ? 1 : 0
+        AssertEq(n, MemoryMatchTask.StartTries, "Start clicked StartTries times")
+        AssertTrue(MmHasLog(m2, "stayed up"), "the failure is in the log")
+        AssertTrue(!b2.notify, "the notification closed after")
+    } finally {
+        MmClean(m2)
+    }
+}
+
 Test_MM_PreemptFinishesTheRound() {
     ; 2026-10-27 review: a merchant / potion preempt mid-round left the board
     ; open for the next task and lost the chances. The round is finished and
@@ -586,4 +625,12 @@ Test_MM_ReadyIsOpenedAgain() {
     } finally {
         MmClean(m)
     }
+}
+
+; a task log line holding text
+MmHasLog(m, text) {
+    for l in m.logs
+        if InStr(l, text)
+            return true
+    return false
 }

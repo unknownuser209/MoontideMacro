@@ -145,8 +145,10 @@ class Dashboard {
     static W := 1040
     static H := 680
     ; Internal page names (SavePage / tests); the user sees TabLabel(name).
-    static Pages := ["Run", "Fishing", "Craft", "Quests", "Merchants", "Biomes & Potions", "Biome items", "Obby & Memory", "Webhooks", "Calibrate", "Settings", "Tools", "Limbo", "Clips", "Dev tools", "Credits", "Log"]
-    static Builders := ["_PageRun", "_PageFishing", "_PageCraft", "_PageQuests", "_PageMerchants", "_PageBiomes", "_PageBiomeItems", "_PageObbyMemory", "_PageWebhooks", "_PageCalibrate", "_PageSettings", "_PageTools", "_PageLimbo", "_PageClips", "_PageDevTools", "_PageCredits", "_PageLog"]
+    static Pages := ["Run", "Fishing", "Craft", "Quests", "Merchants", "Biomes & Potions", "Biome items", "Obby & Memory", "Webhooks", "Calibrate", "Settings", "Tools", "Limbo", "Clips", "Dev tools"
+        , "Stats", "Hunting", "Summary", "Remote", "Check", "Schedule", "Credits", "Log"]
+    static Builders := ["_PageRun", "_PageFishing", "_PageCraft", "_PageQuests", "_PageMerchants", "_PageBiomes", "_PageBiomeItems", "_PageObbyMemory", "_PageWebhooks", "_PageCalibrate", "_PageSettings", "_PageTools", "_PageLimbo", "_PageClips", "_PageDevTools"
+        , "_PageStats", "_PageHunting", "_PageSummary", "_PageRemote", "_PageCheck", "_PageSchedule", "_PageCredits", "_PageLog"]
     static Subtitles := [
         "Status at a glance. F1 start  " Chr(0xB7) "  F2 pause / resume  " Chr(0xB7) "  F3 stop",
         "Selling rhythm, minigame mode and failsafes.",
@@ -163,19 +165,26 @@ class Dashboard {
         "Wait in THE LIMBO for Eden instead of fishing.",
         "Medal clips of rare biomes and rare auras.",
         "Send fake events through the running macro (dry run only).",
+        "Today, this run and the last 7 days.",
+        "Limited-time game features. They leave the macro when the game removes them.",
+        "One Discord message a day with what the macro did.",
+        "Control the macro from Discord with your own bot.",
+        "Check what the macro can see on your PC, and make a log zip for support.",
+        "Start and stop by the clock, or stop after a number of hours.",
         "Who made " Brand.Name ".",
         "The newest 200 lines. Links and webhook URLs are always hidden."
     ]
     ; Sidebar hubs, each a tab strip of pages (every page is in exactly one).
     static Hubs := [
-        {name: "Home", icon: "home", pages: ["Run"]},
+        {name: "Home", icon: "home", pages: ["Run", "Stats"]},
         {name: "Automate", icon: "bolt", pages: ["Fishing", "Craft", "Quests", "Merchants", "Biome items", "Obby & Memory", "Limbo"]},
-        {name: "Alerts", icon: "bell", pages: ["Biomes & Potions", "Webhooks", "Clips"]},
-        {name: "Setup", icon: "gear", pages: ["Calibrate", "Tools", "Settings", "Dev tools"]},
+        {name: "Limited", icon: "clock", pages: ["Hunting"]},
+        {name: "Alerts", icon: "bell", pages: ["Biomes & Potions", "Webhooks", "Clips", "Summary", "Remote"]},
+        {name: "Setup", icon: "gear", pages: ["Check", "Calibrate", "Tools", "Schedule", "Settings", "Dev tools"]},
         {name: "Log", icon: "list", pages: ["Log"]},
         {name: "About", icon: "info", pages: ["Credits"]}
     ]
-    static TabLabels := Map("Craft", "Crafting", "Biomes & Potions", "Biomes", "Webhooks", "Discord", "Tools", "Routes")
+    static TabLabels := Map("Craft", "Crafting", "Biomes & Potions", "Biomes", "Webhooks", "Discord", "Tools", "Routes", "Summary", "Daily summary", "Check", "Check & help")
     static MaxHooks := 8
     static Events := ["biome", "rare", "merchant", "quests", "craft", "errors", "startstop", "potions", "clips", "obby", "memorymatch", "sinister"]
     static EventCaps := ["Biome", "Rare", "Merch", "Quest", "Craft", "Error", "Stop", "Pot.", "Clip", "Obby", "Mem.", "Boss"]
@@ -185,15 +194,15 @@ class Dashboard {
     ; "Boss" = sinister: the GRAVEYARD boss message (MinionsTask)
     static EventPitch := 28
     static EventBoxDx := 6
-    static LogPage := 17
+    static LogPage := 23
     ; animation look
     static PulseDark := "B5772A"       ; darker gold the Running pill pulses to
     static StarC := "F7F1E8"
     ; [x, y, period ms]: header stars clear of the brand, credits banner
     ; (x 372..612, y 17..43), status pill and buttons (y 16..44); sidebar
-    ; stars between the hub list (ends y 308) and the chip (y 622).
+    ; stars between the hub list (7 hubs, ends y 348) and the chip (y 622).
     static Stars := [[392, 3, 2300], [548, 45, 2700], [700, 3, 2000], [902, 45, 3100]
-        , [34, 340, 2500], [140, 392, 2900], [70, 470, 2150], [150, 540, 2650]]
+        , [34, 380, 2500], [140, 430, 2900], [70, 500, 2150], [150, 566, 2650]]
     static StatTiles := [["stat:loops", "LOOPS"], ["stat:fish", "FISH CAUGHT"], ["stat:biomes", "BIOMES SEEN"], ["stat:rare", "RARE BIOMES"]]
     static _wins := Map()              ; Dashboard window hwnds (WM_ACTIVATE -> Anim.Wake)
     static _actHooked := false
@@ -261,6 +270,8 @@ class Dashboard {
             , "Turn off", "Keep dry run")
         ; a switch for a part still known to be buggy: a warning before it goes on
         this._confirmBuggy := (title, text) => Theme.Confirm(this._gui, title, text, "Turn on", "Keep off")
+        this._confirmBig := (title, text) => Theme.Confirm(this._gui, title, text, "Use it", "Change it")
+        this._bigWarned := ""
         this._Build()
         ; animations: gated on this window, switched by UI.animations (live)
         hwnd := this._gui.Hwnd
@@ -602,7 +613,9 @@ class Dashboard {
         g := Theme.Window(Brand.Name " " Chr(0xB7) " " Credits.ByLine(), "-MaximizeBox")
         this._gui := g
         g.OnEvent("Close", (*) => this._OnClose())
-        bg := Theme.AssetPath("moontide_bg_dim.png")     ; darker copy: panels and text read on it
+        bg := Theme.AssetPath(Theme.BgImage)             ; the theme's darkened art: panels and text read on it
+        if !FileExist(bg)
+            bg := Theme.AssetPath("moontide_bg_dim.png")
         if !FileExist(bg)
             bg := Theme.AssetPath("moontide_bg.png")
         if FileExist(bg)
@@ -658,7 +671,7 @@ class Dashboard {
         ; twinkling stars (header y < 59, sidebar x < 176), loop "stars"
         for i, s in Dashboard.Stars {
             bg := s[2] < 59 ? Theme.Bg : Theme.SideBg
-            g.SetFont("s7 norm c" Dashboard._Blend(bg, Dashboard.StarC, 0.56), "Segoe UI Symbol")
+            g.SetFont("s7 norm c" Dashboard._Blend(bg, Theme.Text, 0.56), "Segoe UI Symbol")
             c := g.Add("Text", "x" s[1] " y" s[2] " w12 h12 +0x80 Center Background" bg, Chr(0x2726))
             this._stars.Push({c: c, bg: bg, period: s[3], off: i * 397, lvl: 3})
             this._ids["star" i] := c
@@ -880,7 +893,7 @@ class Dashboard {
                 continue
             s.lvl := lvl
             try {
-                s.c.SetFont("c" Dashboard._Blend(s.bg, Dashboard.StarC, 0.12 + 0.88 * lvl / 6))
+                s.c.SetFont("c" Dashboard._Blend(s.bg, Theme.Text, 0.12 + 0.88 * lvl / 6))
                 s.c.Redraw()
             }
         }
@@ -893,7 +906,7 @@ class Dashboard {
         if (lvl = this._pulseLvl)
             return
         this._pulseLvl := lvl
-        col := Dashboard._Blend(Theme.Accent, Dashboard.PulseDark, lvl / 10)
+        col := Dashboard._Blend(Theme.Accent, Theme.Pulse, lvl / 10)
         try {
             Theme.SetColors(this._pill, col, Theme.Ink)
             if this._chipLive
@@ -1025,6 +1038,22 @@ class Dashboard {
         return c
     }
 
+    ; A big combat aura (Minions.bigAuras, default Equinox, Luminosity) blocks
+    ; the view: asked once per name typed. "Change it" puts the saved aura
+    ; back (Eden when that one is big too).
+    ; (MinionsTask.IsBig, like MemoryMatchTask above: the App loads every task)
+    _BigAuraCheck(ctl) {
+        v := Trim(ctl.Value)
+        if (v = "" || v = this._bigWarned || !MinionsTask.IsBig(this.cfg, v))
+            return
+        this._bigWarned := v
+        if (this._confirmBig.Call("Big auras fail more", v " is a big aura: it covers the view, so hunts miss targets and fail much more often. "
+            . "The camera zooms all the way out for it. Smaller auras (like Eden) work best.") = true)
+            return
+        was := Trim(this.cfg.Get("Minions.aura", "Eden"))
+        ctl.Value := (was = "" || MinionsTask.IsBig(this.cfg, was)) ? "Eden" : was
+    }
+
     _BoolField(x, y, label, key, def, w := 310, help := "") {
         c := Theme.Check(this._gui, x, y, label, 0, "", "pill", help != "" ? -1 : w)
         this._Bind("bool", key, def, c)
@@ -1119,6 +1148,7 @@ class Dashboard {
                 arr.Push(h["url"])
             link := this.cfg.Get("General.privateServer", "")
             arr.Push(link)
+            arr.Push(this.cfg.Get("Remote.token", ""))
             ; the share / link code alone is as secret as the whole link
             pos := 1
             while (pos := RegExMatch(link, "i)(?:code|privateServerLinkCode|linkCode)=([^&\s]+)", &m, pos)) {
@@ -2297,9 +2327,17 @@ class Dashboard {
         this._Panel(616, 300, 396, 96, "Hotkeys")
         this._hkText := Theme.Label(g, "x632 y330 w364 h44", "", "body")
 
-        this._Panel(616, 412, 396, 66, "Look", "Animations: the tab underline, page fade, moon, stars, running pulse and Home count-up. "
+        this._Panel(616, 412, 396, 152, "Look", "Theme: the colours and the background picture (Sol's RNG art). A new theme shows after Apply now or the next start. "
+            . "Animations: the tab underline, page fade, moon, stars, running pulse and Home count-up. "
             . "They only move while this window is in front, never while Roblox is.")
         this._BoolField(632, 446, "Animations", "UI.animations", 1)
+        Theme.Label(g, "x632 y482 w90 h20", "Theme")
+        this._themeDdl := Theme.Dropdown(g, 722, 478, 150, Theme.Names)
+        this._themeDdl.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+        this._ids["UI.theme"] := this._themeDdl
+        this._themeApply := Theme.Button(g, "x880 y478 w116 h28", "Apply now", (*) => this._Fire("restart"), "quiet")
+        this._ids["themeApply"] := this._themeApply
+        this._ids["themeNote"] := Theme.Label(g, "x632 y516 w364 h40", "", "muted")
         p.load := ObjBindMethod(this, "_SettingsLoad")
         p.save := ObjBindMethod(this, "_SettingsSave")
         this._SaveBar(p)
@@ -2355,6 +2393,15 @@ class Dashboard {
         hk := (k, d) => this.cfg.Get("Hotkeys." k, d)
         Theme.SetText(this._hkText, hk("start", "F1") " start   " hk("pause", "F2") " pause / resume   " hk("stop", "F3") " stop (halts potions)`n"
             . "Capture key " this._CapKey() "   Route recorder " RouteRecorder.Key)
+        this._themeDdl.Choose(Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide")))
+        this._ThemeNote()
+    }
+
+    ; "Now: X" or "X after Apply now" under the theme dropdown
+    _ThemeNote() {
+        saved := Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide"))
+        Theme.SetText(this._ids["themeNote"], saved = Theme.Current ? "Now: " Theme.Current " (" Theme.Presets[Theme.Current].Note ")"
+            : saved " shows after Apply now (restarts the macro while it is stopped) or the next start.")
     }
 
     _PsClear() {
@@ -2365,6 +2412,8 @@ class Dashboard {
     }
 
     _SettingsSave() {
+        this.cfg.Set("UI.theme", Theme.ThemeName(this._themeDdl.Text))
+        this._ThemeNote()
         cur := this.cfg.Get("General.privateServer", "")
         new := this._psWipe ? "" : UiLogic.NewSecret(cur, this._psEdit.Value)
         this.cfg.Set("General.privateServer", new)
@@ -2436,23 +2485,11 @@ class Dashboard {
         }
         this._ids["memoryLayoutNote"] := Theme.Label(g, "x632 y224 w364 h40", "", "muted")
         this._ids["memoryNote"] := Theme.Label(g, "x632 y272 w364 h20", "", "muted")
-        this._Panel(204, 388, 808, 220, "Minions (Halloween)", "In every weather biome (not rare, not event): puts on the combat aura, respawns, finds the orbs' and minions' health bars, "
-            . "walks up and uses the aura's skills (any aura with skills; never the number keys), then respawns (and puts your aura back when that is on). Once per biome. "
-            . "NORMAL has shown no orbs: it is not hunted unless Hunt in NORMAL too is on, only the aura and a respawn are made ready there. "
-            . "Needs the aura storage steps calibrated (as the obby). Auto roll can equip a new aura mid-hunt; the skills then do nothing until the next hunt. "
-            . "Shift lock keeps the character facing the target in fights; it needs Roblox's Shift Lock Switch setting on. "
-            . "Graveyard boss: once per GRAVEYARD start it looks around ~20 s for the boss (before any aura swap) and fights it up to 10 min.")
-        this._WarnOn(this._BoolField(220, 422, "Hunt orbs and minions", "Minions.enabled", 0), "Minion hunting is buggy", "Hunting orbs and minions is still very buggy at every screen size: it can get stuck, miss targets or walk off. Watch it when you use it.")
-        this._StrField(220, 460, "Combat aura", "Minions.aura", "Eden", 160)
-        this._IntField(220, 498, "Hunt at most", "Minions.maxSec", 120, "seconds", 170, 60)
-        this._BoolField(632, 422, "Put my aura back after", "Minions.putBack", 0)
-        this._BoolField(632, 460, "Use shift lock in fights", "Minions.shiftLock", 1)
-        this._BoolField(632, 498, "Fight the Graveyard boss", "Minions.boss", 1)
-        this._BoolField(632, 536, "Hunt in NORMAL too", "Minions.normal", 0)
-        ; every aura swap (the obby's Sailor too): ObbyTask EQUIP FIRST
-        this._BoolField(220, 536, "Equip the first search result", "Auras.equipFirst", 0, , "Equip the first search result (no name reading): use this if aura swaps fail at your resolution. "
+        ; every aura swap (the obby's Sailor, the combat aura, putting yours back)
+        this._Panel(204, 388, 808, 100, "Aura swaps")
+        this._BoolField(220, 422, "Equip the first search result", "Auras.equipFirst", 0, , "Equip the first search result (no name reading): use this if aura swaps fail at your resolution. "
             . "Make sure the search finds only the aura you want. Used for every aura swap: Sailor for the obby, the combat aura, and putting your aura back.")
-        Theme.Label(this._gui, "x220 y568 w380 h20", "For aura swaps that fail at your resolution (obby too).", "muted")
+        Theme.Label(this._gui, "x220 y454 w776 h20", "For aura swaps that fail at your resolution (the obby and Limited > Hunting too).", "muted")
         p.load := ObjBindMethod(this, "_ObbyMemoryLoad")
         p.validate := ObjBindMethod(this, "_ObbyMemoryCheck")
         this._SaveBar(p)
@@ -2482,11 +2519,301 @@ class Dashboard {
         tries := UiLogic.UInt(this.Ctrl("Obby.retries").Value, 1)
         if (tries > 3)
             return "obby: retries must be 0 to 3"
+        return ""
+    }
+
+    ; ---- page: Stats (Home) -----------------------------------------------------
+
+    ; [key, label] rows of the Today / This run panels. Keys are DailyStats
+    ; counters or DailyStats.Derived values (reelRate, fishPerHour, uptimeText).
+    static StatRows := [["fishCaught", "Fish caught"], ["fishFailed", "Fish missed"], ["reelRate", "Reel success"]
+        , ["fishPerHour", "Fish per hour"], ["sells", "Sell trips"], ["biomes", "Biomes seen"], ["rareBiomes", "Rare biomes"]
+        , ["rareAuras", "Rare auras"], ["rejoins", "Rejoins"], ["uptimeText", "Uptime"]]
+
+    _PageStats(p) {
+        g := this._gui
+        for col in [["day", 204, "Today"], ["run", 616, "This run"]] {
+            this._Panel(col[2], 152, 396, 300, col[3])
+            for i, r in Dashboard.StatRows {
+                y := 184 + (i - 1) * 26
+                Theme.Label(g, "x" col[2] + 16 " y" y " w200 h22", r[2], "body", Theme.CardBg)
+                this._ids["stats:" col[1] ":" r[1]] := Theme.Label(g, "x" col[2] + 216 " y" y " w164 h22 Right", "0", "value", Theme.CardBg)
+            }
+        }
+        this._Panel(204, 468, 808, 148, "Last 7 days")
+        hw := [120, 90, 90, 80, 90, 80, 90, 110]
+        Theme.ListHeader(g, 220, 496, hw, ["Day", "Fish", "Missed", "Reel", "Biomes", "Rare", "Rejoins", "Uptime"])
+        this._statsHist := Theme.ListView(g, 220, 520, 776, 84, ["Day", "Fish", "Missed", "Reel", "Biomes", "Rare", "Rejoins", "Uptime"], hw)
+        this._ids["stats:history"] := this._statsHist
+    }
+
+    ; Stats page. day / run: Maps of counters plus DailyStats.Derived keys
+    ; (missing = 0); history: Array of {label, m} newest first, or "" to keep it.
+    SetStatsPage(day, run, history := "") {
+        for col in [["day", day], ["run", run]] {
+            for r in Dashboard.StatRows {
+                c := this._ids["stats:" col[1] ":" r[1]]
+                v := Dashboard.StatText(col[2], r[1])
+                if (c.Text != v)
+                    Theme.SetText(c, v)
+            }
+        }
+        if !IsObject(history)
+            return
+        lv := this._statsHist
+        lv.Opt("-Redraw")
+        lv.Delete()
+        for h in history
+            lv.Add(, h.label, Dashboard.StatText(h.m, "fishCaught"), Dashboard.StatText(h.m, "fishFailed"), Dashboard.StatText(h.m, "reelRate")
+                , Dashboard.StatText(h.m, "biomes"), Dashboard.StatText(h.m, "rareBiomes"), Dashboard.StatText(h.m, "rejoins"), Dashboard.StatText(h.m, "uptimeText"))
+        lv.Opt("+Redraw")
+    }
+
+    ; one Stats cell: reelRate "87%" ("-" with no tries), uptimeText as given
+    ; ("0m" when missing), counters as whole numbers (missing = 0)
+    static StatText(m, k) {
+        v := (m is Map && m.Has(k)) ? m[k] : ""
+        if (k = "reelRate")
+            return (v = "") ? "-" : Round(v) "%"
+        if (k = "uptimeText")
+            return (v = "") ? "0m" : String(v)
+        if (k = "fishPerHour")
+            return (v = "") ? "0" : String(Round(v, 1))
+        return (v = "") ? "0" : String(Round(v))
+    }
+
+    ; ---- page: Daily summary (Alerts) -------------------------------------------
+
+    _PageSummary(p) {
+        g := this._gui
+        this._Panel(204, 152, 396, 200, "Daily summary", "Once a day at the time below, one Discord message with what the macro did that day. "
+            . "It goes to every webhook that has Stop (start / stop messages) ticked on Alerts > Discord. Send one now sends today's so far.")
+        this._BoolField(220, 186, "Send a daily summary to Discord", "Summary.enabled", 0)
+        this._StrField(220, 224, "Send at (24 h)", "Summary.time", "23:55", 70)
+        Theme.Label(g, "x220 y262 w364 h36", "Goes to the webhooks that get start / stop messages (Alerts > Discord).", "muted")
+        Theme.Button(g, "x220 y306 w150 h30", "Send one now", (*) => this._SummaryNow())
+        this._ids["summaryStatus"] := Theme.Label(g, "x380 y312 w210 h20", "", "muted")
+        this._Panel(616, 152, 396, 200, "What it says")
+        Theme.Label(g, "x632 y184 w364 h150", "Fish caught and missed, reel success`nSell trips`nBiomes and rare biomes seen`nRare auras rolled`nRejoins`nHow long the macro ran", "body", Theme.CardBg)
+        p.validate := () => Dashboard.TimeOk(this.Ctrl("Summary.time").Value) ? "" : "summary: send at must be a time like 23:55"
+        this._SaveBar(p)
+    }
+
+    _SummaryNow() {
+        r := this._Fire("sendSummary")
+        Theme.SetText(this._ids["summaryStatus"], r = "" ? "Not sent: the macro is not ready" : r)
+    }
+
+    ; "HH:mm" 24 h (one-digit hour allowed)
+    static TimeOk(s) => RegExMatch(Trim(String(s)), "^([01]?\d|2[0-3]):[0-5]\d$") ? true : false
+
+    ; ---- page: Remote (Alerts) --------------------------------------------------
+
+    _PageRemote(p) {
+        g := this._gui
+        this._Panel(204, 152, 396, 464, "Discord bot", "Your own Discord bot reads one channel and runs commands from the user ids below only. "
+            . "The token is secret: stored only in settings.ini, never shown or logged.")
+        this._BoolField(220, 186, "Allow commands from Discord", "Remote.enabled", 0)
+        Theme.Label(g, "x220 y228 w160 h20", "Bot token")
+        this._rmEdit := Theme.Edit(g, 380, 224, 136, 28, "", "Password")
+        this._rmEdit.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+        Theme.Button(g, "x524 y224 w60 h28", "Clear", (*) => this._RmClear(), "quiet")
+        this._rmMask := Theme.Label(g, "x380 y254 w204 h18", "", "small")
+        this._ids["remoteToken"] := this._rmEdit, this._ids["remoteTokenMask"] := this._rmMask
+        this._StrField(220, 280, "Channel id", "Remote.channel", "", 204, 160)
+        this._StrField(220, 318, "Allowed user ids", "Remote.users", "", 204, 160)
+        this._StrField(220, 356, "Command prefix", "Remote.prefix", "!", 40, 160)
+        Theme.Button(g, "x220 y402 w150 h30", "Test connection", (*) => this._RemoteTest())
+        this._ids["remoteStatus"] := Theme.Label(g, "x220 y442 w364 h56", "", "muted")
+        Theme.Label(g, "x220 y516 w364 h80", "Several user ids: separate them with commas.", "muted")
+        this._Panel(616, 152, 396, 464, "Set it up")
+        Theme.Label(g, "x632 y184 w364 h300", "1. discord.com/developers: New Application, then Bot: Reset Token and paste it here.`n`n"
+            . "2. On the same Bot page turn on MESSAGE CONTENT INTENT.`n`n"
+            . "3. OAuth2 > URL Generator: tick bot, then View Channels, Send Messages, Attach Files and Read Message History. Open the link and add the bot to your server.`n`n"
+            . "4. Discord Settings > Advanced: Developer Mode on. Right-click your channel: Copy Channel ID. Right-click yourself: Copy User ID.", "body", Theme.CardBg)
+        Theme.Label(g, "x632 y500 w364 h16", "COMMANDS", "caps", Theme.CardBg)
+        Theme.Label(g, "x632 y520 w364 h80", "!status   !stats   !screenshot   !log`n!start   !stop   !pause   !resume   !help", "body", Theme.CardBg)
+        p.load := ObjBindMethod(this, "_RemoteLoad")
+        p.save := ObjBindMethod(this, "_RemoteSave")
+        p.validate := ObjBindMethod(this, "_RemoteCheck")
+        this._SaveBar(p)
+    }
+
+    _RemoteLoad() {
+        this._rmWipe := false
+        this._rmEdit.Value := ""
+        cur := this.cfg.Get("Remote.token", "")
+        Theme.SetText(this._rmMask, cur = "" ? "(not set)" : UiLogic.MaskSecret(cur))
+    }
+
+    _RmClear() {
+        this._rmWipe := true
+        this._rmEdit.Value := ""
+        Theme.SetText(this._rmMask, "(clear on Save)")
+        this._MarkDirty("Remote")
+    }
+
+    _RemoteSave() {
+        cur := this.cfg.Get("Remote.token", "")
+        new := this._rmWipe ? "" : UiLogic.NewSecret(cur, this._rmEdit.Value)
+        this.cfg.Set("Remote.token", new)
+        this._rmWipe := false
+        this._rmEdit.Value := ""
+        Theme.SetText(this._rmMask, new = "" ? "(not set)" : UiLogic.MaskSecret(new))
+        return ""
+    }
+
+    ; "" or why Remote cannot be saved. Ids: Discord snowflakes (15-21 digits).
+    _RemoteCheck() {
+        ch := Trim(this.Ctrl("Remote.channel").Value)
+        users := Trim(this.Ctrl("Remote.users").Value)
+        if (ch != "" && !RegExMatch(ch, "^\d{15,21}$"))
+            return "remote: the channel id is a long number (right-click the channel, Copy Channel ID)"
+        for u in StrSplit(users, ",", " `t")
+            if (u != "" && !RegExMatch(u, "^\d{15,21}$"))
+                return "remote: user ids are long numbers separated by commas"
+        pre := Trim(this.Ctrl("Remote.prefix").Value)
+        if (StrLen(pre) < 1 || StrLen(pre) > 3 || InStr(pre, " "))
+            return "remote: the prefix is 1 to 3 characters, like !"
+        if this.Ctrl("Remote.enabled").Value {
+            tok := this._rmWipe ? "" : UiLogic.NewSecret(this.cfg.Get("Remote.token", ""), this._rmEdit.Value)
+            if (tok = "" || ch = "" || users = "")
+                return "remote: needs the bot token, the channel id and at least one user id"
+        }
+        return ""
+    }
+
+    _RemoteTest() {
+        Theme.SetText(this._ids["remoteStatus"], "Testing...")
+        r := this._Fire("testRemote")
+        Theme.SetText(this._ids["remoteStatus"], UiLogic.Scrub(r = "" ? "Not tested: the macro is not ready" : r, this._Secrets()))
+    }
+
+    ; ---- page: Check & help (Setup) ---------------------------------------------
+
+    static CheckTags := Map("ok", "[OK]", "warn", "[!]", "fail", "[X]", "info", "[i]")
+
+    _PageCheck(p) {
+        g := this._gui
+        this._Panel(204, 152, 396, 464, "Check my setup", "Looks at Roblox, your screen, the Roblox logs, your private server link, Discord webhooks, "
+            . "calibration and apps that pull focus away from Roblox. It sends no input. [!] = may cause trouble, [X] = will not work.")
+        Theme.Button(g, "x220 y186 w130 h30", "Check now", (*) => this._CheckNow(), "primary")
+        this._ids["checkSummary"] := Theme.Label(g, "x362 y192 w222 h20", "", "muted")
+        this._checkOut := Theme.Edit(g, 220, 228, 364, 372, "", "Multi ReadOnly -WantReturn VScroll")
+        this._ids["checkOut"] := this._checkOut
+        this._Panel(616, 152, 396, 200, "Send my log")
+        Theme.Label(g, "x632 y184 w364 h60", "Makes a zip of your log, a few screenshots and this check. Webhook links, server links, the bot token and your Windows name are taken out. "
+            . "Send it to whoever helps you.", "body", Theme.CardBg)
+        Theme.Button(g, "x632 y258 w150 h30", "Make support zip", (*) => this._LogZip())
+        this._zipBtn := Theme.Button(g, "x792 y258 w100 h30", "Show it", (*) => this._ZipShow(), "quiet")
+        this._SetHidden(this._zipBtn, true)
+        this._ids["zipStatus"] := Theme.Label(g, "x632 y298 w364 h40", "", "muted")
+        this._Panel(616, 368, 396, 248, "Setup wizard")
+        Theme.Label(g, "x632 y400 w364 h60", "Walks through the basics: the Roblox check, your private server, Discord and what to run. Every step can be skipped.", "body", Theme.CardBg)
+        Theme.Button(g, "x632 y472 w180 h30", "Run the setup wizard", (*) => this._Fire("wizard"))
+        this._zipPath := ""
+    }
+
+    _CheckNow() {
+        Theme.SetText(this._ids["checkSummary"], "Checking...")
+        this.ShowCheck(this._Fire("checkSetup"))
+    }
+
+    ; results: Array of {level, name, detail, fix} (SetupCheck.Run)
+    ShowCheck(results) {
+        if !IsObject(results) {
+            Theme.SetText(this._ids["checkSummary"], "Not checked: the macro is not ready")
+            return
+        }
+        text := "", n := Map("ok", 0, "warn", 0, "fail", 0, "info", 0)
+        for r in results {
+            lv := r.HasProp("level") ? r.level : "info"
+            n[lv] := (n.Has(lv) ? n[lv] : 0) + 1
+            tag := Dashboard.CheckTags.Has(lv) ? Dashboard.CheckTags[lv] : "[i]"
+            text .= tag "  " r.name (r.HasProp("detail") && r.detail != "" ? ": " r.detail : "") "`r`n"
+            if (r.HasProp("fix") && r.fix != "" && lv != "ok")
+                text .= "       " r.fix "`r`n"
+        }
+        this._checkOut.Value := UiLogic.Scrub(text, this._Secrets(), true)
+        Theme.SetText(this._ids["checkSummary"], n["ok"] " ok, " n["warn"] " warning" (n["warn"] = 1 ? "" : "s") ", " n["fail"] " problem" (n["fail"] = 1 ? "" : "s"))
+    }
+
+    _LogZip() {
+        Theme.SetText(this._ids["zipStatus"], "Making the zip...")
+        r := this._Fire("logBundle")
+        ok := IsObject(r) && r.HasProp("ok") && r.ok
+        this._zipPath := ok ? r.path : ""
+        this._SetHidden(this._zipBtn, !ok)
+        msg := !IsObject(r) ? "Not made: the macro is not ready" : ok ? "Made " RegExReplace(r.path, "^.*\\") " in the logs folder" : "Not made: " r.msg
+        Theme.SetText(this._ids["zipStatus"], UiLogic.Scrub(msg, this._Secrets()))
+    }
+
+    _ZipShow() {
+        if (this._zipPath != "" && FileExist(this._zipPath))
+            try Run('explorer.exe /select,"' this._zipPath '"')
+    }
+
+    ; ---- page: Schedule (Setup) -------------------------------------------------
+
+    _PageSchedule(p) {
+        g := this._gui
+        this._Panel(204, 152, 396, 264, "Run schedule")
+        this._BoolField(220, 186, "Start and stop on a schedule", "Schedule.enabled", 0)
+        this._StrField(220, 224, "Start at (24 h)", "Schedule.start", "22:00", 70)
+        this._StrField(220, 262, "Stop at (24 h)", "Schedule.end", "08:00", 70)
+        this._IntField(220, 300, "Stop after", "Schedule.maxHours", 0, "hours", 170, 0)
+        Theme.Label(g, "x220 y342 w364 h40", "0 hours = no limit. The same start and stop time = all day.", "muted")
+        this._Panel(616, 152, 396, 264, "How it works")
+        Theme.Label(g, "x632 y184 w364 h220", "At the start time the macro brings Roblox to the front and starts, as if you pressed F1. At the stop time it stops, as F3 does.`n`n"
+            . "Stop it yourself during the window and it stays stopped until the next one.`n`n"
+            . "Stop after also ends a run you started yourself (while the schedule is on).`n`n"
+            . "Roblox must be open; with auto-rejoin on the macro opens your private server when it is not.", "body", Theme.CardBg)
+        p.validate := ObjBindMethod(this, "_ScheduleCheck")
+        this._SaveBar(p)
+    }
+
+    _ScheduleCheck() {
+        if !Dashboard.TimeOk(this.Ctrl("Schedule.start").Value) || !Dashboard.TimeOk(this.Ctrl("Schedule.end").Value)
+            return "schedule: start and stop must be times like 22:00"
+        h := UiLogic.UInt(this.Ctrl("Schedule.maxHours").Value, 0)
+        if (h > 48)
+            return "schedule: stop after 0 to 48 hours"
+        return ""
+    }
+
+    ; ---- page: Hunting (Limited) ------------------------------------------------
+
+    ; Halloween minion / orb hunting: the game removes it later in November,
+    ; then this page (and the Limited hub, if nothing else is in it) goes.
+    _PageHunting(p) {
+        g := this._gui
+        this._Panel(204, 152, 808, 64, "Limited time")
+        this._ids["limitedNote"] := Theme.Label(g, "x220 y184 w776 h20", "Halloween event: the game removes hunting later in November.", "muted")
+        this._Panel(204, 232, 808, 220, "Hunting (Halloween)", "In every weather biome (not rare, not event): puts on the combat aura, respawns, finds the orbs' and minions' health bars, "
+            . "walks up and uses the aura's skills (any aura with skills; never the number keys), then respawns (and puts your aura back when that is on). Once per biome. "
+            . "NORMAL has shown no orbs: it is not hunted unless Hunt in NORMAL too is on, only the aura and a respawn are made ready there. "
+            . "Needs the aura storage steps calibrated (as the obby). Auto roll can equip a new aura mid-hunt; the skills then do nothing until the next hunt. "
+            . "Shift lock keeps the character facing the target in fights; it needs Roblox's Shift Lock Switch setting on. "
+            . "Graveyard boss: once per GRAVEYARD start it looks around ~20 s for the boss (before any aura swap) and fights it up to 10 min.")
+        this._WarnOn(this._BoolField(220, 266, "Hunt orbs and minions", "Minions.enabled", 0), "Minion hunting is buggy", "Hunting orbs and minions is still very buggy at every screen size: it can get stuck, miss targets or walk off. Watch it when you use it.")
+        auraEdit := this._StrField(220, 304, "Combat aura", "Minions.aura", "Eden", 160)
+        auraEdit.OnEvent("LoseFocus", (ctl, *) => this._BigAuraCheck(ctl))
+        this._IntField(220, 342, "Hunt at most", "Minions.maxSec", 120, "seconds", 170, 60)
+        this._BoolField(632, 266, "Put my aura back after", "Minions.putBack", 0)
+        this._BoolField(632, 304, "Use shift lock in fights", "Minions.shiftLock", 1)
+        this._BoolField(632, 342, "Fight the Graveyard boss", "Minions.boss", 1)
+        this._BoolField(632, 380, "Hunt in NORMAL too", "Minions.normal", 0)
+        p.validate := ObjBindMethod(this, "_HuntingCheck")
+        this._SaveBar(p)
+    }
+
+    ; "" or why Hunting cannot be saved (checked before cfg is touched).
+    _HuntingCheck() {
         secs := UiLogic.UInt(this.Ctrl("Minions.maxSec").Value, 120)
         if (secs < 60 || secs > 900)
-            return "minions: hunt at most 60 to 900 seconds"
+            return "hunting: hunt at most 60 to 900 seconds"
         if (Trim(this.Ctrl("Minions.aura").Value) = "")
-            return "minions: name the combat aura"
+            return "hunting: name the combat aura"
         return ""
     }
 

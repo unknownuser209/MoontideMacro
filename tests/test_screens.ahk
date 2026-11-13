@@ -205,6 +205,10 @@ Test_Screens_MemoryMatchBoard() {
     AssertEq(v.State(9), "matched", "green pair 9")
     AssertEq(v.State(15), "matched", "green pair 15")
     AssertEq(v.State(1), "hidden", "others face down")
+    v := ScrVision("mm_flip_anim")
+    AssertEq(v.State(16), "open", "flip_anim: tile 16 face up")
+    AssertTrue(v.State(11) != "hidden", "flip_anim: tile 11 mid-flip is not face down")
+    AssertEq(v.State(1), "hidden", "flip_anim: tile 1 face down")
 }
 
 Test_Screens_MemoryMatchPairsByPicture() {
@@ -496,6 +500,32 @@ Test_Screens_Fishing1080ReelSeen() {
         AssertTrue(white, "a border row is the bar's white frame (_ReelUp)")
     } finally
         Screen.Reset()
+}
+
+; FishingTask._ReelUnseen on the real 1080p reel: the bar's two borders are
+; found where they are, and 9 screen px lower (another Roblox top bar) the
+; reel rows follow by ~12 design px.
+Test_Screens_Fishing1080ReelSearchFindsTheBar() {
+    p := ScrFish1080("reel_x700_y600")
+    g := MatchFileGrab(p)
+    for shift in [0, 9] {
+        t := FsMakeCfg()
+        try {
+            ScrAt1080(700, 600 + shift)
+            logs := []
+            task := FishingTask(t.cfg, SchedState(), FsDeps(FsIO(), "", true, logs))
+            task.deps.grab := (x1, x2, ys, stride) => ScrStripRows(g, x1, x2, ys, stride)
+            task._ReelUnseen()
+            want := Round(shift / Screen.s)
+            AssertTrue(Abs(FishingTask.ReelDy - want) <= 2, "shift " shift ": rows moved " FishingTask.ReelDy ", want ~" want " (" FsJoin(logs) ")")
+            AssertTrue(FsHasLog(logs, "borders found"), "shift " shift ": borders found")
+        } finally {
+            FishLogic.WhiteMin := 220
+            FishingTask.ReelDy := 0
+            Screen.Reset()
+            FsClean(t.dir)
+        }
+    }
 }
 
 Test_Screens_Fishing1080CatchCard() {

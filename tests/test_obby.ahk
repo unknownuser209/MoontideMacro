@@ -50,6 +50,7 @@ class ObStore {
         this._px := Map()            ; "w,h,lit" -> pixel Array (Rect)
         this.names := Map()          ; aura -> what its name panel reads (a misread; default its name)
         this.lag := 0                ; name panel reads after each click that still show the aura selected before
+        this.logLag := 0             ; aura (log) reads after each change that still name the aura before
         this._lagAt := -1, this._lagN := 0
     }
     Results(search, tab := "regular") {
@@ -196,7 +197,25 @@ class ObStore {
         return ""
     }
     Pixel(x, y, c, tol) => (x = 600 && y = 600 && this.blessing && this.State().expanded) || (x = 500 && y = 500 && this.buffShown)
-    Aura() => {known: this.known, name: (this.logName != "-") ? this.logName : this.State().eq}
+    ; logLag: each change reaches the log this many reads later, in order
+    ; (the log's "Equipped" line follows a click by ~2 s live)
+    Aura() {
+        if (this.logName != "-")
+            return {known: this.known, name: this.logName}
+        eq := this.State().eq
+        if (this.logLag > 0) {
+            if !this.HasOwnProp("_logQ")
+                this._logQ := [{name: eq, at: -99999}], this._logReads := 0
+            this._logReads++
+            if (eq !== this._logQ[this._logQ.Length].name)
+                this._logQ.Push({name: eq, at: this._logReads})
+            for e in this._logQ
+                if (e.at + this.logLag <= this._logReads)
+                    eq := e.name
+            return {known: this.known, name: eq}
+        }
+        return {known: this.known, name: eq}
+    }
 }
 
 QmObbyCal(check := true) {
@@ -511,6 +530,39 @@ Test_Obby_LogPickSkipsReadOthersAndStopsAtTheFirstMatch() {
     for a in h
         AssertTrue(a != "Sailor: Admiral" && a != "Sailor Moon", "never equipped: " a)
     AssertEq(o.wh.Count("errors"), 0, "no error")
+}
+
+; the log names an equip ~3.5 s later (a slow PC): a late line for one
+; result, read while the next was being equipped, is not that next one's.
+; Before: Sailor Moon went on and "Sailor" was reported found
+Test_Obby_LogPickLateLineBelongsToItsOwnResult() {
+    owned := ["Sailor: Flying Dutchman", "Sailor", "Sailor Moon", "Glock"]
+    o := QmObbyTask("Glock", , , , owned)
+    o.s.logo := ["Sailor: Flying Dutchman", "Sailor", "Sailor Moon"]
+    o.s.logLag := 14
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(sw.ok, "Sailor on")
+    AssertEq(o.s.State().eq, "Sailor", "plain Sailor worn, not Sailor Moon")
+    for a in o.s.State().hist
+        AssertTrue(a != "Sailor Moon", "never equipped: " a)
+    AssertTrue(QmObbyLogHas(o.logs, "result 1 is Sailor: Flying Dutchman"), "the late line went to result 1")
+}
+
+; no log line at all after an equip: no more results are put on, in that
+; try or a later one
+Test_Obby_LogPickNoLineStopsTrying() {
+    owned := ["Sailor: Flying Dutchman", "Sailor", "Sailor Moon", "Glock"]
+    o := QmObbyTask("Glock", , , , owned)
+    o.s.logo := ["Sailor: Flying Dutchman", "Sailor", "Sailor Moon"]
+    o.s.logLag := 1000
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(!sw.ok, "not confirmed")
+    AssertEq(o.s.State().hist.Length, 1, "one result equipped, then no more in any later try")
+    n := 0
+    for a in o.s.State().hist
+        n += (a = "Sailor Moon") ? 1 : 0
+    AssertEq(n, 0, "Sailor Moon never tried")
+    AssertTrue(QmObbyLogHas(o.logs, "named no aura after it"), "said why")
 }
 
 ; the name panel still shows the tile before for a moment after a click: a
@@ -1128,6 +1180,24 @@ Test_Obby_EquipFirstClicksTheFirstTileThenEquipWithoutReads() {
     AssertTrue(!o.s.State().open, "storage closed again")
     AssertEq(QmObbyAuraReads(o.reads), 0, "still no name / button read")
     AssertEq(o.wh.Count("errors"), 0, "no error")
+}
+
+; live log lag (~2 s): the first read after Equip still names the aura
+; before. Before: that sent the swap on to the other tab and the next tries
+; clicked Equip again (Sailor off, or another tab's first result on)
+Test_Obby_EquipFirstWaitsForTheLogToChange() {
+    o := QmObbyEqFirst("Glock", ["Sailor", "Glock", "Glock: Shard"])
+    o.s.special := ["Glock: Shard"]
+    o.s.logLag := 8
+    sw := o.t.PutOnSailor(SchedCtx())
+    AssertTrue(sw.ok, "Sailor on")
+    AssertEq(o.s.State().eq, "Sailor", "Sailor worn")
+    AssertEq(QmClicksAt(o.io, "300,300"), 1, "Equip clicked once")
+    AssertTrue(QmObbyLogHas(o.logs, "(the log agrees)"), "confirmed by the log")
+    AssertTrue(o.t.PutBack(SchedCtx(), sw), "put back")
+    AssertEq(o.s.State().eq, "Glock", "Glock back, not Glock: Shard from the Special tab")
+    AssertEq(QmClicksAt(o.io, "300,300"), 2, "one Equip for the put-back")
+    AssertEq(QmCountMoves(o.io, "move 567,-25"), 0, "the Special tab never opened")
 }
 
 Test_Obby_EquipFirstRunsTheObbyAndUnequipsAfter() {

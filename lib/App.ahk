@@ -26,8 +26,15 @@
 #Include %A_LineFile%\..\tasks\Recovery.ahk
 #Include %A_LineFile%\..\tasks\Potions.ahk
 #Include %A_LineFile%\..\Updater.ahk
+#Include %A_LineFile%\..\Stats.ahk
+#Include %A_LineFile%\..\Schedule.ahk
+#Include %A_LineFile%\..\DailySummary.ahk
+#Include %A_LineFile%\..\Remote.ahk
+#Include %A_LineFile%\..\SetupCheck.ahk
+#Include %A_LineFile%\..\LogBundle.ahk
 #Include %A_LineFile%\..\ui\Dashboard.ahk
 #Include %A_LineFile%\..\ui\Overlay.ahk
+#Include %A_LineFile%\..\ui\Wizard.ahk
 ; ---------------------------------------------------------------------------
 ; App: wires every module into the running macro (Task 14b). Vesper.ahk only
 ; calls App.Main(A_ScriptDir, A_Args).
@@ -208,6 +215,16 @@ class App {
         this.root := App._Dep(d, "root", App.DefaultRoot())
         try ChatGuard.FlagPath := this.root "\logs\chat_hidden.flag"
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
+        this._frontFn := App._Dep(d, "front", "")     ; () -> exe in front (focus pause note); "" = the real one
+        this._refocusAt := []                        ; _Refocus times (ms)
+        ; v1.6 services (Boot "normal" makes the real ones; tests may pass them)
+        this.daily := App._Dep(d, "daily", "")       ; DailyStats: today / this run / 30 days
+        this.sched := App._Dep(d, "schedule", "")    ; RunSchedule
+        this.remote := ""                            ; DiscordRemote while Remote.enabled
+        this._wizard := ""
+        this._schedStarting := false
+        this._svc := Map("sched", 0, "sum", 0, "save", 0, "stats", 0, "hist", 0)
+        this._svcErr := Map()
         this.state := App._Dep(d, "state", "")
         if !IsObject(this.state)
             this.state := SchedState()
@@ -494,6 +511,8 @@ class App {
         this._loops := 0
         this._lastLoops := this.state.fishLoops
         this.state.stats := Map()          ; this session's counters (stop summary)
+        if IsObject(this.daily)
+            try this.daily.StartSession()
         this._pauseReason := ""
         this._note := ""
         this._holdUntil := 0
@@ -530,12 +549,16 @@ class App {
         this._Broadcast(Emoji.Moon " " Brand.Name, "## Macro started`nMade by " Credits.Name() "`n" App.DiscordLine, 0xF2A93B, App.StartFields(this.cfg))
         this.CheckCredits()
         win := this._Window()
-        if (win != "ok")
+        if (win = "missing" && this._RejoinReady())
+            this.Log("Roblox is not open: auto-rejoin opens your private server")
+        else if (win != "ok")
             this._PauseFor(win)
         else if (this._taskMap.Has("fishing") && HasMethod(this._taskMap["fishing"], "LineInAtStart"))
             this._taskMap["fishing"].LineInAtStart(this.ctx)     ; a line a stop left out
         this.timerFn.Call(this._tickFn, App.TickMs)
         this._timerOn := true
+        if IsObject(this.sched)
+            try this.sched.NoteStart(this._schedStarting)
         this._Status()
         return true
     }
@@ -561,7 +584,7 @@ class App {
         if !this._started
             return false
         win := this._Window()
-        if (win != "ok") {
+        if (win != "ok" && !(win = "missing" && this._RejoinReady())) {
             this._PauseFor(win)
             this._Status()
             return false
@@ -590,6 +613,10 @@ class App {
         try this._RestoreFake(true)
         if was {
             this._uptime := this.Now() - this._startedAt
+            if IsObject(this.daily)
+                try this.daily.StopSession(), this.daily.Save()
+            if IsObject(this.sched)
+                try this.sched.NoteStop()
             this.Log("Stopped (" why ")")
             this._Send("startstop", "Macro stopped", "## Session summary`nStopped: " App._Cap(why), 0x0B2A5B, this._StopFields(this._uptime))
         }
@@ -598,12 +625,53 @@ class App {
     }
 
     _PauseFor(kind) {
+        if (kind = "unfocused" && this._Refocus())
+            return
         m := App.Msg[kind]
         if (this._pauseReason != m[1])
-            this.Log("Paused: " m[2])
+            this.Log("Paused: " m[2] (kind = "unfocused" ? App.FrontNote(this._frontFn) : ""))
         this._pauseReason := m[1]
         this.ctx.Pause()
         try this.input.ReleaseAll()
+    }
+
+    ; Apps that pull focus away from Roblox on their own (exe -> what to do).
+    static FocusThieves := Map("mspcmanager.exe", "Microsoft PC Manager's toolbar takes focus: close PC Manager or turn its toolbar off"
+        , "medal.exe", "Medal's overlay or a clip notice took focus: turn off Medal's in-game notifications")
+
+    ; A known focus thief (FocusThieves) took the focus: Roblox is put back in
+    ; front, at most RefocusMax times in RefocusWindowMs (live 2026-11-12: PC
+    ; Manager's toolbar took it 1.5 s after every F1 and every run paused).
+    ; -> true when Roblox is in front again (no pause).
+    static RefocusMax := 3
+    static RefocusWindowMs := 60000
+    _Refocus() {
+        exe := ""
+        try exe := IsObject(this._frontFn) ? this._frontFn.Call() : WinGetProcessName("A")
+        if !App.FocusThieves.Has(StrLower(exe))
+            return false
+        now := this.Now()
+        while (this._refocusAt.Length && now - this._refocusAt[1] > App.RefocusWindowMs)
+            this._refocusAt.RemoveAt(1)
+        if (this._refocusAt.Length >= App.RefocusMax)
+            return false
+        this._refocusAt.Push(now)
+        try this.roblox.Focus(2)
+        if !this._Active()
+            return false
+        this.Log("Roblox put back in front (" exe " took the focus)")
+        return true
+    }
+
+    ; " In front: <exe>." (+ a hint for a known focus thief) or "" when it
+    ; cannot be told. frontFn: () -> exe name of the foreground window.
+    static FrontNote(frontFn := "") {
+        exe := ""
+        try exe := IsObject(frontFn) ? frontFn.Call() : WinGetProcessName("A")
+        if (exe = "")
+            return ""
+        k := StrLower(exe)
+        return " In front: " exe "." (App.FocusThieves.Has(k) ? " " App.FocusThieves[k] "." : "")
     }
 
     ; ---- tick -------------------------------------------------------------------
@@ -1045,6 +1113,11 @@ class App {
     }
 
     _RecoveryOn() => IsObject(this.recovery) && this.cfg.Get("recovery.enabled", 1)
+    ; Roblox closed at F1 / F2: auto-rejoin can open the private server (on,
+    ; with a usable link). Before, Start paused ("Roblox not found") and F2
+    ; was refused until Roblox was opened by hand (live 2026-11-11: Roblox
+    ; had closed after a rejoin).
+    _RejoinReady() => this._RecoveryOn() && RecoveryTask.LinkOk(Trim(String(this.cfg.Get("General.privateServer", ""))))
 
     ; "ok" | "missing" | "notfs" (windowed / minimized). "ok" also refreshes
     ; Screen's mapping to the client (Roblox.ClientOk) and logs the display
@@ -1402,6 +1475,7 @@ class App {
     _Secrets() {
         arr := []
         try arr.Push(this.cfg.Get("General.privateServer", ""))
+        try arr.Push(this.cfg.Get("Remote.token", ""))
         try {
             for w in this.cfg.Webhooks()
                 arr.Push(w["url"])
@@ -1428,6 +1502,8 @@ class App {
     ; ---- dashboard callbacks ----------------------------------------------------
 
     OnSaved(page) {
+        if (page = "Remote")
+            this._RemoteSetup()
         qi := this.cfg.Get("General.questIntervalMin", 30)
         if (IsInteger(qi) && qi > 0)
             this.state.questIntervalMs := qi * 60000
@@ -1753,6 +1829,8 @@ class App {
     ; ---- boot, hotkeys, exit ----------------------------------------------------
 
     Boot(mode := "normal") {
+        if (mode = "normal")
+            Theme.Use(this.cfg.Get("UI.theme", "Moontide"))     ; before any window
         this.ShowSplash(mode)
         try Screenshot.Cleanup()
         ; calibration first: the Dashboard's Calibrate list is built from it
@@ -1787,6 +1865,284 @@ class App {
         ; update check shortly after start, off the boot path (silent when [Update] repo is empty)
         if (mode = "normal" && this.Updater().Enabled)
             SetTimer(ObjBindMethod(this, "OnCheckUpdate", false), -2500)
+        if (mode = "normal") {
+            this.StartServices()
+            if (IsObject(this.dash) && SetupWizard.ShouldShow(this.cfg))
+                SetTimer(ObjBindMethod(this, "OpenWizard"), -1500)
+        }
+    }
+
+    ; ---- v1.6 services: stats, schedule, daily summary, Discord remote --------------
+
+    ; Normal start only (tests build them by hand): the day counters, the
+    ; schedule, the remote, and one 500 ms service timer that runs while the
+    ; macro is stopped too.
+    StartServices() {
+        if !IsObject(this.daily) {
+            this.daily := DailyStats(this.root "\data\stats.json")
+            try this.daily.Load()
+        }
+        this.state.onBump := ObjBindMethod(this, "_DailyAdd")
+        if !IsObject(this.sched)
+            this.sched := RunSchedule(this.cfg)
+        this._RemoteSetup()
+        SetTimer(ObjBindMethod(this, "ServiceTick"), 500)
+    }
+
+    _DailyAdd(key, n) {
+        if IsObject(this.daily)
+            this.daily.Add(key, n)
+    }
+
+    ; Never throws (a timer). Remote polling waits while a timed walk plays:
+    ; a request there would hold its key down longer (see _TickBody).
+    ServiceTick() {
+        now := A_TickCount
+        if (IsObject(this.remote) && !Input.InRoute)
+            this._ServiceStep("remote", () => this.remote.Tick())
+        if (now - this._svc["sched"] >= 15000) {
+            this._svc["sched"] := now
+            this._ServiceStep("schedule", () => this._ScheduleTick())
+        }
+        if (now - this._svc["sum"] >= 30000) {
+            this._svc["sum"] := now
+            this._ServiceStep("daily summary", () => this._SummaryTick())
+        }
+        if (now - this._svc["save"] >= 60000) {
+            this._svc["save"] := now
+            if IsObject(this.daily)
+                this._ServiceStep("stats save", () => this.daily.Save())
+        }
+        if (now - this._svc["stats"] >= 3000) {
+            this._svc["stats"] := now
+            this._ServiceStep("stats page", () => this._StatsPageTick())
+        }
+    }
+
+    ; one service step; its first error of each kind is logged, never thrown
+    _ServiceStep(what, fn) {
+        try {
+            fn.Call()
+        } catch Any as e {
+            k := what ": " e.Message
+            if !this._svcErr.Has(k) {
+                this._svcErr[k] := true
+                try this.Log("Service " what " failed: " App._ErrText(e))
+            }
+        }
+    }
+
+    ; Run schedule: start (Roblox brought to the front first) / stop.
+    _ScheduleTick() {
+        if !IsObject(this.sched)
+            return
+        act := this.sched.Tick(A_Now, this._started, IsObject(this.daily) ? this.daily.RunMs() : 0)
+        if (act = "start") {
+            this.Log("Schedule: start time, starting")
+            this._FrontRoblox()
+            this._schedStarting := true
+            try this.Start()
+            this._schedStarting := false
+        } else if (act = "stop") {
+            this.Log("Schedule: stop time")
+            this.Stop("schedule")
+        }
+    }
+
+    ; Roblox to the front before a start that no key press made (schedule,
+    ; Discord): Start pauses at once while another window is in front.
+    _FrontRoblox() {
+        try this.roblox.Focus(3)
+    }
+
+    ; ---- daily summary ----
+
+    _SummaryPath() => this.root "\data\summary_last.txt"
+
+    _SummaryLast() {
+        try return Trim(FileRead(this._SummaryPath()))
+        return ""
+    }
+
+    _SummaryTick() {
+        if (IsObject(this.daily) && DailySummary.Due(this.cfg, A_Now, this._SummaryLast()))
+            this.SendSummary()
+    }
+
+    ; Today's numbers to the webhooks with Stop (startstop) ticked. -> a line
+    ; for the dashboard. The day counts as sent even with no webhook (asked
+    ; again tomorrow, not every 30 s).
+    SendSummary() {
+        if !IsObject(this.daily)
+            return "Not sent: the macro is not ready"
+        today := FormatTime(A_Now, "yyyyMMdd")
+        try {
+            f := FileOpen(this._SummaryPath(), "w", "UTF-8-RAW")
+            f.Write(today), f.Close()
+        }
+        n := 0
+        try n := this.wh.Route("startstop").Length
+        if !n {
+            this.Log("Daily summary: no webhook has Stop ticked (Alerts > Discord)")
+            return "Not sent: no webhook has Stop ticked (Alerts > Discord)"
+        }
+        b := DailySummary.Build(this.daily.Day(), today)
+        this._Send("startstop", b.title, b.desc, 0xF2A93B, b.fields)
+        this.Log("Daily summary sent")
+        return "Sent to " n " webhook" (n = 1 ? "" : "s")
+    }
+
+    ; ---- stats page ----
+
+    static WithDerived(m) {
+        out := (m is Map) ? m.Clone() : Map()
+        try {
+            for k, v in DailyStats.Derived(out)
+                out[k] := v
+        }
+        return out
+    }
+
+    _StatsPageTick() {
+        if !(IsObject(this.daily) && IsObject(this.dash) && this.dash._shown && this.dash.ActivePage = "Stats")
+            return
+        hist := ""
+        if (A_TickCount - this._svc["hist"] >= 30000) {
+            this._svc["hist"] := A_TickCount
+            hist := []
+            Loop 7 {
+                ts := DateAdd(A_Now, 1 - A_Index, "Days")
+                hist.Push({label: A_Index = 1 ? "Today" : FormatTime(ts, "ddd d MMM"), m: App.WithDerived(this.daily.Day(FormatTime(ts, "yyyyMMdd")))})
+            }
+        }
+        this.dash.SetStatsPage(App.WithDerived(this.daily.Day()), App.WithDerived(this.daily.Session()), hist)
+    }
+
+    ; ---- Discord remote ----
+
+    _RemoteSetup() {
+        this.remote := ""
+        if !this.cfg.Get("Remote.enabled", 0)
+            return
+        r := DiscordRemote(this._RemoteDeps())
+        if !r.Enabled {
+            this.Log("Remote: needs the bot token, the channel id and at least one user id (Alerts > Remote)")
+            return
+        }
+        this.remote := r
+        this.Log("Remote: listening for commands in your Discord channel")
+    }
+
+    _RemoteDeps() {
+        c := this.cfg
+        return Map("token", c.Get("Remote.token", ""), "channelId", Trim(c.Get("Remote.channel", "")), "allowedIds", c.Get("Remote.users", "")
+            , "prefix", c.Get("Remote.prefix", "!"), "pollSec", c.Get("Remote.pollSec", 5)
+            , "log", (t) => this.Log("Remote: " t), "handlers", this._RemoteHandlers())
+    }
+
+    _RemoteHandlers() {
+        return Map(
+            "status", (args, msg) => this._RemoteStatus(),
+            "stats", (args, msg) => this._RemoteStats(),
+            "start", (args, msg) => (this._FrontRoblox(), this.Start() ? "Started." : this._started ? "Already running." : "Not started: see the log."),
+            "stop", (args, msg) => (this.Stop("Discord") ? "Stopped." : "It was not running."),
+            "pause", (args, msg) => (this.Pause() ? "Paused." : "It is not running."),
+            "resume", (args, msg) => (this._FrontRoblox(), this.Resume() ? "Resumed." : "Not resumed: " (this._pauseReason != "" ? this._pauseReason : "it is not paused") "."),
+            "screenshot", (args, msg) => this._RemoteShot(),
+            "log", (args, msg) => this._RemoteLog())
+    }
+
+    _RemoteStatus() {
+        st := !this._started ? "Stopped" : this.ctx.IsPaused() ? "Paused" : "Running"
+        task := (this._pauseReason != "") ? this._pauseReason : IsObject(this._running) ? StrTitle(this._running.name) : ""
+        up := this._started ? this.Now() - this._startedAt : 0
+        t := "**" st "**" (task != "" ? " - " task : "")
+        if (this.state.biome != "")
+            t .= "`nBiome: " this.state.biome (this.state.rareActive ? " (rare)" : "")
+        if this._started
+            t .= "`nUptime: " DailyStats.Derived(Map("runMs", up))["uptimeText"]
+        return t
+    }
+
+    _RemoteStats() {
+        if !IsObject(this.daily)
+            return "No stats yet."
+        b := DailySummary.Build(this.daily.Day(), FormatTime(A_Now, "yyyyMMdd"))
+        t := "**Today**"
+        for f in b.fields
+            t .= "`n" f["name"] ": " f["value"]
+        return t
+    }
+
+    _RemoteShot() {
+        path := ""
+        try path := Screenshot.Capture(this.roblox.Hwnd())
+        return (path != "" && FileExist(path)) ? {text: "Screenshot", file: path} : "Roblox is not open."
+    }
+
+    _RemoteLog() {
+        lines := []
+        try {
+            for ln in StrSplit(RTrim(this.dash.LogText(), "`r`n"), "`n")
+                lines.Push(ln)
+        }
+        t := ""
+        i := Max(1, lines.Length - 9)
+        while (i <= lines.Length)
+            t .= RTrim(lines[i], "`r") "`n", i++
+        t := UiLogic.Scrub(t, this._Secrets(), true)
+        return (t = "") ? "The log is empty." : "``````" SubStr(t, -1800) "``````"
+    }
+
+    ; Dashboard "Test connection" with the saved settings (blocking, a button).
+    OnTestRemote() {
+        r := DiscordRemote(this._RemoteDeps())
+        if !r.Enabled
+            return "Not tested: save the bot token, the channel id and a user id first"
+        res := r.Test()
+        if (res.ok && IsObject(this.remote))
+            try this.remote.Reset()
+        return res.msg
+    }
+
+    ; Settings > Look "Apply now": a new theme needs new windows, so the macro
+    ; restarts (only while stopped: a run is never cut short for a colour).
+    OnRestart() {
+        if this._started {
+            this.Log("Theme: stop the macro first (F3), then press Apply now")
+            return false
+        }
+        this.Log("Theme: restarting to show " Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide")))
+        Reload()
+        return true
+    }
+
+    ; ---- check & help, setup wizard ----
+
+    OnCheckSetup() => SetupCheck.Run(this.cfg)
+
+    OnLogBundle() {
+        rep := ""
+        try rep := SetupCheck.Report(SetupCheck.Run(this.cfg))
+        r := LogBundle.Make(this.root, Map("report", rep))
+        if r.ok
+            this.Log("Support zip made: " RegExReplace(r.path, "^.*\\"))
+        return r
+    }
+
+    OpenWizard() {
+        if !IsObject(this.dash)
+            return
+        try this._wizard.Destroy()
+        this._wizard := SetupWizard(this.cfg, Map("checkSetup", () => this.OnCheckSetup(), "done", (f) => this._WizardDone(f)))
+        this._wizard.Show(this.dash._gui)
+    }
+
+    _WizardDone(finished) {
+        this._wizard := ""
+        this.Log("Setup wizard " (finished ? "finished" : "skipped") (finished ? "" : " (Setup > Check & help runs it again)"))
+        for page in ["Settings", "Fishing", "Craft", "Quests", "Merchants", "Obby & Memory", "Webhooks"]
+            try this.dash.RevertPage(page)
     }
 
     ; ---- updates (lib\Updater.ahk) -----------------------------------------------
@@ -1897,6 +2253,12 @@ class App {
             "testWebhook", (i) => this.OnTestWebhook(i),
             "checkUpdate", () => this.OnCheckUpdate(true),
             "installUpdate", () => this.OnInstallUpdate(),
+            "checkSetup", () => this.OnCheckSetup(),
+            "logBundle", () => this.OnLogBundle(),
+            "wizard", () => this.OpenWizard(),
+            "sendSummary", () => this.SendSummary(),
+            "testRemote", () => this.OnTestRemote(),
+            "restart", () => this.OnRestart(),
             "close", () => (this.dash.Hide(), App.TrimMemory()))
         this.dash := Dashboard(this.cfg, cb)
         this.overlay := Overlay(this.cfg, Map("start", cb["start"], "pause", cb["pause"], "stop", cb["stop"]))
@@ -1950,8 +2312,12 @@ class App {
                 this.ctx.Stop()
                 this._Send("startstop", "Macro stopped", "## Session summary`nStopped: app exited.", 0x0B2A5B
                     , this._StopFields(this.Now() - this._startedAt))
+                if IsObject(this.daily)
+                    try this.daily.StopSession()
             }
         }
+        if IsObject(this.daily)
+            try this.daily.Save()
         try this.clip.CancelAll()
         try this.input.ReleaseAll()
         try this.wh.Drain(3000)
@@ -1981,7 +2347,7 @@ class App {
         if (mode = "normal") {
             ; display self-check (Vesper.ahk set the DPI awareness first)
             inst.Log("Display: DPI awareness " (Screen.dpiSet = "" ? "not set" : Screen.dpiSet)
-                . ", main monitor " A_ScreenWidth "x" A_ScreenHeight " at " Screen.ScaleAt() "%")
+                . ", main monitor " A_ScreenWidth "x" A_ScreenHeight " at " Screen.ScaleAt() "%, " Screen.HdrText())
             try {
                 if (inst._Window() != "ok")
                     inst.Log("Display: Roblox is not open fullscreen yet; it is checked again at F1")
@@ -2001,6 +2367,7 @@ class App {
         sec := []
         if IsObject(cfg) {
             try sec.Push(cfg.Get("General.privateServer", ""))
+            try sec.Push(cfg.Get("Remote.token", ""))
             try {
                 for w in cfg.Webhooks()
                     sec.Push(w["url"])

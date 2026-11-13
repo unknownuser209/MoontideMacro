@@ -546,7 +546,11 @@ class FishLogic {
         mx := Max(r, g, b)
         return mx < 70 || (mx < 100 && mx - Min(r, g, b) <= 24)
     }
-    static ReelWhite(c) => Min((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF) > 220
+    ; White: every channel above WhiteMin. FishingTask._ReelUnseen lowers it
+    ; for the session when the reel is up but its white border reads dimmer
+    ; (a friend's PC, 2026-11-11: the minigame ran, nothing was clicked).
+    static WhiteMin := 220
+    static ReelWhite(c) => Min((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF) > FishLogic.WhiteMin
     ; Largest single-channel difference. The fish under the click bar can be
     ; very close to the bar's colour: (0,255,255) on (47,255,255) by day,
     ; (75,156,255) on (71,173,255) at night, while the bar itself varies by

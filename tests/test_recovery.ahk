@@ -95,6 +95,8 @@ class RcRig {
         this.ocrCalls := 0
         this.closes := 0
         this.paused := 0
+        this.updateUntil := 0       ; a Roblox launcher process runs until this fake time
+        this.updateName := "RobloxPlayerInstaller.exe"
         this.state := SchedState()
         rig := this
         this.task := RecoveryTask({
@@ -108,6 +110,7 @@ class RcRig {
             active: () => rig.focus,
             focus: () => (rig.focusCalls++, rig.canFocus),
             ocr: (x, y, w, h) => (rig.ocrCalls++, rig.screen),
+            procs: (name) => (name = rig.updateName && rig.clock.t < rig.updateUntil),
             close: () => (rig.closes++, rig.win := false, true),
             run: (target) => (rig.runs.Push(target), rig.windowAt := rig.clock.t + rig.openMs, rig.win := true)
         })
@@ -551,4 +554,64 @@ Test_Recovery_Stuck_AbortedResetKeepsClock() {
     AssertEq(rig.task.CanRun(rig.state), true, "progress clock not restarted")
     AssertEq(rig.task.Run(rig.Ctx()), 1, "completes next time")
     AssertEq(rig.task.CanRun(rig.state), false, "clock restarted after success")
+}
+
+; ---- Roblox update: the launcher downloads before the window exists --------
+
+Test_Recovery_Update_WaitsForTheLauncher() {
+    rig := RcRig()
+    rig.win := false
+    rig.openMs := 250000                 ; window after 250 s: the update downloaded
+    rig.updateUntil := rig.clock.t + 250000
+    t0 := rig.clock.t
+    AssertEq(rig.task.Run(rig.Ctx()), 1, "rejoined after the update")
+    AssertEq(rig.runs.Length, 1, "the link was opened once (no second attempt)")
+    AssertTrue(rig.clock.t - t0 >= 250000, "waited the whole update")
+    AssertTrue(!InStr(rig.hook.Text(), "Recovery failed"), "no failed-rejoin report")
+    log := rig.AllText()
+    AssertTrue(InStr(log, "Roblox is updating - waiting for it to finish"), "update logged")
+    StrReplace(log, "Roblox is updating", , , &n)
+    AssertEq(n, 1, "update logged once")
+    AssertEq(rig.task.CanRun(rig.state), false, "no hold after a good rejoin")
+}
+
+Test_Recovery_Update_CappedAtTenMinutes() {
+    rig := RcRig()
+    rig.win := false
+    rig.openMs := 10 ** 9
+    rig.updateUntil := 10 ** 12          ; the launcher never ends
+    t0 := rig.clock.t
+    AssertEq(rig.task.Run(rig.Ctx()), 0, "gave up")
+    el := rig.clock.t - t0
+    AssertTrue(el >= 90000 + RecoveryTask.UpdateMaxMs && el < 90000 + RecoveryTask.UpdateMaxMs + 5000, "90 s + 10 min, elapsed " el)
+    AssertTrue(InStr(rig.hook.Text(), "errors|Recovery failed"), "errors webhook after the cap")
+}
+
+Test_Recovery_Update_NoLauncherNoExtraWait() {
+    rig := RcRig()
+    rig.win := false
+    rig.openMs := 10 ** 9
+    t0 := rig.clock.t
+    rig.task.Run(rig.Ctx())
+    AssertTrue(rig.clock.t - t0 < 95000, "90 s wait when no launcher runs")
+    AssertTrue(!InStr(rig.AllText(), "Roblox is updating"), "nothing logged")
+}
+
+Test_Recovery_Update_LauncherList() {
+    for n in ["RobloxPlayerInstaller.exe", "RobloxPlayerLauncher.exe", "Bloxstrap.exe", "Fishstrap.exe", "Voidstrap.exe"] {
+        found := false
+        for l in RecoveryTask.Launchers
+            if (l = n)
+                found := true
+        AssertTrue(found, "launcher listed: " n)
+    }
+    ; each name alone counts as an update
+    for n in RecoveryTask.Launchers {
+        rig := RcRig()
+        rig.win := false
+        rig.openMs := 120000
+        rig.updateName := n
+        rig.updateUntil := rig.clock.t + 120000
+        AssertEq(rig.task.Run(rig.Ctx()), 1, "waited for " n)
+    }
 }

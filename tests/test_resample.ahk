@@ -281,6 +281,24 @@ Test_Resample_ScreensAt1920x1080() {
     AssertEq(RsJoin(RsScreensChecks(1920, 1080)), "", "every screen read at 1920x1080")
 }
 
+; live 1920x1080 2026-11-11 19:07, after a game update: the face-down tiles
+; are brighter (corner 0x3E3E3E, was 0x222222) and the fixed corner colour
+; read all 20 as "open", so the board never counted as dealt. A native
+; 1080p frame (not a resample).
+Test_Resample_MemoryMatchFaceDownAt1080Native() {
+    try {
+        RsAt(1920, 1080)
+        v := MatchVision(RsMapGrab(MatchFileGrab(A_ScriptDir "\screens\mm_board_down_1080.jpg")))
+        bad := []
+        Loop 20
+            if (v.State(A_Index) != "hidden")
+                bad.Push(A_Index ":" v.State(A_Index))
+        AssertEq(RsJoin(bad), "", "every tile face down")
+    } finally {
+        Screen.Reset()
+    }
+}
+
 Test_Resample_ScreensAt1600x900() {
     AssertEq(RsJoin(RsScreensChecks(1600, 900)), "", "every screen read at 1600x900")
 }
@@ -289,14 +307,63 @@ Test_Resample_ScreensAt1366x768() {
     AssertEq(RsJoin(RsScreensChecks(1366, 768)), "", "every screen read at 1366x768")
 }
 
-; Pixel reads below 1440p: Memory Match's pairs (the amount's column profile
-; is too fine for a nearest-pixel grab) and, at 900p / 768p, the first aura
-; tiles of one frame. Not OCR: pinned as known misses so a fix or a new miss
-; shows. Tile states read at every size.
+; Pixel reads below 1440p: Memory Match's pairs and, at 900p / 768p, the
+; first aura tiles of one frame. Not OCR: pinned as known misses so a fix or
+; a new miss shows. Tile states read at every size. The "mm pairs" miss is
+; these frames' own: a 1440p clip shrunk with smoothing blurs each tile's
+; thin amount text at another sub-pixel phase (real pairs 0.04-0.12 apart,
+; 2026-11-12), while the game draws every tile's text on whole pixels (pairs
+; 0.00-0.01 at native 1440p, though tiles sit at fractional x there too).
+; Natively the amount is read one sample per screen px
+; (Test_Resample_MemoryMatchAmountOncePerPixel).
 Test_Resample_PixelReads() {
     AssertEq(RsJoin(RsPixelChecks(1920, 1080)), "mm pairs", "1920x1080 pixel reads")
     AssertEq(RsJoin(RsPixelChecks(1600, 900)), "aura_search_sailor tile 1, aura_search_sailor tile 2, aura_search_sailor tile 3, aura_search_sailor tile 4, aura_search_sailor tile 5, mm pairs", "1600x900 pixel reads")
     AssertEq(RsJoin(RsPixelChecks(1366, 768)), "aura_search_sailor tile 1, aura_search_sailor tile 2, aura_search_sailor tile 3, aura_search_sailor tile 4, aura_search_sailor tile 5, mm pairs", "1366x768 pixel reads")
+}
+
+; Memory Match's amount line below 1440p: every screen column and row of it
+; read exactly once (a design-px step read some twice, at other columns per
+; tile, so a pair's two profiles differed).
+Test_Resample_MemoryMatchAmountOncePerPixel() {
+    for sz in [[1920, 1080], [1600, 900], [1366, 768], [2560, 1440]] {
+        RsAt(sz[1], sz[2])
+        try {
+            calls := []
+            fake := (x1, x2, ys, stride) => (calls.Push({x1: x1, x2: x2, ys: ys, st: stride}), RsZeros(x1, x2, ys, stride))
+            v := MatchVision(fake)
+            Loop 20 {
+                calls.Length := 0
+                v.Sig(A_Index)
+                c := calls[2]                      ; [1] icon, [2] the amount line
+                m := StripGrab.Map(c.x1, c.x2, c.ys, c.st)
+                AssertTrue(RsConsecutive(m.xs), sz[2] "p tile " A_Index ": columns once each")
+                AssertTrue(RsConsecutive(m.ys), sz[2] "p tile " A_Index ": rows once each")
+            }
+        } finally
+            Screen.Reset()
+    }
+}
+
+RsZeros(x1, x2, ys, stride) {
+    n := 0, x := x1
+    while (x <= x2)
+        n++, x += stride
+    out := []
+    for y in ys {
+        row := []
+        Loop n
+            row.Push(0)
+        out.Push(row)
+    }
+    return out
+}
+
+RsConsecutive(a) {
+    Loop a.Length - 1
+        if (a[A_Index + 1] != a[A_Index] + 1)
+            return false
+    return a.Length > 10
 }
 
 Test_Resample_3840x2160() {

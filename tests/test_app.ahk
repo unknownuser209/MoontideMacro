@@ -798,3 +798,18 @@ Test_App_NoChatWarningBelow1440() {
     for l in t.ui.logs
         AssertTrue(!InStr(l, "Mari and Jester"), "no warning at 2560x1440")
 }
+
+; 2026-11-11: Roblox had closed; F1 paused ("Roblox not found") and F2 was
+; refused. With auto-rejoin on and a private server link, Start goes on and
+; the recovery task opens it.
+Test_App_MissingAtStartRejoinsWithALink() {
+    rec := AppFakeTask("recovery", 2, true)
+    t := AppTestMake(Map("tasks", Map("recovery", rec, "fishing", AppFakeTask("fishing", 99))
+        , "cfgVals", Map("General.privateServer", RecoveryTask.LinkPrefix "123")))
+    t.rb.win := 0
+    t.app.Start()
+    AssertEq(t.app.ctx.IsPaused(), false, "not paused")
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(rec.runs, 1, "recovery ran (it rejoins)")
+}

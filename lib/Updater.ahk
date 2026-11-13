@@ -94,9 +94,9 @@ class Updater {
         this.repo := Trim(String(g("repo", "")))
         this.checkOnStart := g("check", 1) ? true : false
         this.auto := g("auto", 0) ? true : false
-        this._http := g("http", Updater._Http)
+        this._http := g("http", (url) => Updater._Http(url))
         this._download := g("download", (url, dest) => Download(url, dest))
-        this._unzip := g("unzip", Updater._Unzip)
+        this._unzip := g("unzip", (zip, dest) => Updater._Unzip(zip, dest))
         this._copy := g("copyFile", (s, t) => FileCopy(s, t, 1))
         this._log := g("log", (t) => "")
         this._now := g("now", () => A_TickCount)

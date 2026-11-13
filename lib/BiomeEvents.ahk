@@ -291,6 +291,14 @@ class BiomeEvents {
         }
         if !live
             return
+        ; Stats (daily summary): a new aura, rolled by the player, as rare as
+        ; the clip rule wants (Medal.auraMinRarity / always classes)
+        if (!test && !had && A_TickCount >= Auras.QuietUntil && IsObject(this._state) && HasMethod(this._state, "Bump")) {
+            try {
+                if Auras.Decide(this._cfg, name)["clip"]
+                    this._state.Bump("rareAuras")
+            }
+        }
         if (test && this._cfg.Get("General.dryRun", 1) != 1)
             return
         if !this._cfg.Get("Medal.onRareAura", 0)
