@@ -41,6 +41,8 @@ class MmBoard {
         this.slowGreen := Map()     ; tile -> its own GreenMs when it completes a pair
         this.gone := false          ; the Roblox window vanished: nothing of the board reads
         this.startDrops := 0        ; Start clicks the game drops (the first n)
+        this.dropTiles := Map()     ; tile -> clicks on it the game drops (lag)
+        this.titleGoneAfter := 0    ; the title stops reading once this many tiles were clicked
         this.io := MmIO(this)
         this.vision := MmVision(this)
     }
@@ -109,6 +111,11 @@ class MmBoard {
     }
 
     TileClick(i) {
+        if (this.dropTiles.Has(i) && this.dropTiles[i] > 0 && this.started && this.t >= this.dealAt) {
+            this.dropTiles[i] -= 1
+            this.log.Push("drop " i)
+            return
+        }
         this.log.Push("tile " i)
         if (!this.started || this.t < this.dealAt || this.endAt)
             return
@@ -176,7 +183,7 @@ class MmBoard {
         if (x = L.startBox.x && y = L.startBox.y)
             return this.notify ? (this.ready ? "Start Memory Match" : this.cooldown) : ""
         if (x = L.title.x && y = L.title.y)
-            return (this.started && !this.closed) ? "Memory Match" : ""
+            return (this.started && !this.closed && !(this.titleGoneAfter && this.Tiles().Length >= this.titleGoneAfter)) ? "Memory Match" : ""
         if (x = L.closeBox.x && y = L.closeBox.y)
             return (this.Ended() && !this.closed) ? "Close" : ""
         return ""
@@ -633,4 +640,89 @@ MmHasLog(m, text) {
         if InStr(l, text)
             return true
     return false
+}
+
+; ---- friend's 1080p round 2026-11-12: Roblox lagged and dropped clicks ------
+; The macro counted 10 chances while the game had 3 left, waited for a Close
+; that never came, reset and went hunting with the board still open.
+
+; a dropped tile click is clicked again, and the round stays in step
+Test_MM_DroppedTileClickIsClickedAgain() {
+    b := MmStd()
+    b.dropTiles[1] := 1, b.dropTiles[5] := 2, b.dropTiles[14] := 1
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        AssertEq(b.Count("drop 1") + b.Count("drop 5") + b.Count("drop 14"), 4, "every dropped click happened")
+        AssertEq(b.chances, 0, "every game chance used")
+        AssertTrue(b.closed, "the board closed")
+        AssertEq(b.Won(), 5, "still 5 pairs")
+        AssertTrue(MmHasLog(m, "clicking it again"), "logged")
+        AssertEq(b.early, 0, "no click while a tile moved")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; a tile that never reacts costs no chance; the round is still finished
+Test_MM_DeadTileCostsNoChance() {
+    b := MmStd()
+    b.dropTiles[3] := 99
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        AssertEq(b.chances, 0, "every game chance used")
+        AssertTrue(b.closed, "the board closed")
+        AssertTrue(MmHasLog(m, "never flipped"), "logged")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; the game, not the macro's count, ends the round: chances the macro did not
+; see counted are played on until Close shows
+Test_MM_GameEndsTheRoundNotTheCount() {
+    b := MmStd()
+    b.chances := 13
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        AssertEq(b.chances, 0, "the 3 extra chances were played too")
+        AssertTrue(b.closed, "the board closed (no board left for the next task)")
+        AssertTrue(MmHasLog(m, "playing on"), "logged")
+        AssertEq(m.t.NextTry(), DateAdd(m.clock.t, 12 * 3600, "Seconds"), "next round in 12 h")
+    } finally {
+        MmClean(m)
+    }
+    ; a normal round never waits for extra turns
+    b2 := MmStd()
+    m2 := MmMake(b2)
+    try {
+        AssertEq(m2.t.Run(SchedCtx()), 1, "played")
+        AssertTrue(!MmHasLog(m2, "playing on"), "no extra turns")
+        AssertEq(b2.Tiles().Length, 20, "20 flips")
+    } finally {
+        MmClean(m2)
+    }
+}
+
+; interrupted (merchant / potion due) while the title's OCR misses (1080p):
+; the tiles show the board is up, the round is finished
+Test_MM_PreemptWithUnreadableTitleFinishes() {
+    b := MmStd()
+    b.titleGoneAfter := 6
+    m := MmMake(b)
+    ctx := SchedCtx()
+    try {
+        b.io := MmStopIO(b, ctx, 6, true)
+        m.t := MemoryMatchTask({cfg: QmCfg(Map("MemoryMatch.enabled", "1"), MmRoutes()), io: b.io, webhook: m.wh, cal: QmCal()
+            , ocr: (x, y, w, h, s := 1) => b.Ocr(x, y, w, h), vision: b.vision, log: (s) => m.logs.Push(s)
+            , clock: () => m.clock.t, statePath: m.path})
+        AssertEq(m.t.Run(ctx), 1, "the round was played to the end")
+        AssertTrue(!MmHasLog(m, "board is gone"), "not taken for gone")
+        AssertEq(b.chances, 0, "every chance used")
+        AssertTrue(b.closed, "the board closed")
+    } finally {
+        MmClean(m)
+    }
 }

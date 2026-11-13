@@ -47,7 +47,11 @@
 ;      keys: both corners must turn green and stay (GreenWaitMs) to count.
 ;      Else wait until both are face down and still (FlipBackMs); both green
 ;      by then = a pair after all. Then AnimMs more before the next click. A
-;      tile already green when flipped costs no chance and is skipped.
+;      tile already green when flipped costs no chance and is skipped. A tile
+;      still face down ReclickMs after its click is clicked again (Roblox
+;      drops clicks when it lags); one that never flips costs no chance.
+;      After the 10th counted chance the game decides: no Close within
+;      EndCheckMs = it has chances left, play on (MaxExtraTurns).
 ;   5. Wait for Close (CloseWaitMs), click it until the title is gone,
 ;      respawn, nextTry = now + CooldownHours, one `memorymatch` webhook.
 ;   Anything unexpected (a failed respawn included): a finally closes what is
@@ -106,6 +110,18 @@ class MemoryMatchTask {
     static Turns := 10
     static CloseTries := 3
     static OpenKey := "e"
+    ; Roblox drops clicks when it lags (friend's 1080p round 2026-11-12: the
+    ; macro counted 10 chances while the game had 3 left, waited for a Close
+    ; that never came and went hunting with the board open). A flip rests the
+    ; mouse on the tile first and clicks again while the tile stays face down.
+    static FlipHoverMs := 120      ; the mouse on the tile before the click
+    static ReclickMs := 1000       ; still face down this long after a click = dropped
+    static FlipClicks := 3         ; clicks per flip at most
+    static MaxNoFlips := 4         ; flips in a row that never turned a tile: give up
+    ; the GAME ends the round (Close under the board), not the macro's count
+    static EndCheckMs := 2500      ; after the last counted chance, Close within this
+    static MaxExtraTurns := 10     ; turns played on while Close does not come
+    static BoardTiles := 12        ; tiles that read as tiles = the board is up (title or not)
 
     name := "memorymatch"
     priority := 5
@@ -540,16 +556,51 @@ class MemoryMatchTask {
     }
 
     ; Clicks tile i and waits until it is face up and its picture is still.
-    ; -> its key ("" when it never settled), or "matched" when it turned green
-    ; first (the game confirming a pair; recorded by _Play, not here).
+    ; -> its key ("" when it never settled), "matched" when it turned green
+    ; first (the game confirming a pair; recorded by _Play, not here), or
+    ; "noflip" when it stayed face down through FlipClicks clicks (Roblox
+    ; dropped them: the game spent nothing; recorded as unreadable).
     _Flip(ctx, board, i) {
         env := this._env
-        env.Click(MatchVision.Center(i))
-        env.io.MoveTo(MemoryMatchTask.Layout.park.x, MemoryMatchTask.Layout.park.y)
-        waited := 0, prev := ""
-        key := ""
+        c := MatchVision.Center(i)
+        r := ""
+        Loop MemoryMatchTask.FlipClicks {
+            if (A_Index > 1)
+                env.Log("memory match: tile " i " stayed face down (Roblox dropped the click?): clicking it again")
+            env.io.MoveTo(c.x, c.y)
+            if !env.Wait(MemoryMatchTask.FlipHoverMs, ctx) {
+                r := ""
+                break
+            }
+            env.Click(c)
+            env.io.MoveTo(MemoryMatchTask.Layout.park.x, MemoryMatchTask.Layout.park.y)
+            r := this._ReadFlip(ctx, i)
+            if (r != "down")
+                break
+        }
+        if (r = "matched")
+            return "matched"
+        if (r = "down") {
+            MatchLogic.Record(board, i, "")
+            env.Log("memory match: tile " i " never flipped after " MemoryMatchTask.FlipClicks " clicks; left out, no chance counted")
+            return "noflip"
+        }
+        MatchLogic.Record(board, i, r)
+        if (r = "" && !ctx.ShouldStop())
+            env.Log("memory match: tile " i " never showed a still picture; left out")
+        return r
+    }
+
+    ; After a click on tile i: -> its key | "matched" | "" (it moved but its
+    ; picture never held still, or stopped) | "down" (still face down
+    ; ReclickMs after the click: the click did not reach the game).
+    _ReadFlip(ctx, i) {
+        env := this._env
+        waited := 0, prev := "", moved := false
         Loop {
             st := this._vis.State(i)
+            if (st != "hidden")
+                moved := true
             if (st = "matched")
                 return "matched"
             if (st = "open") {
@@ -557,22 +608,19 @@ class MemoryMatchTask {
                 if (s.width = 0) {
                     prev := ""                      ; no amount yet: still the star side
                 } else if (IsObject(prev) && MatchVision.Stable(prev, s)) {
-                    key := this._KeyOf(s)
-                    break
+                    return this._KeyOf(s)
                 } else {
                     prev := s
                 }
             } else {
                 prev := ""
             }
+            if (!moved && waited >= MemoryMatchTask.ReclickMs)
+                return "down"
             if (waited >= MemoryMatchTask.FlipReadMs || !env.Wait(MemoryMatchTask.PollMs, ctx))
-                break
+                return ""
             waited += MemoryMatchTask.PollMs
         }
-        MatchLogic.Record(board, i, key)
-        if (key = "" && !ctx.ShouldStop())
-            env.Log("memory match: tile " i " never showed a still picture; left out")
-        return key
     }
 
     ; One key per distinct picture: "w<amount width>#<n>".
@@ -593,9 +641,9 @@ class MemoryMatchTask {
         env := this._env
         board := MatchLogic.NewBoard(20)
         turns := MemoryMatchTask.Turns
+        extra := 0, noflip := 0
         while (turns > 0 && !ctx.ShouldStop()) {
-            if (IsObject(raw) && HasMethod(raw, "IsPreempted") && raw.IsPreempted()
-                && this._WaitRead(MemoryMatchTask.Layout.title, MemoryMatchTask.TitleRe, MemoryMatchTask.GoneMs, ctx) = 0) {
+            if (IsObject(raw) && HasMethod(raw, "IsPreempted") && raw.IsPreempted() && !this._WaitBoard(ctx)) {
                 env.Log("memory match: the board is gone mid-round; stopping")
                 return false
             }
@@ -605,6 +653,13 @@ class MemoryMatchTask {
             ka := this._Flip(ctx, board, a)
             if ctx.ShouldStop()
                 break
+            if (ka = "noflip") {                    ; the game saw no flip: no chance spent
+                if (++noflip >= MemoryMatchTask.MaxNoFlips) {
+                    env.Log("memory match: " noflip " flips in a row did nothing (is Roblox frozen?); stopping the round")
+                    break
+                }
+                continue
+            }
             if (ka = "matched") {
                 ; already green (a pair the macro did not see matched): the game
                 ; ignores the click and spends no chance. Flipping a second tile
@@ -620,6 +675,29 @@ class MemoryMatchTask {
             kb := this._Flip(ctx, board, b)
             if ctx.ShouldStop()
                 break
+            ; the game still waits for this turn's second tile: another one
+            dead := false
+            while (kb = "noflip") {
+                if (++noflip >= MemoryMatchTask.MaxNoFlips) {
+                    dead := true
+                    break
+                }
+                b := MatchLogic.Second(board, a, turns)
+                if !b {
+                    dead := true
+                    break
+                }
+                kb := this._Flip(ctx, board, b)
+                if ctx.ShouldStop()
+                    break
+            }
+            if ctx.ShouldStop()
+                break
+            if dead {
+                env.Log("memory match: the second tile never flipped (is Roblox frozen?); stopping the round")
+                break
+            }
+            noflip := 0
             if (kb = "matched") {                   ; green before its picture was read
                 kb := ka
                 MatchLogic.Record(board, b, kb)
@@ -646,9 +724,49 @@ class MemoryMatchTask {
                         env.Log("memory match: tiles " a " and " b " did not flip back in time")
                 }
             }
+            ; the macro's count is used up: the game says when the round is
+            ; over (Close). No Close: a flip did not count in the game.
+            if (turns = 0 && extra < MemoryMatchTask.MaxExtraTurns && !ctx.ShouldStop()) {
+                r := this._WaitRead(MemoryMatchTask.Layout.closeBox, MemoryMatchTask.CloseRe, MemoryMatchTask.EndCheckMs, ctx)
+                if (r < 0)
+                    break
+                if (r = 0) {
+                    extra += 1, turns := 1
+                    env.Log("memory match: no Close after " (MemoryMatchTask.Turns + extra - 1) " chances, the game has more (a click did not count): playing on")
+                    if !(board[a]["state"] = "matched" && board[b]["state"] = "matched")
+                        this._WaitState(ctx, "hidden", MemoryMatchTask.FlipBackMs, a, b)
+                }
+            }
             if !env.Wait(MemoryMatchTask.AnimMs, ctx)
                 break
         }
         return true
+    }
+
+    ; The board is up: its title reads, or BoardTiles tiles read as tiles
+    ; (the title's OCR misses at 1080p). -> true
+    _BoardUp() {
+        if RegExMatch(this._Read(MemoryMatchTask.Layout.title), MemoryMatchTask.TitleRe)
+            return true
+        n := 0
+        Loop 20 {
+            st := this._vis.State(A_Index)
+            if (st = "hidden" || st = "open" || st = "matched")
+                if (++n >= MemoryMatchTask.BoardTiles)
+                    return true
+        }
+        return false
+    }
+
+    ; The board shows within GoneMs. -> true (false when gone or stopped)
+    _WaitBoard(ctx) {
+        waited := 0
+        Loop {
+            if this._BoardUp()
+                return true
+            if (waited >= MemoryMatchTask.GoneMs || !this._env.Wait(MemoryMatchTask.PollMs, ctx))
+                return false
+            waited += MemoryMatchTask.PollMs
+        }
     }
 }
