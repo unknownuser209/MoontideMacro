@@ -105,13 +105,14 @@ class BiomeItemsTask {
     static MissingMaxMin := 240      ; longest hold
     ; "once" counts unless it is "once every / per / each" (a cooldown text)
     static Forbidden := "i)one[\s\-]*time|single[\s\-]*use|consumed|\bonce\b(?!\s+(?:every|per|each|a\b))"
-    static InvMs := 700
-    static SearchMs := 700
+    static InvMs := 450
+    static SearchMs := 450
     static SearchTries := 3          ; typed search attempts (a dropped letter finds nothing)
     static SelectMs := 500
     static DescAgainMs := 400        ; between the two description reads
     static DescMinChars := 25        ; a shorter mustSay description = not drawn yet / cut
-    static UseMs := 1500
+    static UseMs := 900
+    static RereadMs := 300         ; before the tile is read once more (a read mid-redraw)
     static PickMs := 800
 
     name := "biomeitems"
@@ -404,6 +405,13 @@ class BiomeItemsTask {
             return this._Fail(c, it, "the selected item's description is single-use or not the reusable " it.name "'s (read: '"
                 . SubStr(Trim(RegExReplace(d, "\s+", " ")), 1, 200) "'); Use not clicked")
         t := this._Read(tile)
+        if !BiomeItemsTask.TileIs(t, it.word) {
+            ; one more look: a read can catch the tile mid-redraw (live
+            ; 2026-11-13: a Randomizer missed its use on one bad read)
+            if !env.Wait(BiomeItemsTask.RereadMs, ctx)
+                return -1
+            t := this._Read(tile)
+        }
         if !BiomeItemsTask.TileIs(t, it.word)
             return this._Fail(c, it, "the tile changed before Use; Use not clicked")
         if ctx.ShouldStop()

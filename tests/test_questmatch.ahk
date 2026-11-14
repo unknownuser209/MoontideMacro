@@ -1231,6 +1231,22 @@ Test_Merchant_TeleporterNeverUsesAnotherItem() {
     AssertEq(wh2.Count("errors"), 1, "reported")
 }
 
+; The teleporter was never used (none owned, a misread tile): nothing moved,
+; so there is no dialog to leave and no respawn. A respawn there dragged the
+; character off the fishing spot and cost a full re-path trip.
+Test_Merchant_TeleporterNotUsedMeansNoRespawn() {
+    wants := Map("Mari", [Map("name", "Lucky Potion", "qty", 1)], "Jester", [])
+    io := QmIO()
+    wh := QmWh()
+    t := MerchantTask({cfg: QmCfg(, Map("merchants", wants)), io: io, webhook: wh, cal: QmMerchCal()
+        , ocr: QmTeleOcr(io, "Lucky`nPotion", "Gives you [Lucky]"), pixel: (*) => true})
+    t.Notify("Mari")
+    AssertEq(t.Run(SchedCtx()), 0, "no visit")
+    AssertEq(io.Index("move 130,130"), 0, "Use never clicked")
+    AssertEq(io.Index("down Esc"), 0, "no respawn: nothing moved")
+    AssertEq(io.Index("down r"), 0, "no respawn reset key")
+}
+
 ; ---- no blind clicks (live 2026-11-02: a click went through a panel into
 ; the world and opened Roblox's "Buy Robux and item" prompt) ---------------
 

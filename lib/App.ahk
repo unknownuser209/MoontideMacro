@@ -223,6 +223,7 @@ class App {
         this.fixit := FixIt()                        ; fix-it cards (idea 10): rules over the log
         this._fixOn := false                         ; cards only in the real app (Boot), never in tests
         this._fixCard := ""
+        this._hiResOn := App._Dep(d, "hiRes", true)  ; Start / Stop hold the 1 ms timer (tests: off)
         ; v1.6 services (Boot "normal" makes the real ones; tests may pass them)
         this.daily := App._Dep(d, "daily", "")       ; DailyStats: today / this run / 30 days
         this.sched := App._Dep(d, "schedule", "")    ; RunSchedule
@@ -517,7 +518,14 @@ class App {
         this._everStarted := true
         this.ctx.Reset()
         try this.fixit.Reset()                  ; a new run: cards may show again
+        if this._fixOn                          ; the real app: the preset that fits Roblox's screen now
+            try this._UseCalibration()
         this._started := true
+        ; speed (2026-11-13): 1 ms timer while running, so every wait and
+        ; screen poll lands on time (Windows' default 15.6 ms ticks rounded
+        ; each one up; counted with the walks' and hunts' own requests)
+        if this._hiResOn
+            try Input.HiRes(true)
         this._startedAt := this.Now()
         this._uptime := 0
         this._loops := 0
@@ -623,6 +631,8 @@ class App {
         this._ShiftOff()          ; a halted hunt can leave it on: other clicks would miss
         was := this._started
         this._started := false
+        if (was && this._hiResOn)
+            try Input.HiRes(false)
         this._pauseReason := ""
         this._note := ""
         try this._RestoreFake(true)
@@ -1016,6 +1026,23 @@ class App {
             if (r >= 0)
                 this.Log(r = 1 ? "title screen: clicked Play" : "title screen: clicked Play, it is still up")
         }
+        this._DailyGate(scr)
+    }
+
+    ; Before a launch too: the Daily Rewards popup (it shows after a join)
+    ; claimed and closed, always (no setting). One small read when it is
+    ; not up.
+    _DailyGate(scr) {
+        if !HasMethod(scr, "DailyItem")
+            return
+        try {
+            it := scr.DailyItem()
+            if (it.up.Call() = "")
+                return
+            r := it.close.Call("Daily Rewards popup", CleanupCtx(this.ctx))
+            if (r >= 0)
+                this.Log(r = 1 ? "Daily Rewards: claimed and closed" : "Daily Rewards: still up after the X")
+        }
     }
 
     ; The shared screen detectors: deps "tidyScreen", else the obby task's.
@@ -1272,7 +1299,9 @@ class App {
         if (this._taskMap.Has("memorymatch") && this.cfg.Get("MemoryMatch.enabled", 0)) {
             ms := 0
             try {
-                nt := this._taskMap["memorymatch"].NextTry()
+                if (!this.HasOwnProp("_mmNext") || A_TickCount - this._mmNext.at > 30000)
+                    this._mmNext := {at: A_TickCount, v: this._taskMap["memorymatch"].NextTry()}
+                nt := this._mmNext.v
                 if (nt != "")
                     ms := Max(0, DateDiff(nt, A_Now, "Seconds") * 1000)
             }
@@ -1374,7 +1403,9 @@ class App {
         i := Dashboard.PageIndex(name)
         if !i
             return
-        try this.dash._gui.Show()
+        if !this.dash.PageShown(name)
+            this.dash.SetSimple(false)          ; simple mode hides it: every page shows
+        try this.dash.Show()
         this.dash.SelectPage(i)
     }
 
@@ -1383,6 +1414,8 @@ class App {
         if (act = "fullscreen") {
             if !WinExist("ahk_exe RobloxPlayerBeta.exe")
                 return "Roblox is not open."
+            if (this._Window() != "notfs")
+                return "Roblox is already fullscreen: press F2 (or F1)."
             try {
                 WinActivate("ahk_exe RobloxPlayerBeta.exe")
                 WinWaitActive("ahk_exe RobloxPlayerBeta.exe", , 2)
@@ -1957,6 +1990,7 @@ class App {
                 Input.RespawnSyncFn := () => tail.Sync()
             }
             Input.FastReset := true
+            Input.DailyPointFn := (id) => Calibrate.Point(id)   ; Setup's daily_claim / daily_close
         }
         ; a new install (the setup wizard will show) starts in simple mode
         if (mode = "normal" && SetupWizard.ShouldShow(this.cfg) && !this.cfg.Get("UI.simple", 0)) {

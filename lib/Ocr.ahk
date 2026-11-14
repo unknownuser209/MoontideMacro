@@ -268,7 +268,10 @@ class Ocr {
                     try ComCall(9, pInfo)                               ; Cancel
                     return ""
                 }
-                Sleep(10)
+                ; AHK's Sleep(10) takes ~15.6 ms; kernel32 Sleep(1) is 1 ms
+                ; with the macro's 1 ms timer (else ~15.6, as before), and
+                ; Sleep(-1) keeps hotkeys (F3) and the GUI answering
+                DllCall("Sleep", "UInt", 1), Sleep(-1)
             }
             if (status != 1) {                                          ; 1 = Completed
                 try ComCall(10, pInfo)                                  ; Close

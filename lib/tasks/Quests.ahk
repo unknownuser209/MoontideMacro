@@ -430,7 +430,8 @@ class QuestsTask {
                 return -1
             waited += QuestsTask.PollMs
             k := QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h))
-            if (k != "" && k != oldKey && k = prev)
+            ; 500 ms at least: the button can be drawn a frame after the title
+            if (k != "" && k != oldKey && k = prev && waited >= 500)
                 return 1
             prev := k
             if (waited >= QuestsTask.NextMaxMs)

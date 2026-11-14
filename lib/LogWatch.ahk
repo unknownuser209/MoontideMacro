@@ -331,6 +331,7 @@ class LogWatch {
     _JoinLine(line) {
         if InStr(line, "doTeleport: joinScriptUrl") {
             this._tele := LogWatch.TeleportKind(line)
+            this._tele.at := (LogWatch.TickFn)()
             return ""
         }
         if InStr(line, '"requestType":"') {
@@ -347,6 +348,9 @@ class LogWatch {
             }
             this._lastReq := ""
             this._pending := true, this._pendingTs := LogWatch._Ts(line), this._pendingAt := (LogWatch.TickFn)()
+            ; a ticket from a teleport that never joined (> 10 s ago) is not this join's
+            if (IsObject(this._tele) && this._tele.HasOwnProp("at") && this._pendingAt - this._tele.at > 10000)
+                this._tele := ""
             return ""
         }
         if (this._pending && InStr(line, "[FLog::GameJoinLoadTime]")) {

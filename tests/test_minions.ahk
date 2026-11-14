@@ -958,6 +958,7 @@ Test_Minions_AutoRollSwapPutsTheCombatAuraBackOn() {
     try {
         near := [{x: 1280, y: 680, w: 200}]
         m := MnTask([near, near, near, []])
+        m.s.special := ["Eden"]                     ; where the game keeps it (the search starts there)
         n := 0
         m.t._scanFn := () => (++n = 2 ? (m.s.logName := "Pumpkinity") : 0, n <= 3 ? near : [])
         m.t.Run(SchedCtx())
@@ -6883,4 +6884,83 @@ Test_Minions_FastResetForEveryRespawn() {
         Input.FastReset := false
         Input.SettledFn := "", Input.RespawnSyncFn := ""
     }
+}
+
+; Daily Rewards fake: the popup reacts to the clicks in io.log (Claim at
+; claimAt, the X at 1890,527). claimText: what its button reads before.
+DrOcr(io, claimText := "Cloim", claimAt := "1280,891") => (x, y, w, h) => DrRead(io, claimText, claimAt, x)
+DrRead(io, claimText, claimAt, x) {
+    claimed := false, closed := false, last := ""
+    for e in io.log {
+        if (SubStr(e, 1, 5) = "move ")
+            last := SubStr(e, 6)
+        else if (e = "click") {
+            if (last = claimAt)
+                claimed := true
+            else if (last = "1890,527")
+                closed := true
+        }
+    }
+    if closed
+        return ""
+    if (x = Input.DailyBox.x)
+        return "noily Bewoyp"
+    if (x = Input.DailyClaimBox.x)
+        return claimed ? "Claimed" : claimText
+    return ""
+}
+
+Test_Daily_ClaimsTodayThenClosesByTheX() {
+    io := MnLockIO()
+    AssertEq(Input.CloseDaily(SchedCtx(), io, DrOcr(io)), 1, "claimed and closed")
+    AssertEq(QmClicksAt(io, "1280,891"), 1, "Claim pressed once")
+    AssertEq(QmClicksAt(io, "1890,527"), 1, "then the X")
+    AssertTrue(io.Index("move 1280,891") < io.Index("move 1890,527"), "Claim before the X")
+}
+
+Test_Daily_ClaimedAlreadyOnlyTheX() {
+    for txt in ["Claimed", "Come back tomorrow", ""] {
+        io := MnLockIO()
+        AssertEq(Input.CloseDaily(SchedCtx(), io, DrOcr(io, txt)), 1, txt ": closed")
+        AssertEq(QmClicksAt(io, "1280,891"), 0, txt ": no Claim click")
+        AssertEq(QmClicksAt(io, "1890,527"), 1, txt ": the X")
+    }
+}
+
+Test_Daily_RecordedSpotsAreUsed() {
+    old := Input.DailyPointFn
+    Input.DailyPointFn := (id) => (id = "daily_claim") ? {x: 1300, y: 900, color: 0} : (id = "daily_close") ? {x: 1890, y: 527, color: 0} : ""
+    try {
+        io := MnLockIO()
+        AssertEq(Input.CloseDaily(SchedCtx(), io, DrOcr(io, "Claim", "1300,900")), 1, "closed")
+        AssertEq(QmClicksAt(io, "1300,900"), 1, "the recorded Claim spot")
+        AssertEq(QmClicksAt(io, "1280,891"), 0, "not the default")
+    } finally {
+        Input.DailyPointFn := old
+    }
+}
+
+Test_Daily_NoClaimClickUnderAPurchasePrompt() {
+    io := MnLockIO()
+    base := DrOcr(io)
+    ocr := (x, y, w, h) => (x = Input.PurchaseBox.x) ? "Buy Robux and item" : base(x, y, w, h)
+    Input.CloseDaily(SchedCtx(), io, ocr)
+    AssertEq(io.Clicks(), 0, "nothing clicked while a purchase prompt reads")
+}
+
+Test_Daily_ClaimWordRules() {
+    for t in ["Claim", "Cloim", "CLAIM", "Clam"]
+        AssertTrue(RegExMatch(t, Input.DailyClaimRe), t ": claimable")
+    for t in ["Claimed", "Cloimed", "Come back tomorrow", "Reclaim", ""]
+        AssertTrue(!RegExMatch(t, Input.DailyClaimRe), t ": not claimable")
+    for t in ["noily Rewords", "noily Bewoyp", "Daily Rewards", "Oaily Rewards"]
+        AssertTrue(RegExMatch(t, Input.DailyRe), t ": the title")
+}
+
+Test_Daily_CalibrationStepsExist() {
+    ids := Map()
+    for s in Calibrate.Steps()
+        ids[s["id"]] := s["kind"]
+    AssertEq(ids.Get("daily_claim", ""), "point", "Claim step")
+    AssertEq(ids.Get("daily_close", ""), "point", "X step")
 }

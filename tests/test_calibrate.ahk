@@ -689,6 +689,8 @@ Test_Calibrate_ShippedPresetIsAFullCalibration() {
 Test_Calibrate_PresetFollowsTheScreen() {
     d := CalTempDir()
     old := Calibrate.SystemFn
+    oldOpen := Calibrate.RobloxOpenFn
+    Calibrate.RobloxOpenFn := () => 1          ; Roblox open: its screen is known
     try {
         DirCreate(d "\presets")
         big := '{"version": 1, "steps": {"rod": {"x": 10, "y": 20, "color": "0xFFFFFF"}}}'
@@ -715,8 +717,14 @@ Test_Calibrate_PresetFollowsTheScreen() {
         FileAppend(big, d "\calibration.json", "UTF-8")
         Calibrate.Use(d "\calibration.json")
         AssertEq(Calibrate.Point("rod").x, 10, "no preset for this screen: the file")
+        ; Roblox closed: its monitor is unknown, nothing is swapped (bug hunt 2026-11-13)
+        Calibrate.SystemFn := () => {w: 1920, h: 1080, scale: 100}
+        Calibrate.RobloxOpenFn := () => 0
+        Calibrate.Use(d "\calibration.json")
+        AssertEq(Calibrate.Point("rod").x, 10, "Roblox closed: the file as it is")
     } finally {
         Calibrate.SystemFn := old
+        Calibrate.RobloxOpenFn := oldOpen
         CalCleanup(d)
     }
 }

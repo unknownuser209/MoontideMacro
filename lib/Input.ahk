@@ -102,7 +102,7 @@ class InputScreenIO {
         Loop n {
             Click(key)
             if (gapMs > 0)
-                Sleep(gapMs)
+                this.Wait(gapMs)        ; precise with the 1 ms timer (AHK's Sleep(2) took ~15.6 ms: camera 2.9 s, live 2026-11-13)
         }
     }
     ; Relative mouse move (mouse_event MOUSEEVENTF_MOVE): Roblox turns the
@@ -579,12 +579,15 @@ class Input {
     static FastReset := false
     static SettledFn := ""        ; () -> true once the respawn shows in the log
     static RespawnSyncFn := ""    ; () -> the respawn log read from now on
+    static _preEnter := ""        ; called right before the respawn's Enter (FastReset)
     static ResetToSpawn(ctx := "", io := "", blind := false) {
         io := Input._Backend(io)
         if (Input.FastReset && !Input._quick && !blind && HasMethod(io, "Ocr")) {
-            if IsObject(Input.RespawnSyncFn)
-                try Input.RespawnSyncFn.Call()
-            return Input.QuickReset(ctx, io, Input.SettledFn)
+            Input._preEnter := Input.RespawnSyncFn      ; synced right before Enter
+            try
+                return Input.QuickReset(ctx, io, Input.SettledFn)
+            finally
+                Input._preEnter := ""
         }
         Input.LastResetError := ""
         if (blind || !HasMethod(io, "Ocr"))
@@ -623,6 +626,8 @@ class Input {
         }
         if (IsObject(ctx) && ctx.ShouldStop())
             return false
+        if IsObject(Input._preEnter)
+            try Input._preEnter.Call()
         Input.Key("Enter", Input.TapHoldMs, io)
         if !Input._Settle(io, ctx, t)
             return false
@@ -898,7 +903,7 @@ class Input {
     static PurchaseBox := {x: 680, y: 320, w: 1200, h: 800}
     static PurchaseRe := "i)buy\s*r[o0]bux|r[o0]bux\s*and\s*item|payment\s*meth[o0]d|be\s*charged|balance\s*after|would\s*y[o0]u\s*like\s*t[o0]\s*buy|buy\s*\$\s*\d"
     static PurchaseTries := 3     ; Esc presses before giving up
-    static PurchaseMs := 500      ; after each Esc
+    static PurchaseMs := 350      ; after each Esc
 
     ; A Roblox purchase prompt reads in PurchaseBox (one read). ocr = fn(x,
     ; y, w, h) for an io without Ocr; neither -> false (nothing to read with).
@@ -919,8 +924,15 @@ class Input {
         Loop Input.PurchaseTries {
             Input.Key("Esc", Input.TapHoldMs, io)
             io.Wait(Input.PurchaseMs)
-            if !Input.PurchaseUp(io, ocr)
+            if !Input.PurchaseUp(io, ocr) {
+                ; an Esc after the prompt had already gone opened the Roblox
+                ; menu: shut it again (only when it reads)
+                if (A_Index > 1 && Input._Has(io, "menu")) {
+                    Input.Key("Esc", Input.TapHoldMs, io)
+                    io.Wait(Input.PurchaseMs)
+                }
                 return 1
+            }
         }
         return 2
     }
@@ -929,14 +941,27 @@ class Input {
     ; and sat over the storage, so the Eden swap read its "x 10 x 2,000" as
     ; the Equip button. Seen by its title (DailyBox, 2560x1440; real frames
     ; read "noily Rewords" at 1x and 2x, the game font's a as o, D as n or O)
-    ; and closed by its X only (sell.dailyReward.close). Its Claim is
-    ; SellTask's: never pressed here.
-    static DailyBox := {x: 1040, y: 495, w: 480, h: 66}
-    static DailyRe := "i)[ao]ily\s*rew[ao]rd"
+    ; and closed by its X (sell.dailyReward.close).
+    ; AUTO CLAIM (2026-11-13, always on): before the X, today's reward is
+    ; claimed by its Claim button, only while that button reads "Claim"
+    ; (real frame daily_rewards_claim_1440 reads "Cloim"; the title there
+    ; reads "noily Bewoyp", so the title rule takes "rew o" / "bew o").
+    ; Both spots can be recorded in Setup (daily_claim, daily_close).
+    ; the title sits over the event banner (Halloween 2026: it read
+    ; "Ooilly gewprg", "noily Bywaerg"); the "Login Reward" heading under
+    ; it reads steadily. One read takes both lines (real frames: "noily
+    ; Rewords / Login Reword"), either one counts.
+    static DailyBox := {x: 640, y: 495, w: 880, h: 115}
+    static DailyRe := "i)[ao]ily\s*[rb]ew[ao]|l[o0]gin\s*rew"
     static DailyX := [1890, 527]
+    static DailyClaimBox := {x: 1110, y: 862, w: 340, h: 52}
+    static DailyClaimRe := "i)\bcl[ao0]i?m(?![eo]d)"
+    static DailyClaim := [1280, 891]
+    static DailyClaimMs := 700    ; after the Claim click (the reward shows, then the X)
+    static DailyPointFn := ""     ; (id) -> {x, y} recorded point | "" (App: Calibrate.Point)
     static DailyTries := 3        ; clicks on the X before giving up
     static DailyHoverMs := 150    ; on the X before the click (Roblox drops a click right after a move)
-    static DailyMs := 500         ; after the click
+    static DailyMs := 350         ; after the click
 
     ; The popup's title reads (one read). ocr as PurchaseUp.
     static DailyUp(io := "", ocr := "") {
@@ -946,7 +971,43 @@ class Input {
         return RegExMatch(Input._Read(io, Input.DailyBox, ocr), Input.DailyRe) > 0
     }
 
-    ; Closes the popup by its X and checks that it went. A click only with
+    ; Its Claim button reads "Claim" (not "Claimed"; one read).
+    static DailyClaimUp(io := "", ocr := "") {
+        io := Input._Backend(io)
+        if (!IsObject(ocr) && !HasMethod(io, "Ocr"))
+            return false
+        return RegExMatch(Input._Read(io, Input.DailyClaimBox, ocr), Input.DailyClaimRe) > 0
+    }
+
+    ; A recorded spot (Setup: daily_claim / daily_close), else the default.
+    static _DailyPt(id, def) {
+        p := ""
+        if IsObject(Input.DailyPointFn)
+            try p := Input.DailyPointFn.Call(id)
+        return (IsObject(p) && p.HasOwnProp("x")) ? [p.x, p.y] : def
+    }
+
+    ; Today's reward claimed (once): hovered, re-read, clicked. -> 1 clicked
+    ; | 0 not claimable (or a purchase prompt / shift lock) | -1 stopped
+    static _ClaimDaily(ctx, io, ocr) {
+        if !Input.DailyClaimUp(io, ocr)
+            return 0
+        g := Input.ClickGuard(io, ctx, "the Daily Rewards Claim")
+        if (g <= 0)
+            return g
+        pt := Input._DailyPt("daily_claim", Input.DailyClaim)
+        io.MoveTo(pt[1], pt[2])
+        if !io.Wait(Input.DailyHoverMs, ctx)
+            return -1
+        if (Input.PurchaseUp(io, ocr) || !Input.DailyClaimUp(io, ocr))
+            return 0
+        io.ClickHere()
+        Input._Log("input: Daily Rewards - claimed today's reward")
+        return io.Wait(Input.DailyClaimMs, ctx) ? 1 : -1
+    }
+
+    ; Claims today's reward (when its button reads Claim), then closes the
+    ; popup by its X and checks that it went. A click only with
     ; its title read right then, shift lock off (ClickGuard; on, the click
     ; would land at the screen centre) and no purchase prompt up (those: Esc,
     ; never a click; the caller's).
@@ -956,7 +1017,9 @@ class Input {
         io := Input._Backend(io)
         if !Input.DailyUp(io, ocr)
             return 0
-        pt := Input.DailyX
+        if (Input._ClaimDaily(ctx, io, ocr) < 0)
+            return -1
+        pt := Input._DailyPt("daily_close", Input.DailyX)
         Loop Input.DailyTries {
             if (IsObject(ctx) && ctx.ShouldStop())
                 return -1

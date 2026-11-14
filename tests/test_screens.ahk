@@ -596,3 +596,21 @@ Test_Screens_MariName768() {
         AssertTrue(RegExMatch(t, MerchantTask.NameRe["Mari"]) > 0, "her name reads at 768: '" t "'")
     } finally Screen.Reset()
 }
+
+Test_Screens_DailyRewardsClaimFrameReads() {
+    ; live 2026-11-13 18:13 (2560x1440, today unclaimed): the title reads
+    ; "noily Bewoyp" at 1x, the button "Cloim"
+    rd := (x, y, w, h) => ScrRead("daily_rewards_claim_1440", {x: x, y: y, w: w, h: h})
+    AssertTrue(Input.DailyUp("", rd), "the title reads")
+    b := Input.DailyBox
+    AssertTrue(RegExMatch(rd(b.x, b.y, b.w, b.h), "i)l[o0]gin\s*rew"), "Login Reward reads in the same box")
+    AssertTrue(Input.DailyClaimUp("", rd), "Claim reads")
+    AssertTrue(!Input.PurchaseUp("", rd), "no purchase prompt")
+    ; never a Claim on any other frame
+    Loop Files A_ScriptDir "\screens\*.*" {
+        if InStr(A_LoopFileName, "daily_rewards")
+            continue
+        b := Input.DailyClaimBox
+        AssertTrue(!RegExMatch(Ocr.ReadFile(A_LoopFileFullPath, b.x, b.y, b.w, b.h), Input.DailyClaimRe), A_LoopFileName ": no Claim button")
+    }
+}

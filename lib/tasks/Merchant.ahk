@@ -64,7 +64,7 @@ class MerchantTask {
     static DedupeSec := 120
     static MaxQty := 50
     static OpenKey := "e"
-    static SettleMs := 450
+    static SettleMs := 300
     static ShopOpenMs := 1200
     static Order := ["Mari", "Jester"]
 
@@ -77,6 +77,7 @@ class MerchantTask {
         this._noticed := Map()       ; name -> ms of last accepted notice
         this._last := ""             ; last OCR text read by _See (for messages)
         this._noMerchant := false    ; the teleporter said no merchant has spawned
+        this._used := false          ; Use was clicked this visit (the character may have moved)
     }
 
     Notify(name) {
@@ -165,7 +166,7 @@ class MerchantTask {
     static SeeMs := 3000          ; dialog / shop wait
     static DialogTries := 3       ; E presses for the merchant's dialog
     static DialogMs := 1600       ; wait for her name after each E
-    static AfterTeleMs := 600     ; after the inventory closed, before the first E
+    static AfterTeleMs := 400     ; after the inventory closed, before the first E
     static ButtonMs := 8000       ; her line types out for ~5 s before the buttons show
     static ButtonBox := {dx: -150, dy: -35, w: 300, h: 70}    ; OCR box around a button point
     static LeaveTries := 3
@@ -330,6 +331,7 @@ class MerchantTask {
         io := env.io
         bought := []
         this._noMerchant := false
+        this._used := false
         this._lastName := name
         try {
             if !this._Teleport(cal, ctx) {
@@ -380,8 +382,11 @@ class MerchantTask {
             }
         } finally {
             if (!ctx.ShouldStop() && !this._noMerchant) {
-                ; never respawn with her dialog open: it stays on screen after it
-                if !this._LeaveDialog(name, ctx)
+                ; the teleporter was never used (none owned, a misread tile):
+                ; nothing moved, so no dialog to leave and no respawn, which
+                ; would drag the character off the fishing spot
+                if !this._used {
+                } else if !this._LeaveDialog(name, ctx)
                     this._ShopFail(name, name "'s dialog is still open after Leave; not resetting (close it, then press F2)")
                 else
                     Input.ResetToSpawn(ctx, io)
@@ -554,9 +559,9 @@ class MerchantTask {
     static TeleporterName := "Merchant Teleporter"
     static TeleporterSearch := "Teleporter"   ; short: fewer letters to drop
     static SearchTries := 3
-    static InvMs := 700          ; after opening the inventory / switching tab
-    static SearchMs := 700       ; after typing the search
-    static SelectMs := 500       ; after selecting the tile
+    static InvMs := 450          ; after opening the inventory / switching tab
+    static SearchMs := 450       ; after typing the search
+    static SelectMs := 350       ; after selecting the tile
     static TeleportMs := 3000    ; after Use, before talking to the merchant
     ; "There's no merchant spawned. (Event merchant is not counted)": the
     ; game's warning when Use finds no merchant, bottom right where the toasts
@@ -667,6 +672,7 @@ class MerchantTask {
         if ((why := this._Unsafe(c)) != "")
             return this._TeleFail(c, why)
         env.Click(c.inv_use)
+        this._used := true
         env.Log("merchant: used the Merchant Teleporter")
         none := this._WaitNoMerchant(ctx)
         if (none < 0)

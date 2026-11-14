@@ -385,7 +385,7 @@ class Theme {
 
     static _PaintButton(c, kind, hot, enabled) {
         if !enabled
-            return Theme.SetColors(c, Theme.OffBg, "5E6B80")
+            return Theme.SetColors(c, Theme.OffBg, Theme.Muted)
         switch kind {
             case "primary": Theme.SetColors(c, hot ? Theme.AccentHi : Theme.Accent, Theme.Ink)
             case "quiet": Theme.SetColors(c, hot ? Theme.HoverBg : Theme.Bg, hot ? Theme.Text : Theme.Muted)

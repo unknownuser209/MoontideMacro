@@ -40,7 +40,10 @@ class Profiles {
     ; never exported or imported: dry run is only turned off with its own
     ; question, a shared file must not point the updater elsewhere or put
     ; the private server link into webhooks (joinButton)
-    static NoShare := ["General.dryRun", "Potions.dryRun", "General.joinButton", "UI.setupDone", "Update.repo", "Update.check", "Update.auto"]
+    ; General.alertSound: a file path (a shared "\\host\share\x.wav" would make
+    ; Windows connect to someone else's PC on the next rare biome)
+    static NoShare := ["General.dryRun", "Potions.dryRun", "General.joinButton", "UI.setupDone", "Update.repo", "Update.check", "Update.auto"
+        , "General.alertSound"]
 
     static Description(name) {
         switch name {
@@ -148,6 +151,12 @@ class Profiles {
         ; whole number only
         if ((RegExMatch(Profiles.DefaultOf(path), "^\d+$") || RegExMatch(path, "i)^Craft\.qty_")) && !RegExMatch(v, "^\d{1,10}$"))
             return ""
+        ; and a sane one: 0 only where the default is 0 (0 = off / no
+        ; limit), never above 100000 (Recovery.afkMin=0 tapped Space every tick)
+        if (RegExMatch(v, "^\d+$") && (RegExMatch(Profiles.DefaultOf(path), "^\d+$") || RegExMatch(path, "i)^Craft\.qty_"))) {
+            if (Integer(v) > 100000 || (Integer(v) = 0 && RegExMatch(Profiles.DefaultOf(path), "^\d+$") && Integer(Profiles.DefaultOf(path)) > 1))
+                return ""
+        }
         ; anything the support-zip scrub would hide (links, user paths, a
         ; secret value) stays out
         if (LogBundle.ScrubText(v, secrets) !== v)
@@ -225,13 +234,14 @@ class Profiles {
     ; Merges the shareable keys of an ini text into cfg (in memory).
     static ImportText(cfg, text) {
         secrets := Profiles.Secrets(cfg)
-        n := 0, skipped := 0, sec := ""
+        n := 0, skipped := 0, sec := "", on := []
         for line in StrSplit(StrReplace(String(text), "`r", ""), "`n") {
             t := Trim(line)
             if (t = "" || InStr(";#", SubStr(t, 1, 1)))
                 continue
-            if RegExMatch(t, "^\[(.*)\]$", &m) {
-                sec := Trim(m[1])
+            if (SubStr(t, 1, 1) = "[") {
+                ; "[Obby] ; note" too; a line that is no header ends the section
+                sec := RegExMatch(t, "^\[([^\]]*)\]\s*(?:[;#].*)?$", &m) ? Trim(m[1]) : ""
                 continue
             }
             p := InStr(t, "=")
@@ -245,10 +255,13 @@ class Profiles {
                 skipped++
                 continue
             }
+            ; a switch this file turns on (said in the status line)
+            if (RegExMatch(path, "i)\.enabled$") && val = "1" && String(cfg.Get(path, "0")) != "1")
+                on.Push(path)
             cfg.Set(path, val)
             n++
         }
-        return {n: n, skipped: skipped}
+        return {n: n, skipped: skipped, on: on}
     }
 
     static Import(cfg, path) {
@@ -260,6 +273,10 @@ class Profiles {
         r := Profiles.ImportText(cfg, text)
         if (r.n = 0)
             return {ok: 0, n: 0, skipped: r.skipped, msg: "Nothing imported: no settings found in that file"}
-        return {ok: 1, n: r.n, skipped: r.skipped, msg: "Imported " r.n " setting" (r.n = 1 ? "" : "s") (r.skipped ? " (" r.skipped " skipped)" : "")}
+        turned := ""
+        for p in r.on
+            turned .= (turned = "" ? "" : ", ") RegExReplace(p, "i)\.enabled$")
+        return {ok: 1, n: r.n, skipped: r.skipped, on: r.on, msg: "Imported " r.n " setting" (r.n = 1 ? "" : "s") (r.skipped ? " (" r.skipped " skipped)" : "")
+            . (turned != "" ? ". Turned on: " turned : "")}
     }
 }

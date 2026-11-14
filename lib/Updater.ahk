@@ -49,7 +49,8 @@ class Updater {
     static Protected := ["settings.ini", "data\calibration.json", "data\routes.json", "data\quests.json"
         , "data\merchants.json", "data\potions.json", "data\biomes.json", "data\auras_had.txt"
         , "data\potion_usage.json", "data\last_biome.txt", "data\minions_routes.json", "data\auras_learnt.json"
-        , "data\stats.json", "data\summary_last.txt", "data\schedule_state.txt", "data\whatsnew.json"]
+        , "data\stats.json", "data\summary_last.txt", "data\schedule_state.txt", "data\whatsnew.json"
+        , "data\update_skip.txt"]
     static WhatsNewFile := "data\whatsnew.json"
     static NotesMax := 8000
     static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\"]
@@ -85,6 +86,18 @@ class Updater {
 
     ; the no-install launcher (tools\make_release.ps1 adds it to the zip)
     static IsLauncher(rel) => StrLower(StrReplace(rel, "/", "\")) = "moontidemacro.exe"
+
+    ; that launcher exists and runs this macro (it cannot be replaced or
+    ; deleted then); one that only sits there is replaced like any file
+    static LauncherBusy(path) => FileExist(path) && StrLower(A_AhkPath) = StrLower(path)
+
+    static SkipFile := "data\update_skip.txt"
+
+    ; the version Go back left (""= none)
+    SkipTag() {
+        try return Trim(FileRead(this.root "\" Updater.SkipFile), " `t`r`n")
+        return ""
+    }
 
     static IsProtected(rel) {
         r := StrLower(StrReplace(rel, "/", "\"))
@@ -161,6 +174,12 @@ class Updater {
             this.last := Map("status", "uptodate", "tag", tag)
             return this.last
         }
+        ; the version the player went back from (Go back): not offered or
+        ; auto-installed again until a manual check (bug hunt 2026-11-13)
+        if (!manual && Updater.Compare(tag, this.SkipTag()) = 0) {
+            this.last := Map("status", "uptodate", "tag", tag, "skipped", true)
+            return this.last
+        }
         url := ""
         if (rel.Has("assets") && rel["assets"] is Array) {
             for a in rel["assets"] {
@@ -211,7 +230,7 @@ class Updater {
             for rel in Updater._List(src) {
                 ; MoontideMacro.exe (AutoHotkey itself) cannot be replaced while
                 ; it runs the macro: kept when there is one, added when not
-                if !Updater.IsProtected(rel) && !(Updater.IsLauncher(rel) && FileExist(this.root "\" rel))
+                if !Updater.IsProtected(rel) && !(Updater.IsLauncher(rel) && Updater.LauncherBusy(this.root "\" rel))
                     rels.Push(rel)
             }
             backupDir := this._BackupDir()
@@ -390,6 +409,8 @@ class Updater {
                 this._copy.Call(b["dir"] "\" rel, this.root "\" rel)
             }
             for rel in added {
+                if (Updater.IsLauncher(rel) && Updater.LauncherBusy(this.root "\" rel))
+                    continue                    ; runs the macro now: kept (harmless)
                 if FileExist(this.root "\" rel)
                     FileDelete(this.root "\" rel)
             }
@@ -403,6 +424,10 @@ class Updater {
         try DirDelete(this.root "\update_tmp", true)
         try DirDelete(b["dir"], true)
         try FileDelete(this.root "\" Updater.WhatsNewFile)
+        try {
+            f := FileOpen(this.root "\" Updater.SkipFile, "w", "UTF-8-RAW")
+            f.Write(b["to"]), f.Close()
+        }
         this.Log("Went back to v" b["from"] "; restarting")
         try this._restart.Call()
         return Map("ok", true, "msg", "went back", "version", b["from"])
@@ -496,7 +521,11 @@ class Updater {
     }
 
     static _Restart(root) {
-        Run('"' A_AhkPath '" "' root '\Vesper.ahk"', root)
+        ; the same script that ran (MoontideMacro.ahk from MoontideMacro.exe,
+        ; or Vesper.ahk): a different name would not be caught by
+        ; #SingleInstance and two macros could run at once
+        name := FileExist(root "\" A_ScriptName) ? A_ScriptName : "Vesper.ahk"
+        Run('"' A_AhkPath '" "' root '\' name '"', root)
         ExitApp()
     }
 }

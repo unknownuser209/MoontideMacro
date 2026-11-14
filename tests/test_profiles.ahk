@@ -260,3 +260,21 @@ Test_Profiles_DashboardPage() {
         try DirDelete(dir, true)
     }
 }
+
+; bug hunt 2026-11-13: out-of-range numbers are refused, a header with a
+; comment still starts its section, the status says what was switched on
+Test_Profiles_ImportRangesHeadersAndTurnedOn() {
+    dir := A_Temp "\vesper_prof_bh_" A_TickCount
+    DirCreate(dir)
+    try {
+        cfg := Config.Load(dir)
+        cfg.Set("MemoryMatch.enabled", 0)
+        r := Profiles.ImportText(cfg, "[Recovery]`nafkMin=0`n[MemoryMatch] `; my note`nenabled=1`n[General]`nfishing=0`n")
+        AssertTrue(String(cfg.Get("Recovery.afkMin", "")) != "0", "afkMin=0 refused")
+        AssertEq(String(cfg.Get("MemoryMatch.enabled", "")), "1", "the commented header kept its section")
+        AssertEq(String(cfg.Get("General.fishing", "")), "0", "a switch may be 0")
+        AssertTrue(r.on.Length = 1 && r.on[1] = "MemoryMatch.enabled", "what was switched on")
+    } finally {
+        try DirDelete(dir, true)
+    }
+}

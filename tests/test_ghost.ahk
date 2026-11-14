@@ -283,3 +283,28 @@ Test_Ghost_StaleTicketIsDropped() {
         LwTmpClean(d)
     }
 }
+
+; bug hunt 2026-11-13: a teleport ticket more than 10 s before a join is not
+; that join's (a teleport that never joined, then a public warm start)
+Test_Ghost_OldTicketIsNotThisJoins() {
+    d := LwTmpDir()
+    old := LogWatch.TickFn
+    try {
+        path := d "\0.747_20261113T060000Z_Player_12121_last.log"
+        FileAppend("", path)
+        lw := LogWatch(d)
+        lw.Poll()
+        t := 1000000
+        LogWatch.TickFn := () => t
+        FileAppend(GhTicket("2026-11-13T06:00:00.000Z", 2, 4) "`n", path, "UTF-8-RAW")
+        lw.Poll()
+        t += 60000
+        FileAppend(GhJoin("2026-11-13T06:01:00.000Z") "`n" GhLoad("2026-11-13T06:01:00.000Z", "") "`n", path, "UTF-8-RAW")
+        j := GhJoins(lw.Poll())
+        AssertEq(j.Length, 1, "one join")
+        AssertEq(j[1]["name"], "other", "a minute-old ticket does not make it private")
+    } finally {
+        LogWatch.TickFn := old
+        LwTmpClean(d)
+    }
+}

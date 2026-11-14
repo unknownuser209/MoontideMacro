@@ -1413,6 +1413,61 @@ Test_Dashboard_BuggyPartsWarnBeforeTheyGoOn() {
     }
 }
 
+; A switch with a warning (Minions, Memory Match) still shows the tab's unsaved dot.
+Test_Dashboard_WarnedSwitchUpdatesDot() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        d := Dashboard(Config.Load(dir), Map())
+        sw := "", page := ""
+        for b in d._binds
+            if (b.key = "MemoryMatch.enabled")
+                sw := b.ctrl, page := b.page
+        AssertTrue(IsObject(sw), "the memory match switch")
+        d.SelectPage(page.idx)
+        dot := d.Ctrl("tabDot:" page.name)
+        d._confirmBuggy := (title, text) => true
+        sw.Value := 0
+        d._RefreshDot(page)
+        AssertEq(dot.Visible, false, "no dot at start")
+        sw.Flip()
+        AssertEq(sw.Value, 1, "accepted: on")
+        AssertTrue(dot.Visible, "turned on: dot shown")
+        d._confirmBuggy := (title, text) => false
+        sw.Flip()
+        sw.Flip()
+        AssertEq(sw.Value, 0, "declined: off")
+        AssertEq(dot.Visible, false, "declined: back to the saved value, no dot")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; Settings refuses a typed private server link the rejoin would refuse.
+Test_Dashboard_SettingsRefusesBadServerLink() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg, Map())
+        d._psEdit.Value := "my-private-link-123"
+        AssertEq(d.SavePage("Settings"), false, "a non-roblox link is not saved")
+        AssertEq(cfg.Get("General.privateServer", ""), "", "nothing stored")
+        d._psEdit.Value := "https://www.roblox.com/"
+        AssertEq(d.SavePage("Settings"), false, "the bare prefix is not a link")
+        d._psEdit.Value := "https://www.roblox.com/share?code=abc123&type=Server"
+        AssertTrue(d.SavePage("Settings"), "a roblox link is saved")
+        AssertEq(cfg.Get("General.privateServer", ""), "https://www.roblox.com/share?code=abc123&type=Server", "stored")
+        d._psEdit.Value := ""
+        AssertTrue(d.SavePage("Settings"), "an empty box keeps the saved link")
+        AssertEq(cfg.Get("General.privateServer", ""), "https://www.roblox.com/share?code=abc123&type=Server", "still there")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
 ; ---- v1.6 pages: Stats, Hunting, Daily summary, Remote, Check & help, Schedule
 
 Test_Dashboard_V16Pages() {

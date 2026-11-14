@@ -394,7 +394,12 @@ class SellTask {
             return -1
         sold := 0
         Loop lp["maxRounds"] {
-            if !FishLogic.GridHas(moreXs, more["rows"], more["color"], more["tol"])
+            ; the list may still be drawing (after the shop opened or a
+            ; sale): it counts as empty only after GridWaitMs of looking
+            r := this._GridWait(ctx, moreXs, more)
+            if (r < 0)
+                return -1
+            if !r
                 break
             if !FishLogic.ClickAt(io, ctx, lp["item"], lp["itemPreMs"], lp["itemPostMs"])
                 return -1
@@ -617,6 +622,22 @@ class SellTask {
             if !io.Wait(sc.pollMs, ctx)
                 return -1
             waited += sc.pollMs
+        }
+    }
+
+    ; The first fish tile shows within GridWaitMs. -> 1 | 0 none | -1 stopped
+    static GridWaitMs := 600
+    _GridWait(ctx, xs, more) {
+        io := this.deps.io
+        waited := 0
+        Loop {
+            if FishLogic.GridHas(xs, more["rows"], more["color"], more["tol"])
+                return 1
+            if (waited >= SellTask.GridWaitMs)
+                return 0
+            if !io.Wait(SellTask.ShopChecks.pollMs, ctx)
+                return -1
+            waited += SellTask.ShopChecks.pollMs
         }
     }
 

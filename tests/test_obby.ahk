@@ -791,7 +791,7 @@ Test_Obby_EmptyGridIsNeverClicked() {
     AssertTrue(!o.s.State().prompt, "no purchase prompt (no click went through)")
     AssertEq(QmObbyDowns(o.io, "Esc"), 0, "no Esc needed")
     AssertEq(QmObbyTileClicks(o.io, 2), 0, "slot 2 (empty on both tabs) never clicked")
-    AssertTrue(QmObbyLogHas(o.logs, "Regular tab is empty"), "the empty Regular grid is logged")
+    AssertTrue(!QmObbyLogHas(o.logs, "Regular tab is empty"), "Eden's search starts on the Special tab: no Regular pass (speed, 2026-11-13)")
     ; Regular's slot 1 was never clicked: every slot-1 click came after the Special tab
     iSpecial := QmObbyFirst(o.io, "move 567,-25")
     AssertTrue(iSpecial > 0, "the Special tab was opened")

@@ -21,7 +21,7 @@ $exclude = @(
     '^\.gitattributes$', '^\.gitignore$',
     '^data/auras_had\.txt$', '^data/[^/]*state[^/]*\.json$',
     '^data/(potion_usage\.json|last_biome\.txt|minions_routes\.json|auras_learnt\.json)$',
-    '^data/(stats\.json|summary_last\.txt|schedule_state\.txt)$'
+    '^data/(stats\.json|summary_last\.txt|schedule_state\.txt|update_skip\.txt|whatsnew\.json)$'
 )
 
 $files = @(git ls-files) | Where-Object {
@@ -64,10 +64,9 @@ try {
     if ($files -notcontains 'MoontideMacro.ahk') { throw 'MoontideMacro.ahk is not tracked; refusing to build' }
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
         $arc, $ahk, 'MoontideMacro.exe', [System.IO.Compression.CompressionLevel]::Optimal)
-    if (Test-Path $lic) {
-        [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-            $arc, $lic, 'AutoHotkey license.txt', [System.IO.Compression.CompressionLevel]::Optimal)
-    }
+    if (-not (Test-Path $lic)) { throw "AutoHotkey's license.txt not found at $lic (it must ship with MoontideMacro.exe)" }
+    [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $arc, $lic, 'AutoHotkey license.txt', [System.IO.Compression.CompressionLevel]::Optimal)
 } finally {
     $arc.Dispose()
     Remove-Item -Recurse -Force $src -ErrorAction SilentlyContinue

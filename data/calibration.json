@@ -91,6 +91,16 @@
       "prompt": "Walk into Stella so her dialog shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of her NAME ('Stella') at the top of the dialog."
     },
     {
+      "id": "daily_claim",
+      "kind": "point",
+      "prompt": "Daily Rewards popup open (it shows after you join). Hover its Claim button (do not press it). The macro claims today's reward there by itself."
+    },
+    {
+      "id": "daily_close",
+      "kind": "point",
+      "prompt": "Daily Rewards popup open. Hover the X at its top right that closes it."
+    },
+    {
       "id": "inv_open",
       "kind": "point",
       "prompt": "Stand anywhere with the inventory closed. Hover the inventory button."

@@ -57,3 +57,15 @@ Test_FixIt_DismissAndCard() {
     } finally
         c2.Destroy()
 }
+
+; bug hunt 2026-11-13: Dismiss is hovered when clicked; the card's controls
+; must be forgotten, or the next mouse move painted a destroyed button
+; (an error dialog after every dismissed card)
+Test_FixIt_DismissForgetsTheHoveredButton() {
+    c := FixCard(FixIt.Rule("nolink"))
+    Theme._hoverHwnd := c.Ctrl("dismiss").Hwnd
+    c.Dismiss()
+    AssertEq(Theme._hoverHwnd, 0, "no hovered control left behind")
+    Theme._Unhover()                 ; what the next mouse move runs: no error
+    AssertTrue(true, "unhover after the card is gone is safe")
+}

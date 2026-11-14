@@ -118,9 +118,9 @@ class ObbyTask {
     static MaxRetries := 3
     static Sailor := "Sailor"
     static AuraIds := ["aura_open", "aura_search", "aura_equip", "aura_close"]
-    static MenuMs := 700           ; after opening the storage / typing the search
-    static SelectMs := 500         ; after clicking the tile / the button
-    static ExpandMs := 400         ; after clicking buff_expand
+    static MenuMs := 500           ; after opening the storage / typing the search
+    static SelectMs := 350         ; after clicking the tile / the button
+    static ExpandMs := 300         ; after clicking buff_expand
     static AuraWaitMs := 3000      ; the button flips after Equip / Unequip
     static ClickTries := 3         ; Equip / Unequip clicks while the button keeps its old word
     static HoverMs := 300          ; the mouse rests on Equip this long before the click
@@ -147,7 +147,7 @@ class ObbyTask {
     ; plain Sailor at all of them, Sailor: Flying Dutchman whole only at 3
     ; ("Sailor: tchman" at 2, "Sailor:" at 4)
     static NameScales := [2, 3, 1]
-    static PickMs := 400           ; after clicking a tile, before its name is read
+    static PickMs := 300           ; after clicking a tile, before its name is read
     ; Speed (2026-11-13): this._tileHint = the tile each aura was last found
     ; on, per tab ("sailor|1" -> 11). _FindTile checks it first: Sailor was
     ; result 11 on all 52 logged swaps, ~25 s of tile reads every obby run.
@@ -189,6 +189,7 @@ class ObbyTask {
     __New(deps := "") {
         this._tileHint := Map()
         this._tabHint := Map()       ; aura -> the storage tab it was last found on (searched first)
+        this._tabHint["eden"] := 2   ; Eden is on the Special tab (live): the first hunt after a start goes there at once
         this._env := TaskEnv(deps)
         this._auraFn := TaskEnv.Dep(deps, "aura", "")
         if !IsObject(this._auraFn)
@@ -840,6 +841,13 @@ class ObbyTask {
         env := this._env
         return {up: () => Input.TitleUp(env.io, env.ocrFn) ? ObbyTask.TidyLabels["title"] : ""
             , close: (label, ctx) => this.CloseCovered("title", ctx, true)}
+    }
+
+    ; The Daily Rewards popup alone (App, before every launch: claimed, closed).
+    DailyItem() {
+        env := this._env
+        return {up: () => Input.DailyUp(env.io, env.ocrFn) ? ObbyTask.TidyLabels["daily rewards"] : ""
+            , close: (label, ctx) => this.CloseCovered("daily rewards", ctx, true)}
     }
 
     _TidyLabel(what) => (what = "") ? "" : ObbyTask.TidyLabels.Has(what) ? ObbyTask.TidyLabels[what] : what

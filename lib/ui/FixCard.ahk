@@ -21,7 +21,7 @@ class FixCard {
         this.rule := rule
         this._cb := (callbacks is Map) ? callbacks : Map()
         this._ids := Map()
-        g := Theme.Window("Moontide: something needs a fix", "+AlwaysOnTop -MinimizeBox -MaximizeBox +Owner")
+        g := Theme.Window("Moontide: something needs a fix", "+AlwaysOnTop -MinimizeBox -MaximizeBox +Owner +ToolWindow +E0x08000000")   ; E0x08000000: never activated (clicks keep Roblox in front)
         this._gui := g
         g.OnEvent("Close", (*) => this.Dismiss())
         g.OnEvent("Escape", (*) => this.Dismiss())
@@ -75,6 +75,7 @@ class FixCard {
     }
 
     Destroy() {
+        try Theme.Forget(this._gui)     ; the hovered Dismiss button must not be painted after it is gone
         try this._gui.Destroy()
     }
 }

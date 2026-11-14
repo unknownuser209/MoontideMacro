@@ -212,7 +212,7 @@ AppTestMake(opts := "") {
         t.input := o["input"]
     tasks := o.Has("tasks") ? o["tasks"] : Map("fishing", AppFakeTask("fishing", 99))
     t.tasks := tasks
-    d := Map("cfg", t.cfg, "root", A_Temp, "now", () => t.clk.t, "ui", [t.ui], "wh", t.wh
+    d := Map("hiRes", false, "cfg", t.cfg, "root", A_Temp, "now", () => t.clk.t, "ui", [t.ui], "wh", t.wh
         , "logWatch", t.lw, "roblox", t.rb, "clip", t.clip, "input", t.input
         , "launch", (fn) => t.launched.Push(fn)
         , "timer", (fn, ms) => t.timers.Push(ms)

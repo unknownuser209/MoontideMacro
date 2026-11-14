@@ -1125,7 +1125,10 @@ class Dashboard {
     ; Pill switch bound to key. help: a "?" after the label.
     ; Turning the switch ON asks first (title / text); "Keep off" leaves it off.
     _WarnOn(c, title, text) {
-        c._fn := (ctl) => (ctl.Value && this._confirmBuggy.Call(title, text) != true) ? (ctl.Value := 0) : 0
+        ; keeps the callback _Bind set (the tab's unsaved dot), run after the question
+        own := c._fn
+        c._fn := (ctl) => ((ctl.Value && this._confirmBuggy.Call(title, text) != true) ? (ctl.Value := 0) : 0
+            , IsObject(own) ? own.Call(ctl) : 0)
         return c
     }
 
@@ -2496,7 +2499,20 @@ class Dashboard {
         this._ids["themeNote"] := Theme.Label(g, "x632 y554 w364 h40", "", "muted")
         p.load := ObjBindMethod(this, "_SettingsLoad")
         p.save := ObjBindMethod(this, "_SettingsSave")
+        p.validate := ObjBindMethod(this, "_SettingsCheck")
         this._SaveBar(p)
+    }
+
+    ; "" or why Settings cannot be saved: a typed private server link the
+    ; rejoin would refuse (RecoveryTask.LinkOk, as the setup wizard) was
+    ; saved quietly and auto-rejoin then failed at 3 AM.
+    _SettingsCheck() {
+        typed := this._psWipe ? "" : Trim(this._psEdit.Value)
+        if (typed = "")
+            return ""
+        if (SubStr(typed, 1, 23) != "https://www.roblox.com/" || StrLen(typed) <= 23 || RegExMatch(typed, "[\s`"<>``\\|^]"))
+            return "settings: that is not a Roblox private server link (it starts with https://www.roblox.com/)"
+        return ""
     }
 
     ; ---- page: Clips ----------------------------------------------------------------
@@ -2650,7 +2666,7 @@ class Dashboard {
         if !MemoryMatchTask.LayoutKnown {
             ; no layout yet: the switch cannot be turned on
             this._memSwitch.DefineProp("Flip", {Call: (*) => 0})
-            Theme.SetColors(this._memSwitch._box, Theme.OffBg, "5E6B80")
+            Theme.SetColors(this._memSwitch._box, Theme.OffBg, Theme.Muted)
         }
         this._ids["memoryLayoutNote"] := Theme.Label(g, "x632 y224 w364 h40", "", "muted")
         this._ids["memoryNote"] := Theme.Label(g, "x632 y272 w364 h20", "", "muted")

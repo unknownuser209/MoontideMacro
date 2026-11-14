@@ -666,3 +666,17 @@ Test_App_V17_NextUp() {
     AssertEq(t.app.NextUp(), "", "nothing on")
     t.app.Stop("test")
 }
+
+; speed (2026-11-13): the 1 ms timer is held from Start to Stop (every wait
+; lands on time) and handed back once
+Test_App_V17_HiResWhileRunning() {
+    t := AppTestMake()
+    t.app._hiResOn := true
+    n0 := Input._hiRes
+    t.app.Start()
+    AssertEq(Input._hiRes, n0 + 1, "held while running")
+    t.app.Stop("test")
+    AssertEq(Input._hiRes, n0, "handed back at Stop")
+    t.app.Stop("test")
+    AssertEq(Input._hiRes, n0, "a second Stop gives back nothing more")
+}

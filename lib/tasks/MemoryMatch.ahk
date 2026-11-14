@@ -91,7 +91,7 @@ class MemoryMatchTask {
     static StartRe := "i)st[aou]rt"   ; "Sturt" at 1080p / 900p
     static CooldownRe := "i)avail|after|left"
     static ReadyRe := "i)re[ao]d[yv]"           ; "Available after Ready!" ("Reodv", "Readvt" in the game font)
-    static ReadyAgainMs := 1500    ; after closing the Ready notification, before E again
+    static ReadyAgainMs := 900    ; after closing the Ready notification, before E again
     static WalkTries := 2          ; respawn + walk + E when no notification shows
     static TitleRe := "i)mem[ao]ry"
     static CloseRe := "i)cl[o0]se"
@@ -100,10 +100,10 @@ class MemoryMatchTask {
     static FlipReadMs := 2500
     static FlipBackMs := 4000
     static GreenWaitMs := 3000
-    static AnimMs := 350           ; after a flip-back / match is still
+    static AnimMs := 250           ; after a flip-back / match is still
     static CloseWaitMs := 8000
     static GoneMs := 1000          ; preempted: no board title for this long = the board is gone
-    static SettleMs := 450
+    static SettleMs := 300
     static PollMs := 150
     static RetryMin := 60
     static CooldownHours := 12
