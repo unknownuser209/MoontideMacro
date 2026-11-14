@@ -102,6 +102,39 @@ class Overlay {
         this._gui.Hide()
     }
 
+    ; Windowed Roblox (2026-11-14): when the overlay covers the client rect
+    ; (screen px), it moves just right of it, else left, else above, else
+    ; below; it stays where it is when there is no room (the position is not
+    ; saved: it is the run's, not the player's).
+    AvoidRect(rx, ry, rw, rh) {
+        if !this._shown
+            return
+        WinGetPos(&x, &y, &w, &h, "ahk_id " this._gui.Hwnd)
+        p := Overlay.Avoid(x, y, w, h, rx, ry, rw, rh, SysGet(76), SysGet(77), SysGet(78), SysGet(79))
+        if (p.x != x || p.y != y)
+            this._gui.Move(p.x, p.y)
+    }
+
+    ; Pure: where a w x h box at x, y goes so it does not cover the r rect,
+    ; inside the virtual screen v -> {x, y} (unchanged when it does not
+    ; overlap or nothing fits).
+    static Avoid(x, y, w, h, rx, ry, rw, rh, vx, vy, vw, vh) {
+        if (x >= rx + rw || x + w <= rx || y >= ry + rh || y + h <= ry)
+            return {x: x, y: y}
+        g := 8
+        ty := Min(Max(y, vy), vy + vh - h)
+        if (rx + rw + g + w <= vx + vw)
+            return {x: rx + rw + g, y: ty}
+        if (rx - g - w >= vx)
+            return {x: rx - g - w, y: ty}
+        tx := Min(Max(x, vx), vx + vw - w)
+        if (ry - g - h >= vy)
+            return {x: tx, y: ry - g - h}
+        if (ry + rh + g + h <= vy + vh)
+            return {x: tx, y: ry + rh + g}
+        return {x: x, y: y}
+    }
+
     Log(text) {
     }
 

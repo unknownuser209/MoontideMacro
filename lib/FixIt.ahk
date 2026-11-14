@@ -18,9 +18,9 @@
 
 class FixIt {
     static Rules := [
-        {key: "notfs", re: "i)Paused: (Roblox not fullscreen|Moontide needs Roblox fullscreen)", n: 1
-            , title: "Roblox is not fullscreen"
-            , fix: "The macro only works with Roblox fullscreen. Click into Roblox, press F11, then press F2 (or F1).", page: "", act: "fullscreen"},
+        {key: "notfs", re: "i)Paused: (Roblox not fullscreen|Moontide needs Roblox fullscreen|The Roblox window can't be used)", n: 1
+            , title: "The Roblox window can't be used"
+            , fix: "Roblox is minimized, too small or partly off the screen. Restore the window and keep it on the screen, or press F11 for fullscreen, then press F2 (or F1).", page: "", act: "fullscreen"},
         {key: "focus", re: "i)Paused: Roblox is not the active window", n: 2
             , title: "Another window keeps taking focus"
             , fix: "Something pulled Roblox to the back (the log line says what was in front). Close that app or turn off its overlay or toolbar, then press F2.", page: "Check", act: ""},

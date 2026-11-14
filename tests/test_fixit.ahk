@@ -42,7 +42,7 @@ Test_FixIt_DismissAndCard() {
     got := []
     c := FixCard(FixIt.Rule("notfs"), Map("act", (a) => (got.Push("act:" a), "done"), "dismiss", (k) => got.Push("dismiss:" k)))
     try {
-        AssertEq(c.Ctrl("title").Text, "Roblox is not fullscreen", "title")
+        AssertEq(c.Ctrl("title").Text, "The Roblox window can't be used", "title")
         AssertTrue(IsObject(c.Ctrl("act")), "a Fix it for me button")
         c._Act()
         AssertEq(got[1], "act:fullscreen", "the action asked")

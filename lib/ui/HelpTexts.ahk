@@ -68,6 +68,7 @@ class HelpTexts {
         add("Medal.auraMinRarity", "Only auras rarer than this (1 in N) are clipped.")
         add("Medal.auras", "Aura names that are always clipped, whatever their rarity, separated by commas.")
         add("Medal.auraAlwaysCategories", "Aura classes that are always clipped.")
+        add("Medal.clipCutscenes", "Clips every new aura that plays a roll cutscene (1 in 1,000 and rarer, and new limited auras the macro doesn't know yet), whatever the rarity threshold. Works with or without 'Clip on rare aura'.")
         add("Medal.delaySec", "Seconds to wait before pressing the clip hotkey, so the moment is inside the clip.")
         add("Medal.cooldownSec", "The shortest time between two clips.")
         add("Summary.enabled", "Sends one message a day with what the macro did, to the webhooks that have Stop ticked.")

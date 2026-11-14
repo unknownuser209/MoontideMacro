@@ -615,7 +615,7 @@ Test_App_NotFullscreenPausesWithStatus() {
     t.rb.fs := false
     t.app.Start()
     AssertEq(t.ui.status.state, "Paused", "paused at start")
-    AssertTrue(InStr(t.ui.status.task, "fullscreen"), "status names the problem")
+    AssertTrue(InStr(t.ui.status.task, "window"), "status names the problem")
     t.app.Tick()
     AssertEq(t.launched.Length, 0, "nothing launched")
     t.app.Resume()

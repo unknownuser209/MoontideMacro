@@ -200,7 +200,7 @@ class App {
     static KeyDefaults := Map("start", "F1", "pause", "F2", "stop", "F3")
     static Msg := Map(
         "missing", ["Roblox not found", "Roblox not found. Open Roblox fullscreen, then press F2."],
-        "notfs", ["Roblox not fullscreen", "Moontide needs Roblox fullscreen (any resolution; windowed and minimized are not supported). Make it fullscreen, then press F2."],
+        "notfs", ["Roblox window not usable", "The Roblox window can't be used (minimized, too small or partly off the screen). Restore it or make it fullscreen (F11), then press F2."],
         "unfocused", ["Roblox lost focus", "Roblox is not the active window (alt-tab?). Input stopped. Click into Roblox, then press F2."])
 
     ; Absolute repo dir (lib\App.ahk -> repo).
@@ -213,9 +213,6 @@ class App {
         if !d.Has("cfg")
             throw ValueError("App: cfg is required")
         this.cfg := d["cfg"]
-        ; hidden test switch (settings.ini only): a windowed Roblox counts
-        ; as fullscreen, mapped to its client (testing other sizes on one monitor)
-        try Roblox.AllowWindowed := (this.cfg.Get("General.allowWindowed", 0) = 1)
         this.root := App._Dep(d, "root", App.DefaultRoot())
         try ChatGuard.FlagPath := this.root "\logs\chat_hidden.flag"
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
@@ -520,6 +517,8 @@ class App {
         this._everStarted := true
         this.ctx.Reset()
         try this.fixit.Reset()                  ; a new run: cards may show again
+        if this._fixOn                          ; the real app: a window at a tested size first
+            try this._FitWindow()
         if this._fixOn                          ; the real app: the preset that fits Roblox's screen now
             try this._UseCalibration()
         this._started := true
@@ -656,7 +655,8 @@ class App {
             return
         m := App.Msg[kind]
         if (this._pauseReason != m[1])
-            this.Log("Paused: " m[2] (kind = "unfocused" ? App.FrontNote(this._frontFn) : ""))
+            this.Log("Paused: " m[2] (kind = "unfocused" ? App.FrontNote(this._frontFn) : "")
+                . ((kind = "notfs" && Roblox.Problem != "") ? " (" Roblox.Problem ")" : ""))
         this._pauseReason := m[1]
         this.ctx.Pause()
         try this.input.ReleaseAll()
@@ -894,6 +894,12 @@ class App {
         failed := false
         this.Log("task: " task.name " start")
         try {
+            ; a Daily Quests window left open (a Stop in the middle of it)
+            ; covers the whole game: the sell after it clicked Open Shop under
+            ; it and Captain Flarg's dialog stuck with the mouse locked (live
+            ; 2026-11-14). Closed before any other task starts.
+            if (task.name != "dailyquests" && this._taskMap.Has("dailyquests"))
+                try this._taskMap["dailyquests"]._Close(this.ctx)
             ; shift lock on makes every UI click miss (live 2026-11-02: a
             ; click at the screen centre opened the Donation prompt): not
             ; confirmed off after one more try -> the task is skipped
@@ -987,6 +993,9 @@ class App {
         ; Storage, the hunt and the sell walk for 2 minutes)
         if (task.name != "fishing" && this._taskMap.Has("fishing"))
             owners.Push(this._taskMap["fishing"])
+        ; the Daily Quests window covers everything too (2026-11-14)
+        if (task.name != "dailyquests" && this._taskMap.Has("dailyquests"))
+            owners.Push(this._taskMap["dailyquests"])
         for t in owners
             if HasMethod(t, "Leftovers")
                 try {
@@ -1163,7 +1172,23 @@ class App {
     ; had closed after a rejoin).
     _RejoinReady() => this._RecoveryOn() && RecoveryTask.LinkOk(Trim(String(this.cfg.Get("General.privateServer", ""))))
 
-    ; "ok" | "missing" | "notfs" (windowed / minimized). "ok" also refreshes
+    ; Windowed Roblox (2026-11-14): at Start, a window whose client is not a
+    ; tested size (or a maximized one) is sized to the largest tested size
+    ; that fits its monitor (Roblox.FitWindow; General.fitWindow=0 keeps it),
+    ; and the overlay is moved off the game if it covers it.
+    _FitWindow() {
+        if (!this.cfg.Get("General.fitWindow", 1) || !Roblox.Hwnd())
+            return
+        r := Roblox.FitWindow()
+        if (r = "nofit")
+            this.Log("Display: no tested size fits this screen as a window; fullscreen (F11) works best here")
+        else if (r != "")
+            this.Log("Display: Roblox window sized to " r " (a tested size)")
+        if (Roblox.ClientOk() = "ok" && Roblox.Windowed && IsObject(this.overlay) && HasMethod(this.overlay, "AvoidRect"))
+            try this.overlay.AvoidRect(Screen.cx, Screen.cy, Screen.cw, Screen.ch)
+    }
+
+    ; "ok" | "missing" | "notfs" (minimized / unusable window). "ok" also refreshes
     ; Screen's mapping to the client (Roblox.ClientOk) and logs the display
     ; once per change.
     _Window() {
@@ -1417,8 +1442,13 @@ class App {
             if !WinExist("ahk_exe RobloxPlayerBeta.exe")
                 return "Roblox is not open."
             if (this._Window() != "notfs")
-                return "Roblox is already fullscreen: press F2 (or F1)."
+                return "The Roblox window is fine now: press F2 (or F1)."
             try {
+                if DllCall("IsIconic", "Ptr", WinExist("ahk_exe RobloxPlayerBeta.exe"), "Int") {
+                    WinRestore("ahk_exe RobloxPlayerBeta.exe")
+                    WinActivate("ahk_exe RobloxPlayerBeta.exe")
+                    return "Restored the Roblox window. Press F2 (or F1)."
+                }
                 WinActivate("ahk_exe RobloxPlayerBeta.exe")
                 WinWaitActive("ahk_exe RobloxPlayerBeta.exe", , 2)
                 Sleep(250)
@@ -1865,7 +1895,7 @@ class App {
         steps := Input.WithCamera(name, steps)          ; e.g. top-down for limbo_eden
         win := this._Window()
         if (win != "ok")
-            return {ok: false, msg: (win = "notfs") ? "Roblox is not fullscreen" : "Roblox is not open"}
+            return {ok: false, msg: (win = "notfs") ? "the Roblox window can't be used (minimized, too small or off the screen)" : "Roblox is not open"}
         if !this._FocusSettled()
             return {ok: false, msg: "Roblox did not take focus; click into it and press Test again"}
         key := RouteRecorder.InteractKey(name)
@@ -2592,7 +2622,7 @@ class App {
                 . ", main monitor " A_ScreenWidth "x" A_ScreenHeight " at " Screen.ScaleAt() "%, " Screen.HdrText())
             try {
                 if (inst._Window() != "ok")
-                    inst.Log("Display: Roblox is not open fullscreen yet; it is checked again at F1")
+                    inst.Log("Display: Roblox is not open (or minimized) yet; it is checked again at F1")
             }
             inst.InstallHotkeys()
         }

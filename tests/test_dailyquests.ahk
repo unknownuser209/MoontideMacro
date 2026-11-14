@@ -261,3 +261,22 @@ Test_DailyQuests_RealFrames() {
         AssertTrue(!RegExMatch(Ocr.ReadFile(A_LoopFileFullPath, tb.x, tb.y, tb.w, tb.h), D.TitleRe), A_LoopFileName ": no Daily Quests window")
     }
 }
+
+; live 2026-11-14 (Roblox windowed at 1920x1200): the window scales evenly
+; and is centred; read stretched, the title box fell below the title and
+; the window was left open over the next task (sell)
+Test_DailyQuests_WindowedFrameReads() {
+    f := ScrPath("daily_quests_1920x1200_window")
+    rd := (x, y, w, h, scale := 1) => Ocr.ReadFile(f, x, y, w, h, scale)     ; Ocr maps design -> client itself
+    t := DailyQuestsTask({cfg: QmCfg(Map()), io: QmIO(), ocr: rd})
+    try {
+        Screen.SetClient(0, 0, 1920, 1200)
+        AssertTrue(t.TitleUp(), "the title reads at 1920x1200")
+        AssertEq(Screen.Mode, "S", "the mode is put back")
+        n := Screen.WithMode("C", () => t._RowName(699))
+        AssertTrue(InStr(n, "Roll") && InStr(n, "times"), "row 1 name (" n ")")
+        x := Screen.WithMode("C", () => Screen.Pt(DailyQuestsTask.ClosePt[1], DailyQuestsTask.ClosePt[2]))
+        AssertTrue(Abs(x.x - 1418) <= 8 && Abs(x.y - 357) <= 8, "the X maps onto the X (" x.x "," x.y ")")
+    } finally
+        Screen.Reset()
+}

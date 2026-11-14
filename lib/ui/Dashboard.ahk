@@ -2533,7 +2533,7 @@ class Dashboard {
 
     _PageClips(p) {
         g := this._gui
-        this._Panel(204, 152, 396, 300, "Medal clips")
+        this._Panel(204, 152, 396, 330, "Medal clips")
         this._BoolField(220, 186, "Clip with Medal", "Medal.enabled", 0)
         this._StrField(220, 216, "Clip hotkey", "Medal.clipHotkey", "F8", 80, 130)
         this._IntField(220, 252, "Delay (s)", "Medal.delaySec", 3, "", 90)
@@ -2545,9 +2545,11 @@ class Dashboard {
         this._binds[this._binds.Length].kind := "rarity"
         this._StrField(220, 382, "Always clip classes", "Medal.auraAlwaysCategories", "Challenged,Challenged+", 224, 140)
         this._StrField(220, 416, "Always clip auras", "Medal.auras", "", 224, 140)
+        this._BoolField(220, 450, "Clip every aura with a cutscene", "Medal.clipCutscenes", 0)
         this._Panel(616, 152, 396, 84, "Medal", "Medal (medal.exe) must be running. The macro presses the clip hotkey, "
             . "so set the same key in Medal. The hotkey is one of F4-F24, never a macro, capture or recorder key.`n`n"
-            . "A rare aura is clipped when it is listed, its class is listed, or it is rarer than the threshold.")
+            . "A rare aura is clipped when it is listed, its class is listed, or it is rarer than the threshold. "
+            . "'Clip every aura with a cutscene' clips any new aura that plays a roll cutscene (1 in 1,000 and rarer, and new limited auras), whatever the threshold.")
         Theme.Label(g, "x632 y184 w364 h20", "Medal (medal.exe) must be running.", "muted")
         Theme.Label(g, "x632 y206 w364 h20", "Set the same hotkey in Medal (F8, Alt+9, Shift+F5+T).", "muted")
         p.validate := ObjBindMethod(this, "_ClipsCheck")

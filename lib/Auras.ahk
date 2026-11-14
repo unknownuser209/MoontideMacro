@@ -25,10 +25,15 @@
 ;   Auras.Decide(cfg, name) -> Map{clip, why, known, entry, name, rarity,
 ;                          category}. Clip when (first match wins):
 ;                            1. the name is in [Medal] auras (comma list),
-;                            2. its category is in [Medal] auraAlwaysCategories
+;                            2. [Medal] clipCutscenes=1 and the aura plays a
+;                               roll cutscene: 1 in CutsceneMin (1,000, the
+;                               Epic tier) or rarer, or not in auras.json yet
+;                               (a new limited aura), whatever MinRarity says,
+;                            3. its category is in [Medal] auraAlwaysCategories
 ;                               (default "Challenged,Challenged+"),
-;                            3. rarity > 0 and rarity >= MinRarity.
-;                          Unknown (not in auras.json) and not listed -> no clip.
+;                            4. rarity > 0 and rarity >= MinRarity.
+;                          Unknown (not in auras.json) and not listed -> no clip
+;                          (unless clipCutscenes).
 ;   Auras.Describe(cfg, name) multi-line text for the `clips` webhook:
 ;                          aura, 1-in-N rarity + class, and why it clipped.
 ;   Auras.EquippedInText(text) Array of aura names in raw Roblox log text
@@ -54,6 +59,9 @@ class Auras {
     static Quiet(ms) => Auras.QuietUntil := Max(Auras.QuietUntil, A_TickCount + ms)
     static DefaultMinRarity := 100000000
     static DefaultAlways := "Challenged,Challenged+"
+    ; Sol's RNG plays a roll cutscene from the Epic tier (1 in 1,000) up
+    ; (rblxguide.com auras list, solsrngwiki.wiki FAQ; 2026-11-14)
+    static CutsceneMin := 1000
     static _idxList := ""          ; list object the index was built from
     static _idx := ""
 
@@ -206,6 +214,18 @@ class Auras {
         for n in names {
             if Auras._CsvHas(listed, n, (s) => Auras.Key(s)) {
                 r["clip"] := true, r["why"] := "listed in [Medal] auras"
+                return r
+            }
+        }
+        cut := 0
+        try cut := cfg.Get("Medal.clipCutscenes", 0)
+        if (cut = 1) {
+            if !IsObject(e) {
+                r["clip"] := true, r["why"] := "a new aura (not in data/auras.json yet) with a roll cutscene ([Medal] clipCutscenes)"
+                return r
+            }
+            if (r["rarity"] >= Auras.CutsceneMin) {
+                r["clip"] := true, r["why"] := "it plays a roll cutscene (1 in " Auras.Format(Auras.CutsceneMin) " and rarer; [Medal] clipCutscenes)"
                 return r
             }
         }

@@ -86,7 +86,7 @@ class SetupWizard {
     }
 
     _Page2(g) {
-        Theme.Label(g, "x24 y80 w440 h40", "Open Roblox in fullscreen, join Sol's RNG, then press Check. Nothing is clicked.", "body", Theme.Bg)
+        Theme.Label(g, "x24 y80 w440 h40", "Open Roblox (fullscreen or in a window), join Sol's RNG, then press Check. Nothing is clicked.", "body", Theme.Bg)
         Theme.Button(g, "x476 y82 w100 h30", "Check", (*) => this._Check(), "primary")
         this._ids["checkOut"] := Theme.Edit(g, 24, 128, 552, 230, "", "Multi ReadOnly -WantReturn VScroll")
     }

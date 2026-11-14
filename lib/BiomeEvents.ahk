@@ -301,7 +301,7 @@ class BiomeEvents {
         }
         if (test && this._cfg.Get("General.dryRun", 1) != 1)
             return
-        if !this._cfg.Get("Medal.onRareAura", 0)
+        if !(this._cfg.Get("Medal.onRareAura", 0) || this._cfg.Get("Medal.clipCutscenes", 0))
             return
         if (A_TickCount < Auras.QuietUntil) {
             this._Log("Aura: " Trim(name) " put on by the macro (no clip)")

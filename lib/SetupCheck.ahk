@@ -91,14 +91,14 @@ class SetupCheck {
             if !c.ok
                 add("size", "Roblox screen size", "info", "could not read the Roblox window size")
             else if (c.v = "notfs")
-                add("size", "Roblox screen size", "fail", "Roblox is in a window, not fullscreen (the macro needs fullscreen)", "Press F11 in Roblox (or Alt+Enter) to go fullscreen")
+                add("size", "Roblox screen size", "fail", "the Roblox window can't be used" (Roblox.Problem != "" ? ": " Roblox.Problem : ""), "Restore the Roblox window and keep it on the screen, or press F11 for fullscreen")
             else if (c.v != "ok")
                 add("size", "Roblox screen size", "info", "skipped: Roblox is not open")
             else if (vf.ok && vf.v)
-                add("size", "Roblox screen size", "ok", "fullscreen at " sz ", a size the macro was tested at")
+                add("size", "Roblox screen size", "ok", (Roblox.Windowed ? "windowed" : "fullscreen") " at " sz ", a size the macro was tested at")
             else
-                add("size", "Roblox screen size", "warn", "fullscreen at " sz ": " Screen.NotTestedNote
-                    , "If something misbehaves, switch Windows to one of: " Screen.TestedText())
+                add("size", "Roblox screen size", "warn", (Roblox.Windowed ? "windowed" : "fullscreen") " at " sz ": " Screen.NotTestedNote
+                    , Roblox.Windowed ? "Press F1: the macro sizes the window to a tested size" : "If something misbehaves, switch Windows to one of: " Screen.TestedText())
         }
 
         ; ---- Windows scale, HDR -------------------------------------------

@@ -17,7 +17,10 @@ program; it reads no game memory and sends nothing anywhere you did not set up.)
 
 ## Requirements
 
-- Windows, Roblox (standard launcher, no Bloxstrap) **fullscreen**. Tested sizes:
+- Windows, Roblox (standard launcher, no Bloxstrap), **fullscreen or in a window**.
+  In a window, F1 sizes it to the largest tested size that fits your screen
+  (Settings: `fitWindow`), so any monitor works. Keep the window on the screen
+  and in front; minimized does not work. Tested sizes:
   2560x1440, 1920x1080, 1920x1200, 1680x1050, 1600x900, 1536x864, 1440x900,
   1366x768, 1280x800 and 1280x720. Other 16:9 / 16:10 sizes may work; 5:4
   (1280x1024) and ultrawide (2560x1080, 3440x1440) do not yet.
@@ -33,7 +36,7 @@ program; it reads no game memory and sends nothing anywhere you did not set up.)
 2. Double-click `MoontideMacro.exe` (or `Vesper.ahk` with AutoHotkey v2
    installed; use one or the other, not both). The dashboard and a small
    overlay open. The first time, the setup wizard walks you through the basics.
-3. Open Roblox fullscreen, join your server, stand at the fishing spot.
+3. Open Roblox (fullscreen or in a window), join your server, stand at the fishing spot.
 4. Press **F1**.
 
 ## Updating
@@ -212,7 +215,7 @@ failed join, and logs that Roblox is updating.
 
 ### 2. Calibrate
 
-**Playing fullscreen at one of the tested sizes with Windows scale 100%?** A
+**Playing at one of the tested sizes (fullscreen or windowed) with Windows scale 100%?** A
 ready-made calibration for it (`data\presets\calibration_<size>_100.json`) is
 loaded on the first start, so you can skip this step and only re-record a step
 that misses (Setup > Calibrate > Preset lists them all). Other sizes or scales:
@@ -474,7 +477,7 @@ it was clipped.
 
 | You see | Do this |
 |---|---|
-| Paused: **Not fullscreen** | Make Roblox fullscreen (F11), press **F2**. |
+| Paused: **Roblox window not usable** | Roblox is minimized, smaller than 800x450 or partly off the screen. Restore it and keep it on the screen (or press F11 for fullscreen), then press **F2**. |
 | Paused: **Roblox lost focus** | You alt-tabbed. Click into Roblox, press **F2**. The log says which app was in front; Microsoft PC Manager's toolbar takes focus by itself: close PC Manager or turn its toolbar off. |
 | Something does not work and you need help | **Setup > Check & help**: **Check now**, then **Make support zip** and send the zip. |
 | Paused: **Roblox not found** | Open Roblox. With a private server link set, it rejoins by itself. |

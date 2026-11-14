@@ -97,8 +97,8 @@ Test_SetupCheck_RobloxClosed() {
 Test_SetupCheck_WindowedIsAProblem() {
     res := SetupCheck.Run(ScGoodCfg(), ScProbes(Map("clientOk", () => "notfs")))
     r := ScFind(res, "size")
-    AssertEq(r.level, "fail", "windowed fails")
-    AssertTrue(InStr(r.detail, "not fullscreen"), "says windowed")
+    AssertEq(r.level, "fail", "an unusable window fails")
+    AssertTrue(InStr(r.detail, "window can't be used"), "says the window can't be used")
     AssertTrue(r.fix != "", "has a fix")
     AssertEq(SetupCheck.Summary(res), "10 ok, 0 warnings, 1 problem", "summary with a problem")
 }

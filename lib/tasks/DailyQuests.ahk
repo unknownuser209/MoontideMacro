@@ -118,14 +118,14 @@ class DailyQuestsTask {
             for y in DailyQuestsTask.RowYs {
                 if ctx.ShouldStop()
                     break
-                r := this._Row(ctx, y, words)
+                r := this._RowC(ctx, y, words)
                 acts += r.acts
                 done += r.finished ? 1 : 0
                 if (r.line != "")
                     lines.Push(r.line)
             }
             if (!ctx.ShouldStop() && done = DailyQuestsTask.RowYs.Length) {
-                r := this._Bonus(ctx)
+                r := this._BonusC(ctx)
                 acts += r.acts
                 if (r.line != "")
                     lines.Push(r.line)
@@ -141,6 +141,10 @@ class DailyQuestsTask {
         }
         return acts
     }
+
+    ; the window's rows and bonus are read and clicked evenly scaled, centred
+    _RowC(ctx, y, words) => Screen.WithMode("C", () => this._Row(ctx, y, words))
+    _BonusC(ctx) => Screen.WithMode("C", () => this._Bonus(ctx))
 
     ; One quest row. -> {acts, finished, line}
     _Row(ctx, y, words) {
@@ -256,9 +260,12 @@ class DailyQuestsTask {
         return InStr(a, b) || QuestMatch.Similarity(a, b) >= DailyQuestsTask.MatchMin
     }
 
+    ; The window scales evenly and is centred ("C"; live 1920x1200 window,
+    ; 2026-11-14: read stretched, the title box fell below the title and the
+    ; window was left open). Only the sidebar button (OpenPt) stretches.
     TitleUp() {
         b := DailyQuestsTask.TitleBox
-        return RegExMatch((this._env.ocrFn)(b.x, b.y, b.w, b.h), DailyQuestsTask.TitleRe) > 0
+        return Screen.WithMode("C", () => RegExMatch((this._env.ocrFn)(b.x, b.y, b.w, b.h), DailyQuestsTask.TitleRe) > 0)
     }
 
     _Open(ctx) {
@@ -281,7 +288,8 @@ class DailyQuestsTask {
     }
 
     ; -> 1 closed | 0 was not up | 2 still up
-    _Close(ctx) {
+    _Close(ctx) => Screen.WithMode("C", () => this._CloseM(ctx))
+    _CloseM(ctx) {
         env := this._env
         if !this.TitleUp()
             return 0

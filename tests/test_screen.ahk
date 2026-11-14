@@ -295,15 +295,15 @@ Test_App_VerifiedSizeHasNoNote() {
     AssertTrue(!InStr(t.ui.status.task, "verified"), "no note at 2560x1440")
 }
 
-Test_App_WindowedPausesNeedsFullscreen() {
+Test_App_UnusableWindowPauses() {
     t := AppTestMake()
-    t.rb.fs := false
+    t.rb.fs := false                         ; the fake's "notfs": minimized / off screen / too small
     t.app.Start()
-    AssertEq(t.ui.status.state, "Paused", "windowed / minimized pauses")
-    AssertEq(t.ui.status.task, "Roblox not fullscreen", "clear status")
+    AssertEq(t.ui.status.state, "Paused", "an unusable window pauses")
+    AssertEq(t.ui.status.task, "Roblox window not usable", "clear status")
     found := false
     for l in t.ui.logs
-        found := found || InStr(l, "Moontide needs Roblox fullscreen")
+        found := found || InStr(l, "The Roblox window can't be used")
     AssertTrue(found, "the log says what to do")
 }
 
@@ -333,4 +333,46 @@ Test_Screen_HdrCheckAnswers() {
     AssertTrue(h = 1 || h = 0 || h = "", "1, 0 or unknown (" h ")")
     t := Screen.HdrText()
     AssertTrue(t = "HDR on" || t = "HDR off" || t = "HDR unknown", t)
+}
+
+; ---- windowed Roblox (2026-11-14) ------------------------------------------
+
+Test_Roblox_WindowProblem() {
+    AssertEq(Roblox.WindowProblem(0, 0, 2560, 1440, 0, 0, 2560, 1440), "", "fullscreen")
+    AssertEq(Roblox.WindowProblem(320, 160, 1920, 1080, 0, 0, 2560, 1440), "", "a 1080p window on a 1440p monitor")
+    AssertEq(Roblox.WindowProblem(-1500, 100, 1280, 720, -1920, 0, 1920, 1080), "", "a window on a left monitor")
+    AssertTrue(InStr(Roblox.WindowProblem(2000, 100, 1280, 720, 0, 0, 2560, 1440), "off the screen"), "off the right edge")
+    AssertTrue(InStr(Roblox.WindowProblem(100, -20, 1280, 720, 0, 0, 2560, 1440), "off the screen"), "off the top")
+    AssertTrue(InStr(Roblox.WindowProblem(100, 100, 640, 360, 0, 0, 2560, 1440), "too small"), "too small")
+    AssertEq(Roblox.WindowProblem(0, 0, 0, 0, 0, 0, 2560, 1440), "Roblox is minimized", "no client")
+}
+
+Test_Roblox_BestSizeIsTheLargestTestedThatFits() {
+    b := Roblox.BestSize(2546, 1361)        ; 1440p work area less a window frame
+    AssertEq(b.w "x" b.h, "1920x1200", "1440p monitor")
+    b := Roblox.BestSize(1906, 1001)        ; 1080p
+    AssertEq(b.w "x" b.h, "1600x900", "1080p monitor")
+    b := Roblox.BestSize(1586, 857)         ; 1600x900
+    AssertEq(b.w "x" b.h, "1366x768", "900p monitor")
+    AssertEq(Roblox.BestSize(1352, 689), "", "768p monitor: nothing fits (fullscreen)")
+    b := Roblox.BestSize(1280, 720)
+    AssertEq(b.w "x" b.h, "1280x720", "exact fit")
+    for t in Screen.Tested {                ; every pick is a tested size
+        p := StrSplit(t, "x")
+        b := Roblox.BestSize(Integer(p[1]), Integer(p[2]))
+        AssertEq(b.w "x" b.h, t, "fits itself: " t)
+    }
+}
+
+Test_Overlay_AvoidsTheGameWindow() {
+    p := Overlay.Avoid(2256, 24, 280, 120, 320, 120, 1920, 1200, 0, 0, 2560, 1440)
+    AssertEq(p.x " " p.y, "2256 24", "not covering: unchanged")
+    p := Overlay.Avoid(1900, 200, 280, 120, 320, 120, 1920, 1200, 0, 0, 2560, 1440)
+    AssertEq(p.x " " p.y, "2248 200", "covering: moved right of the window, same height")
+    p := Overlay.Avoid(1900, 200, 280, 120, 600, 120, 1920, 1200, 0, 0, 2560, 1440)
+    AssertEq(p.x " " p.y, "312 200", "no room right: left of it")
+    p := Overlay.Avoid(900, 500, 280, 120, 320, 200, 1920, 1080, 0, 0, 2560, 1440)
+    AssertTrue(p.x + 280 <= 320 || p.x >= 2240 || p.y + 120 <= 200 || p.y >= 1280, "moved off the window")
+    p := Overlay.Avoid(100, 100, 280, 120, 0, 0, 2560, 1440, 0, 0, 2560, 1440)
+    AssertEq(p.x " " p.y, "100 100", "fullscreen-sized window: no room, stays")
 }

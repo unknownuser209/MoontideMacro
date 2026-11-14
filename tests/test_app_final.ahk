@@ -235,7 +235,7 @@ Test_App_TestRouteWalksAndPressesTheKey() {
     ; Roblox not fullscreen: refused
     t.rb.fs := false
     r := t.app.OnTestRoute("quest_board")
-    AssertTrue(!r.ok && InStr(r.msg, "fullscreen"), "not fullscreen refused")
+    AssertTrue(!r.ok && InStr(r.msg, "window can't be used"), "unusable window refused")
     AssertEq(walks.Length, 0, "still nothing walked")
     t.rb.fs := true
     ; running macro is stopped first, then the route is walked and E pressed

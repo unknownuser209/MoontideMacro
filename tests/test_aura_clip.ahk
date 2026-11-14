@@ -540,3 +540,25 @@ Test_AuraClip_HadSurvivesNewInstance() {
         r.Done()
     }
 }
+
+; [Medal] clipCutscenes (2026-11-14): every new aura with a roll cutscene
+; (1 in 1,000 and rarer, or not in auras.json yet), whatever the threshold
+Test_AuraClip_EveryCutsceneAura() {
+    r := AcRig()
+    try {
+        r.cfg.Set("Medal.onRareAura", 0)
+        r.Aura("Starscourge")
+        AssertEq(r.clips.Length, 0, "both off: no clip")
+        r.cfg.Set("Medal.clipCutscenes", 1)
+        r.Aura("Quartz : Rose")
+        AssertEq(r.clips.Length, 1, "97.5M is below the 100M threshold but has a cutscene")
+        AssertTrue(InStr(Auras.Decide(r.cfg, "Quartz : Rose")["why"], "cutscene"), "why names the cutscene")
+        r.Aura("Common")
+        AssertEq(r.clips.Length, 1, "1 in 2: no cutscene, no clip")
+        d := Auras.Decide(r.cfg, "Some Brand New Limited")
+        AssertTrue(d["clip"] && !d["known"], "an aura not in the table yet clips (new limited)")
+        r.cfg.Set("Medal.clipCutscenes", 0)
+        AssertEq(Auras.Decide(r.cfg, "Some Brand New Limited")["clip"], false, "off: unknown auras never clip")
+    } finally
+        r.Done()
+}

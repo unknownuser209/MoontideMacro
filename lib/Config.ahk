@@ -74,6 +74,7 @@ class Config {
         d := Config._CIMap()
         g := Config._CIMap()
         g["privateServer"] := ""
+        g["fitWindow"] := "1"         ; windowed Roblox: sized to the largest tested size at Start
         g["vip"] := "1"
         g["fishing"] := "1"           ; 0 = never fish (only quests, craft, merchants, potions...)
         g["sellEvery"] := "15"
@@ -177,6 +178,7 @@ class Config {
         m["auras"] := ""              ; comma list of aura names that always clip
         m["auraMinRarity"] := "100000000"   ; clip auras with rarity 1 in N >= this (data\auras.json; 0 = off)
         m["auraAlwaysCategories"] := "Challenged,Challenged+"   ; aura classes that always clip
+        m["clipCutscenes"] := "0"     ; 1 = clip every new aura that plays a roll cutscene, whatever its rarity
         d["Medal"] := m
         ca := Config._CIMap()
         ca["captureKey"] := "F4"      ; calibration capture key (F9 = Roblox dev console; F6 / F8 Medal)
