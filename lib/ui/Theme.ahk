@@ -271,6 +271,49 @@ class Theme {
         return Theme.Label(g, "x" x " y" y " w" size " h" size " Center", Chr(0x263E), "big", "", Theme.Accent)
     }
 
+    ; A header moon frame (a white PNG, tools\make_moon.py) in color (hex
+    ; RRGGBB, the theme's Accent: Equinox white) laid on bg (hex): every
+    ; pixel keeps its alpha and takes color, then GDI+ blends it onto bg.
+    ; -> an HBITMAP the caller frees | 0 on any failure (LoadPicture then)
+    static MoonBitmap(path, color, bg) {
+        tok := 0, bmp := 0, hbm := 0
+        try {
+            DllCall("LoadLibrary", "Str", "gdiplus", "Ptr")
+            si := Buffer(24, 0), NumPut("UInt", 1, si, 0)
+            if DllCall("gdiplus\GdiplusStartup", "Ptr*", &tok, "Ptr", si, "Ptr", 0)
+                return 0
+            if (DllCall("gdiplus\GdipCreateBitmapFromFile", "WStr", path, "Ptr*", &bmp) || !bmp)
+                return 0
+            w := 0, h := 0
+            DllCall("gdiplus\GdipGetImageWidth", "Ptr", bmp, "UInt*", &w)
+            DllCall("gdiplus\GdipGetImageHeight", "Ptr", bmp, "UInt*", &h)
+            rect := Buffer(16, 0), NumPut("Int", w, rect, 8), NumPut("Int", h, rect, 12)
+            bd := Buffer(32, 0)     ; BitmapData: Width, Height, Stride, PixelFormat, Scan0, Reserved
+            if DllCall("gdiplus\GdipBitmapLockBits", "Ptr", bmp, "Ptr", rect, "UInt", 3, "Int", 0x26200A, "Ptr", bd)
+                return 0
+            stride := NumGet(bd, 8, "Int"), scan := NumGet(bd, 16, "Ptr")
+            rgb := Integer("0x" color) & 0xFFFFFF
+            Loop h {
+                row := scan + (A_Index - 1) * stride
+                Loop w {
+                    p := row + (A_Index - 1) * 4
+                    NumPut("UInt", (NumGet(p, 3, "UChar") << 24) | rgb, p)
+                }
+            }
+            DllCall("gdiplus\GdipBitmapUnlockBits", "Ptr", bmp, "Ptr", bd)
+            if DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", bmp, "Ptr*", &hbm, "UInt", 0xFF000000 | (Integer("0x" bg) & 0xFFFFFF))
+                return 0
+            return hbm
+        } catch
+            return 0
+        finally {
+            if bmp
+                DllCall("gdiplus\GdipDisposeImage", "Ptr", bmp)
+            if tok
+                DllCall("gdiplus\GdiplusShutdown", "Ptr", tok)
+        }
+    }
+
     ; Change text; transparent labels get their background repainted.
     static SetText(ctrl, text) {
         text := String(text)

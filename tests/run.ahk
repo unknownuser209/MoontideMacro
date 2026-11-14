@@ -60,6 +60,7 @@
 #Include test_sinister.ahk
 #Include test_chatguard.ahk
 #Include test_tidy.ahk
+#Include test_dailyquests.ahk
 #Include test_updater.ahk
 #Include test_screen.ahk
 #Include test_resample.ahk

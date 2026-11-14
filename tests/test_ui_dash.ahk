@@ -1109,7 +1109,7 @@ Test_Dash_WakeResumesLoops() {
         AssertEq(r.timers[1], Anim.FrameMs, "at the frame period")
         UiDashTickTo(r, 1000)
         AssertTrue(UiDashAnimLevels(d) != before, "open: they step again")
-        AssertEq(d._moonFrame, 2, "moon frame = Floor(phase * 8) (1000 / 3200)")
+        AssertEq(d._moonFrame, 3, "moon frame = Floor(phase * 12) (1000 / 3200)")
     } finally {
         Anim.Reset()
         UiDashClose(d)
@@ -1271,6 +1271,37 @@ Test_Dash_StarsClearOfEverything() {
     }
 }
 
+; The header moon takes the theme's Accent (2026-11-13: Equinox white, not
+; gold) and the new moon frame shows only its faint disc.
+Test_Dash_MoonTintedToTheTheme() {
+    px := (h, x, y) => UiDashBmpPixel(h, x, y)
+    full := Theme.AssetPath("ui\moon_8.png"), newm := Theme.AssetPath("ui\moon_2.png")
+    for c in [["E6E6E6", "0E0E0E"], ["F2A93B", "0D1117"], ["FF4D57", "120A0C"]] {
+        h := Theme.MoonBitmap(full, c[1], c[2])
+        AssertTrue(h, c[1] ": a bitmap")
+        AssertEq(px(h, 20, 20), Integer("0x" c[1]), c[1] ": the full moon's middle is the accent")
+        AssertEq(px(h, 1, 1), Integer("0x" c[2]), c[1] ": the corner is the header colour")
+        DllCall("DeleteObject", "Ptr", h)
+        h := Theme.MoonBitmap(newm, c[1], c[2])
+        mid := px(h, 20, 20)
+        AssertTrue(mid != Integer("0x" c[1]) && mid != Integer("0x" c[2]), c[1] ": the new moon is a faint disc (" Format("{:06X}", mid) ")")
+        DllCall("DeleteObject", "Ptr", h)
+    }
+    AssertEq(Theme.MoonBitmap(A_Temp "\missing_moon_x.png", "FFFFFF", "000000"), 0, "a missing file: 0 (LoadPicture then)")
+    Loop 12
+        AssertTrue(FileExist(Theme.AssetPath("ui\moon_" (A_Index - 1) ".png")), "frame " (A_Index - 1) " shipped")
+}
+
+; RRGGBB of an HBITMAP's pixel.
+UiDashBmpPixel(h, x, y) {
+    dc := DllCall("CreateCompatibleDC", "Ptr", 0, "Ptr")
+    old := DllCall("SelectObject", "Ptr", dc, "Ptr", h, "Ptr")
+    c := DllCall("GetPixel", "Ptr", dc, "Int", x, "Int", y, "UInt")
+    DllCall("SelectObject", "Ptr", dc, "Ptr", old)
+    DllCall("DeleteDC", "Ptr", dc)
+    return ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF)      ; COLORREF is BGR
+}
+
 ; Destroy frees the moon frames, forgets the window for the wake hooks and
 ; stops the Dashboard's animations.
 Test_Dash_DestroyCleansUp() {
@@ -1279,7 +1310,7 @@ Test_Dash_DestroyCleansUp() {
     Anim.Reset()
     try {
         d := Dashboard(Config.Load(dir))
-        AssertEq(d._moonFrames.Length, 8, "8 moon frames decoded once")
+        AssertEq(d._moonFrames.Length, 12, "12 moon frames (a whole cycle, new moon included) decoded once")
         for h in d._moonFrames
             AssertEq(DllCall("GetObjectType", "Ptr", h, "UInt"), 7, "frame is a live bitmap")    ; OBJ_BITMAP
         hwnd := d.Hwnd
@@ -1290,7 +1321,7 @@ Test_Dash_DestroyCleansUp() {
         d.Destroy()
         AssertEq(Dashboard._wins.Has(hwnd), false, "window forgotten")
         AssertEq(d._moonFrames.Length, 0, "frames released")
-        AssertEq(d._moonFreed, 8, "all 8 bitmaps deleted")
+        AssertEq(d._moonFreed, 12, "all 12 bitmaps deleted")
         AssertTrue(!Anim.Has("moon") && !Anim.Has("stars") && !Anim.Has("pulse"), "its loops stopped")
         d.Destroy()                                   ; twice is harmless
     } finally {

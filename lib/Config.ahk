@@ -141,6 +141,13 @@ class Config {
         ob["route"] := "obby"         ; routes.json route that walks to the obby
         ob["retries"] := "1"          ; extra tries after a failed run
         d["Obby"] := ob
+        ; Daily Quests (lib/tasks/DailyQuests.ahk): claim the finished ones,
+        ; reroll (free rerolls only) the ones holding a word of reroll.
+        dq := Config._CIMap()
+        dq["enabled"] := "0"
+        dq["intervalMin"] := "30"     ; minutes between visits (5..720)
+        dq["reroll"] := ""            ; comma list: quests holding one of these words are rerolled
+        d["DailyQuests"] := dq
         mm := Config._CIMap()
         mm["enabled"] := "0"
         mm["route"] := "memory_match" ; routes.json route that walks to the game

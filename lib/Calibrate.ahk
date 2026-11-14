@@ -331,6 +331,7 @@ class Calibrate {
         add("stella_dialog", "rect", "Walk into Stella so her dialog shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of her NAME ('Stella') at the top of the dialog.")
         add("daily_claim", "point", "Daily Rewards popup open (it shows after you join). Hover its Claim button (do not press it). The macro claims today's reward there by itself.")
         add("daily_close", "point", "Daily Rewards popup open. Hover the X at its top right that closes it.")
+        add("daily_quests_open", "point", "Only if the macro misses it: hover the button on the left that opens Daily Quests (the checklist icon).")
         add("inv_open", "point", "Stand anywhere with the inventory closed. Hover the inventory button.")
         add("inv_items_tab", "point", "Open the inventory (it opens on the Gears tab). Hover the Items tab button (do not press it).")
         add("inv_search", "point", "Inventory open on the Items tab. Hover the item search box.")

@@ -101,7 +101,7 @@
 ;   "count"     600 ms  Home stat tiles count up from 0 when Home opens
 ;   "pulse"     loop 1600 ms while Running: header pill (and the sidebar chip
 ;                       while it is gold) between Theme.Accent and PulseDark
-;   "moon"      loop 3200 ms: header logo through assets\ui\moon_0..7.png
+;   "moon"      loop 3200 ms: header logo through assets\ui\moon_0..11.png (theme-tinted)
 ;   "stars"     loop: 8 stars in the header / sidebar, each its own period
 ; Loops start in Show() and after a Settings save (UI.animations may have
 ; changed); WM_ACTIVATE on the window calls Anim.Wake() so frozen loops resume.
@@ -154,6 +154,7 @@
 
 class Dashboard {
     static W := 1040
+    static MoonMax := 16          ; header moon frames looked for (assets\ui\moon_0.., 12 shipped)
     static H := 680
     ; Internal page names (SavePage / tests); the user sees TabLabel(name).
     static Pages := ["Run", "Fishing", "Craft", "Quests", "Merchants", "Biomes & Potions", "Biome items", "Obby & Memory", "Webhooks", "Calibrate", "Settings", "Tools", "Limbo", "Clips", "Dev tools"
@@ -695,19 +696,24 @@ class Dashboard {
         if FileExist(bg)
             g.Add("Picture", "x176 y60 w864 h620", bg)      ; first = painted under everything
 
-        ; header: the moon logo cycles through assets\ui\moon_0..7.png, decoded
-        ; once here (HBITMAPs owned by the Dashboard, freed in Destroy())
+        ; header: the moon logo cycles through assets\ui\moon_0..N.png (a
+        ; whole cycle, new moon included), decoded once here and tinted to
+        ; the theme's Accent (Theme.MoonBitmap: Equinox white) on the header
+        ; colour (HBITMAPs owned by the Dashboard, freed in Destroy())
         this._moonFrames := []
-        Loop 8 {
+        Loop Dashboard.MoonMax {
             f := Theme.AssetPath("ui\moon_" (A_Index - 1) ".png")
             h := 0
-            if FileExist(f)
-                try h := LoadPicture(f)
+            if FileExist(f) {
+                try h := Theme.MoonBitmap(f, Theme.Accent, Theme.Bg)
+                if !h
+                    try h := LoadPicture(f)
+            }
             if !h
                 break
             this._moonFrames.Push(h)
         }
-        if (this._moonFrames.Length = 8)
+        if (this._moonFrames.Length >= 2)
             this._moon := g.Add("Picture", "x18 y10 w40 h40 BackgroundTrans", "HBITMAP:*" this._moonFrames[1])
         else {
             this._FreeMoon()
@@ -965,8 +971,11 @@ class Dashboard {
     }
 
     _MoonStep(phase) {
-        f := Min(7, Max(0, Floor(phase * 8)))
-        if (f = this._moonFrame || this._moonFrames.Length < 8)
+        n := this._moonFrames.Length
+        if (n < 2)
+            return
+        f := Min(n - 1, Max(0, Floor(phase * n)))
+        if (f = this._moonFrame)
             return
         this._moonFrame := f
         try this._moon.Value := "HBITMAP:*" this._moonFrames[f + 1]
@@ -1569,6 +1578,11 @@ class Dashboard {
         this._BoolField(692, 294, "Dismiss unticked quests", "quests.dismissDisabled", 0, , "WARNING: Dismiss abandons the quest and its progress. "
             . "Off (default): unticked quests are only skipped, never abandoned.")
         Theme.Label(g, "x692 y324 w304 h20", "Abandons the quest and its progress.", "muted")
+        this._Panel(676, 376, 336, 196, "Daily quests")
+        this._BoolField(692, 410, "Do daily quests", "DailyQuests.enabled", 0)
+        this._IntField(692, 446, "Check every", "DailyQuests.intervalMin", 30, "min", 140, 5)
+        this._StrField(692, 482, "Reroll quests with", "DailyQuests.reroll", "", 164, 140)
+        Theme.Label(g, "x692 y516 w304 h40", "Words, comma between (e.g. craft, fish). Free rerolls only, never Buy Reroll.", "muted")
         p.load := ObjBindMethod(this, "_QuestLoad")
         p.save := ObjBindMethod(this, "_QuestSave")
         this._SaveBar(p)

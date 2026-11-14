@@ -17,6 +17,8 @@
 ;          ambiguous and "" is returned. A trailing roman numeral in the name
 ;          must match exactly (never guess between "Delivery I"/"II").
 ;     "" (no/empty text, no match) means UNKNOWN: callers must take no action.
+;     An aura hunt ("Unique Aura Hunt") also goes by the board's title
+;     without "Aura" ("Unique Hunt", live 2026-11-13): Alt().
 ;   QuestMatch.IsComplete(ocrText) -> bool  (turn-in wording; edit CompleteRe)
 ;   QuestMatch.Norm(text)
 ; ---------------------------------------------------------------------------
@@ -31,6 +33,13 @@ class QuestMatch {
     static Norm(text) {
         s := RegExReplace(StrLower(String(text)), "[^a-z0-9]+", " ")
         return Trim(s)
+    }
+
+    ; The board's other name for a list entry ("" = none): "<rarity> aura
+    ; hunt" -> "<rarity> hunt".
+    static Alt(norm) {
+        a := RegExReplace(norm, "^(\w+) aura hunt$", "$1 hunt")
+        return (a != norm) ? a : ""
     }
 
     static IsComplete(ocrText) => RegExMatch(String(ocrText), QuestMatch.CompleteRe) ? true : false
@@ -52,7 +61,7 @@ class QuestMatch {
                 n := QuestMatch.Norm(q["name"])
                 if (n = "")
                     continue
-                out.Push({name: String(q["name"]), norm: n, enabled: typeOn && QuestMatch._On(q, "enabled")})
+                out.Push({name: String(q["name"]), norm: n, alt: QuestMatch.Alt(n), enabled: typeOn && QuestMatch._On(q, "enabled")})
             }
         }
         return out
@@ -67,10 +76,12 @@ class QuestMatch {
             return ""
         ; 1. exact, whole words, longest name wins
         padded := " " text " "
-        best := ""
+        best := "", bestLen := 0
         for q in list {
-            if (InStr(padded, " " q.norm " ") && (best == "" || StrLen(q.norm) > StrLen(best.norm)))
-                best := q
+            for n in [q.norm, q.alt] {
+                if (n != "" && InStr(padded, " " n " ") && StrLen(n) > bestLen)
+                    best := q, bestLen := StrLen(n)
+            }
         }
         if (best != "")
             return {name: best.name, enabled: best.enabled}
@@ -85,19 +96,21 @@ class QuestMatch {
         bestQ := ""
         tied := false
         for q in list {
-            if (StrLen(q.norm) < QuestMatch.MinFuzzyLen)
-                continue
-            qWords := StrSplit(q.norm, " ")
-            nWords := qWords.Length
-            ; A trailing roman numeral (Delivery II) must be read exactly:
-            ; one OCR edit turns I into II or IV, which is a different quest.
-            numeral := (nWords > 1 && RegExMatch(qWords[nWords], "^[ivx]+$")) ? qWords[nWords] : ""
             score := 0
-            for words in lines {
-                for cand in QuestMatch._Windows(words, nWords) {
-                    if (numeral != "" && !RegExMatch(cand, " " numeral "$"))
-                        continue
-                    score := Max(score, QuestMatch.Similarity(cand, q.norm))
+            for qn in [q.norm, q.alt] {
+                if (qn = "" || StrLen(qn) < QuestMatch.MinFuzzyLen)
+                    continue
+                qWords := StrSplit(qn, " ")
+                nWords := qWords.Length
+                ; A trailing roman numeral (Delivery II) must be read exactly:
+                ; one OCR edit turns I into II or IV, which is a different quest.
+                numeral := (nWords > 1 && RegExMatch(qWords[nWords], "^[ivx]+$")) ? qWords[nWords] : ""
+                for words in lines {
+                    for cand in QuestMatch._Windows(words, nWords) {
+                        if (numeral != "" && !RegExMatch(cand, " " numeral "$"))
+                            continue
+                        score := Max(score, QuestMatch.Similarity(cand, qn))
+                    }
                 }
             }
             if (score < QuestMatch.FuzzyMin)

@@ -71,6 +71,7 @@ class Sched {
         "craft", 4,
         "biomeitems", 5,
         "quests", 5,
+        "dailyquests", 5,
         "obby", 5,
         "memorymatch", 5,
         "minions", 6,
@@ -79,7 +80,7 @@ class Sched {
         "fishing", 99
     )
     ; Task names blocked while state.rareActive.
-    static RareBlocked := Map("merchant", true, "craft", true, "quests", true, "biomeitems", true
+    static RareBlocked := Map("merchant", true, "craft", true, "quests", true, "dailyquests", true, "biomeitems", true
         , "obby", true, "memorymatch", true, "minions", true)
     ; Task names that wait for the start sell (state.startSell). Quests and
     ; biome items go BEFORE it (quests, sell, buy, fish: no walk back first).

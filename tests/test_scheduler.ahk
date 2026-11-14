@@ -157,7 +157,7 @@ Test_Sched_FishingDefault() {
     AssertEq(Scheduler.Next([SchedFakeTask("fishing", 99, false)], state, 0), "", "fishing switched off -> nothing (idle)")
     AssertEq(Scheduler.Next([SchedFakeTask("quests", 5), SchedFakeTask("fishing", 99, false)], state, 0).name, "quests", "only the quest board runs")
     ; Nothing else runnable -> fishing.
-    can := Map("potions", false, "recovery", false, "merchant", false, "craft", false, "biomeitems", false, "quests", false, "obby", false, "memorymatch", false, "minions", false, "sell", false)
+    can := Map("potions", false, "recovery", false, "merchant", false, "craft", false, "biomeitems", false, "quests", false, "dailyquests", false, "obby", false, "memorymatch", false, "minions", false, "sell", false)
     AssertEq(Scheduler.Next(SchedTestAllTasks(can), state, 0).name, "fishing", "default fishing")
     ; Sell outranks fishing.
     can.Delete("sell")

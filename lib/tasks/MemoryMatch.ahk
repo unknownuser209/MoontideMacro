@@ -86,8 +86,11 @@ class MemoryMatchTask {
     ; the game font: "Stort Memory Motch?" / "Memory -Motch" (tests\screens)
     ; the title can lose letters ("Stort Memor Moach?" on the 19:43 clip), so
     ; the notification also counts as up when its button reads (NotifyUp)
-    static NotifyRe := "i)st[ao]rt\s*mem"
-    static ButtonRe := "i)st[ao]rt\s*mem"
+    ; Red light (Pumpkin Moon, 2026-11-13: a miss) garbles letters: "Stort
+    ; Maemorue Motch?", "$tnrt Memnrv Mntch" (red-tinted copies of the real
+    ; frame, tests\screens): "memory match" with up to 2 odd letters each counts
+    static NotifyRe := "i)st[ao]rt\s*mem|m\S{1,2}m\S{0,2}r\S?\s*m\S{1,2}t?ch"
+    static ButtonRe := "i)st[ao]rt\s*mem|m\S{1,2}m\S{0,2}r\S?\s*m\S{1,2}t?ch"
     static StartRe := "i)st[aou]rt"   ; "Sturt" at 1080p / 900p
     static CooldownRe := "i)avail|after|left"
     static ReadyRe := "i)re[ao]d[yv]"           ; "Available after Ready!" ("Reodv", "Readvt" in the game font)
@@ -95,7 +98,7 @@ class MemoryMatchTask {
     static WalkTries := 2          ; respawn + walk + E when no notification shows
     static TitleRe := "i)mem[ao]ry"
     static CloseRe := "i)cl[o0]se"
-    static OpenWaitMs := 4000
+    static OpenWaitMs := 6000      ; returns as soon as it reads (a slow server: 4 s was not always enough)
     static DealMs := 8000          ; the tiles deal in (~2 s on the clip)
     static FlipReadMs := 2500
     static FlipBackMs := 4000
@@ -125,6 +128,7 @@ class MemoryMatchTask {
 
     name := "memorymatch"
     priority := 5
+    _lastNotify := ""             ; the last notification read (for the log)
 
     __New(deps := "") {
         this._env := TaskEnv(deps)
@@ -249,7 +253,7 @@ class MemoryMatchTask {
             ; (about 1 in 10 at 2560x1440, live 2026-11-11)
             Loop MemoryMatchTask.WalkTries {
                 if (A_Index > 1)
-                    env.Log("memory match: no notification after E - walking there once more")
+                    env.Log("memory match: no notification after E (read '" this._lastNotify "') - walking there once more")
                 if !Input.ResetToSpawn(ctx, io) {
                     ; 2026-10-27 review: a respawn that failed (no stop) wrote no
                     ; nextTry, so the task ran again on every tick ahead of fishing
@@ -276,7 +280,7 @@ class MemoryMatchTask {
             }
             if !r {
                 env.Report("errors", "Memory Match", "the Start Memory Match notification did not show after E (check the memory_match route with Test)", 0xE74C3C)
-                env.Log("memory match: no Start Memory Match notification after E; nothing clicked")
+                env.Log("memory match: no Start Memory Match notification after E (read '" this._lastNotify "'); nothing clicked")
                 this._Write(MemoryMatchTask.RetryMin * 60)
                 return 0
             }
@@ -404,7 +408,7 @@ class MemoryMatchTask {
 
     ; ---- screen -----------------------------------------------------------
 
-    _Read(box) => Trim((this._env.ocrFn)(box.x, box.y, box.w, box.h), " `t`r`n")
+    _Read(box, scale := 1) => Trim((this._env.ocrFn)(box.x, box.y, box.w, box.h, scale), " `t`r`n")
 
     ; Polls OCR of box for re. -> 1 | 0 not within ms | -1 stopped
     _WaitRead(box, re, ms, ctx) {
@@ -503,7 +507,13 @@ class MemoryMatchTask {
         L := MemoryMatchTask.Layout
         waited := 0
         Loop {
-            if MemoryMatchTask.NotifyUp(this._Read(L.notify), this._Read(L.startBox))
+            t := this._Read(L.notify), b := this._Read(L.startBox)
+            if !MemoryMatchTask.NotifyUp(t, b)          ; a hard read (tinted light): once more at 2x
+                t := this._Read(L.notify, 2)
+            ; what was read, for the log when nothing matched (2026-11-13: a
+            ; miss in the Pumpkin Moon light said nothing about why)
+            this._lastNotify := StrReplace(t " / " b, "`n", " ")
+            if MemoryMatchTask.NotifyUp(t, b)
                 return 1
             if (waited >= ms)
                 return 0

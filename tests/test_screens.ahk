@@ -191,6 +191,24 @@ Test_Screens_MemoryMatchPrompt() {
     AssertEq(MemoryMatchTask.ParseCooldown(cd), 40020, "11h 07m read off the button")
 }
 
+Test_Screens_MemoryMatchPromptInAnyLight() {
+    ; live 2026-11-13 23:05 (Snowy, the Halloween banner behind it) and two
+    ; red-tinted copies of it (a Pumpkin Moon miss at 22:57: the light
+    ; garbles letters, "Stort Maemorue Motch?" / "$tnrt Memnrv Mntch")
+    L := MemoryMatchTask.Layout
+    for f in ["memorymatch_notify_event_1440", "memorymatch_notify_redtint35_synthetic", "memorymatch_notify_redtint50_synthetic"] {
+        t := ScrRead(f, L.notify), b := ScrRead(f, L.startBox)
+        AssertTrue(MemoryMatchTask.NotifyUp(t, b) || MemoryMatchTask.NotifyUp(ScrRead(f, L.notify, 2), b), f ": notification seen (1x, else 2x)")
+        AssertTrue(RegExMatch(b, MemoryMatchTask.ButtonRe) && !RegExMatch(b, MemoryMatchTask.CooldownRe), f ": the button is Start")
+    }
+    ; the looser words still never read on a game screen without it
+    Loop Files A_ScriptDir "\screens\*.*" {
+        if RegExMatch(A_LoopFileName, "i)^mm_prompt|^memorymatch_notify")
+            continue
+        AssertTrue(!RegExMatch(Ocr.ReadFile(A_LoopFileFullPath, L.notify.x, L.notify.y, L.notify.w, L.notify.h), MemoryMatchTask.NotifyRe), A_LoopFileName ": no Memory Match notification")
+    }
+}
+
 Test_Screens_MemoryMatchBoard() {
     L := MemoryMatchTask.Layout
     for f in ["mm_board_start", "mm_matched", "mm_end"]

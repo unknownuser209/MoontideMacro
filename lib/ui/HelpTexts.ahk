@@ -45,6 +45,8 @@ class HelpTexts {
         add("Obby.enabled", "Runs the obby for its reward on a timer, with the aura it needs.")
         add("Obby.intervalMin", "Minutes between obby runs.")
         add("Obby.retries", "How many times a failed obby run is tried again before waiting for the next one.")
+        add("DailyQuests.enabled", "Opens Daily Quests every few minutes, claims every finished quest (and the Good job today bonus), then closes it.")
+        add("DailyQuests.reroll", "Quests holding one of these words (comma list, e.g. craft, fish) are rerolled with the free rerolls. Buy Reroll (Robux) is never pressed.")
         add("MemoryMatch.enabled", "Plays Memory Match every 12 hours and keeps the best pairs. Needs the memory_match walk recorded.")
         add("Auras.equipFirst", "Swaps auras by searching the name and equipping the first result, without reading it. Faster, but only use it if your aura names are unique.")
         ; hunting

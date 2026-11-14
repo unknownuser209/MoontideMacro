@@ -354,6 +354,26 @@ Test_QuestMatch_DefaultsKnowTheBoardQuests() {
     }
 }
 
+Test_QuestMatch_RarityHuntIsTheAuraHunt() {
+    ; live 2026-11-13 22:04: the board titles aura hunts "Unique Hunt" (no
+    ; "Aura"), the list says "Unique Aura Hunt": it was left alone
+    q := Config._DefQuests()
+    for r in ["Basic", "Epic", "Unique", "Legendary", "Mythic"] {
+        m := QuestMatch.Match(r " Hunt`n***`nObjects`n- Roll Hozard_Roys.`nRewords`n- Lucky Potion [x25]", q)
+        AssertEq(IsObject(m) ? m.name : "", r " Aura Hunt", r " Hunt -> " r " Aura Hunt")
+    }
+    m := QuestMatch.Match("Unique Hunt", q)
+    AssertEq(IsObject(m) ? m.name : "", "Unique Aura Hunt", "title alone")
+    m := QuestMatch.Match("Unigue Hunt", q)
+    AssertEq(IsObject(m) ? m.name : "", "Unique Aura Hunt", "a misread letter (fuzzy)")
+    m := QuestMatch.Match("Unique Aura Hunt", q)
+    AssertEq(IsObject(m) ? m.name : "", "Unique Aura Hunt", "the full name still")
+    ; Player Hunt keeps its own entries; a bare "Hunt" is nothing
+    m := QuestMatch.Match("Player Hunt II", q)
+    AssertEq(IsObject(m) ? m.name : "", "Player Hunt II", "player hunt")
+    AssertEq(QuestMatch.Match("Hunt", q), "", "bare word")
+}
+
 ; ---- QuestsTask ------------------------------------------------------------
 
 ; Fake quest board, like the 2026 UI: a carousel showing one quest. Accept

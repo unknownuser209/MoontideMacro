@@ -62,7 +62,7 @@ class SetupCheck {
         ["buff_expand", [["Obby.enabled", 0]]],
         ["obby_", [["Obby.enabled", 0]]]]
     ; recorded when the user wants them, never needed (the tasks work without)
-    static CalOptional := ["cauldron_result_2", "fisher_leave", "fisher_shop_close", "stella_dialog", "daily_claim", "daily_close"]
+    static CalOptional := ["cauldron_result_2", "fisher_leave", "fisher_shop_close", "stella_dialog", "daily_claim", "daily_close", "daily_quests_open"]
 
     static Run(cfg, probes := "") {
         out := []

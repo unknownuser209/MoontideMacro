@@ -17,6 +17,7 @@
 #Include %A_LineFile%\..\tasks\Sell.ahk
 #Include %A_LineFile%\..\tasks\Craft.ahk
 #Include %A_LineFile%\..\tasks\Quests.ahk
+#Include %A_LineFile%\..\tasks\DailyQuests.ahk
 #Include %A_LineFile%\..\tasks\BiomeItems.ahk
 #Include %A_LineFile%\..\tasks\Obby.ahk
 #Include %A_LineFile%\..\tasks\Minions.ahk
@@ -194,7 +195,7 @@ class App {
     ; to the spot through the Fisher) runs next when fishing is on
     static MovesAway := Map("quests", 1, "obby", 1, "minions", 1, "merchant", 1, "memorymatch", 1)
     static DrainMs := 5000
-    static Order := ["potions", "recovery", "merchant", "craft", "biomeitems", "quests", "obby", "memorymatch", "minions", "sell", "limbo", "fishing"]
+    static Order := ["potions", "recovery", "merchant", "craft", "biomeitems", "quests", "obby", "memorymatch", "dailyquests", "minions", "sell", "limbo", "fishing"]
     static KeyNames := ["start", "pause", "stop"]
     static KeyDefaults := Map("start", "F1", "pause", "F2", "stop", "F3")
     static Msg := Map(
@@ -302,7 +303,7 @@ class App {
             for name, t in d["tasks"]
                 this._taskMap[name] := t
         } else {
-            for name in ["recovery", "merchant", "craft", "biomeitems", "quests", "obby", "memorymatch", "minions", "sell", "limbo", "fishing"] {
+            for name in ["recovery", "merchant", "craft", "biomeitems", "quests", "obby", "memorymatch", "dailyquests", "minions", "sell", "limbo", "fishing"] {
                 t := this._DefaultTask(name)
                 if IsObject(t)
                     this._taskMap[name] := t
@@ -364,6 +365,7 @@ class App {
                     , stuck: (msg) => this._Error("Stuck: " msg), cal: Calibrate})
                 case "craft": return CraftTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "quests": return QuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn, cards: (c) => this._ClearCards(c)})
+                case "dailyquests": return DailyQuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "biomeitems": return BiomeItemsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "obby": return ObbyTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()})
                 case "minions": return MinionsTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()

@@ -101,6 +101,11 @@
       "prompt": "Daily Rewards popup open. Hover the X at its top right that closes it."
     },
     {
+      "id": "daily_quests_open",
+      "kind": "point",
+      "prompt": "Only if the macro misses it: hover the button on the left that opens Daily Quests (the checklist icon)."
+    },
+    {
       "id": "inv_open",
       "kind": "point",
       "prompt": "Stand anywhere with the inventory closed. Hover the inventory button."
