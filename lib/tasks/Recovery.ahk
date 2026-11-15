@@ -134,7 +134,23 @@ class RecoveryTask {
         this._limitTold := false    ; the rejoin limit was reported (until a rejoin works)
         this._leaving := false      ; ReturnToIsland: close the healthy client too
         this._ghosting := false     ; rejoining out of a ghost server: close its client too
+        this._unlock := false       ; App: the mouse stays locked (stacked game windows): rejoin
     }
+
+    ; App, after task after task was skipped because the mouse stayed locked
+    ; (live 2026-11-15: a Memory Match board and Captain Flarg's dialog left
+    ; open together; every task skipped for 35 min). Only a rejoin clears
+    ; it. -> true when newly asked (false: already pending).
+    RequestUnlock() {
+        if this._unlock
+            return false
+        this._unlock := true
+        return true
+    }
+
+    ; The unlock rejoin is pending: App lets this task run without the
+    ; shift lock check (that check is what keeps failing).
+    Unlocking() => this._unlock
 
     ; A LogWatch join kind ("private" | "other") -> "ghost" | "clear" | ""
     ; (no change). Off with Recovery.antiGhost=0; never while Limbo is on or
@@ -205,6 +221,14 @@ class RecoveryTask {
             }
             return now >= this._holdUntil
         }
+        if this._unlock {
+            if !RecoveryTask.LinkOk(this._Link()) {
+                this._unlock := false
+                env.Problem("recovery:unlocknolink", "recovery: the mouse stays locked by game windows, but there is no usable private server link (Settings) to rejoin with")
+                return false
+            }
+            return now >= this._holdUntil
+        }
         if (now >= this._holdUntil && this._Stuck(state, now))
             return true
         return this._AfkDue(now)
@@ -214,8 +238,12 @@ class RecoveryTask {
         env := this._env
         state := this._state
         now := env.Now()
-        if this._Disconnected()
-            return this._Rejoin(ctx) ? 1 : 0
+        if this._Disconnected() {
+            ok := this._Rejoin(ctx)
+            if ok
+                this._unlock := false               ; a fresh client: nothing left locked
+            return ok ? 1 : 0
+        }
         if this._Ghost(state) {
             msg := "ghost server: the game moved you to a server your friends can't join (a teleport, not your private server link): rejoining your private server"
             env.Log("recovery: " msg)
@@ -229,7 +257,18 @@ class RecoveryTask {
                 this._ghosting := false
             }
             if ok
-                state.ghost := false, this._ghostTold := false
+                state.ghost := false, this._ghostTold := false, this._unlock := false
+            return ok ? 1 : 0
+        }
+        if this._unlock {
+            msg := "the mouse stays locked (game windows that would not close): rejoining your private server to clear them"
+            env.Log("recovery: " msg)
+            env.Report("errors", "Mouse locked", msg, 0xF2A93B)
+            try {
+                ok := this._Rejoin(ctx)
+            } finally {
+                this._unlock := false      ; still locked after this: App asks again
+            }
             return ok ? 1 : 0
         }
         if (IsObject(state) && this._Stuck(state, now)) {
@@ -419,9 +458,10 @@ class RecoveryTask {
         }
 
         this._attempts.Push(now)
-        if ((this._discSeen || this._leaving || this._ghosting) && (this._hwndFn)()) {
+        if ((this._discSeen || this._leaving || this._ghosting || this._unlock) && (this._hwndFn)()) {
             env.Log(this._leaving ? "recovery: closing Roblox to leave Limbo"
                 : this._ghosting ? "recovery: closing the ghost server's Roblox client"
+                : this._unlock ? "recovery: closing the locked Roblox client"
                 : "recovery: closing the disconnected Roblox client")
             try (this._closeFn)()
             deadline := env.Now() + RecoveryTask.CloseWaitMs

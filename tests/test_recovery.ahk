@@ -644,3 +644,40 @@ Test_Recovery_Rejoin_WaitsForALateTitleScreen() {
     AssertEq(rig2.task.Run(rig2.Ctx()), 1, "rejoined without a title screen")
     AssertTrue(InStr(rig2.AllText(), "no title screen"), "said so")
 }
+
+; live 2026-11-15: a Memory Match board and Captain Flarg's dialog stayed open
+; together and held the mouse; every task skipped for 35 min. App asks for
+; this rejoin; the old client is closed first.
+Test_Recovery_UnlockRejoins() {
+    rig := RcRig()
+    AssertEq(rig.task.CanRun(rig.state), false, "nothing to do")
+    AssertEq(rig.task.RequestUnlock(), true, "asked")
+    AssertEq(rig.task.RequestUnlock(), false, "already pending")
+    AssertEq(rig.task.Unlocking(), true, "pending")
+    AssertEq(rig.task.CanRun(rig.state), true, "runs")
+    rig.task.Run(rig.Ctx())
+    AssertEq(rig.closes, 1, "the locked client closed")
+    AssertEq(rig.runs.Length, 1, "link opened once")
+    t := rig.AllText()
+    AssertTrue(InStr(t, "the mouse stays locked") > 0, "logged")
+    AssertTrue(InStr(t, "closing the locked Roblox client") > 0, "close logged")
+    AssertTrue(!InStr(t, "SECRET123"), "link never logged")
+    AssertEq(rig.task.Unlocking(), false, "cleared after the rejoin")
+    ; no usable link: dropped, told
+    rig2 := RcRig("")
+    rig2.task.RequestUnlock()
+    AssertEq(rig2.task.CanRun(rig2.state), false, "no link: no run")
+    AssertEq(rig2.task.Unlocking(), false, "dropped")
+}
+
+; review: a disconnect rejoin also clears a pending unlock, so the fresh client
+; is not closed by a second rejoin
+Test_Recovery_DisconnectRejoinClearsAPendingUnlock() {
+    rig := RcRig()
+    rig.task.RequestUnlock()
+    rig.win := false                            ; the client went away first
+    AssertEq(rig.task.CanRun(rig.state), true, "disconnected: runs")
+    rig.task.Run(rig.Ctx())
+    AssertEq(rig.runs.Length, 1, "one rejoin")
+    AssertEq(rig.task.Unlocking(), false, "the unlock is done with it")
+}

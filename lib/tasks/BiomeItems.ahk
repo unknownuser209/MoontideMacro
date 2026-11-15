@@ -99,6 +99,14 @@ class BiomeItemsTask {
     ; the Biome Selector's Drives, top to bottom (first word = OCR key)
     static Drives := ["Radiant Star Drive", "Infernal Flame Drive", "Unknown Void Drive", "Corrupt Ruin Drive"
         , "Golden Dune Drive", "Chilling Frost Drive", "Abyss Curse Drive", "Raging Gale Drive", "Angelic Hymn Drive"]
+    ; LIMITED (Halloween 2026, the user): ONE Cursed Rune Fragment when
+    ; GRAVEYARD or PUMPKIN MOON starts (Limited.cursedRune). The fragment
+    ; starts Blood Rain and is used up, so it skips the one-time check and
+    ; the server cooldown; after a use none is used again until a normal
+    ; biome (the night is over): Blood Rain ending back into GRAVEYARD does
+    ; not spend a second one.
+    static Rune := {key: "cursedRune", name: "Cursed Rune Fragment", word: "cursed", cdMin: 0, mustSay: "", consumable: true}
+    static RuneBiomes := ["GRAVEYARD", "PUMPKIN MOON"]
     static ServerCdMin := 20
     static CdMarginSec := 30
     static MissingRetryMin := 30     ; first hold; doubled per refusal in a row
@@ -131,6 +139,8 @@ class BiomeItemsTask {
         this._missing := Map()       ; key -> env.Now() when its tile was not found or it was refused
         this._holdMs := Map()        ; key -> how long that hold lasts (default MissingRetryMin)
         this._fails := Map()         ; key -> refusals in a row (since its last use)
+        this._runeSpent := false     ; a Cursed Rune Fragment was used this night
+        this._state := ""            ; the state CanRun saw last (Run reads its biome)
         this._Load()
     }
 
@@ -155,6 +165,8 @@ class BiomeItemsTask {
                         this._lastUse[it.key] := t
             if (v.Has("lastAny") && (t := at(v["lastAny"])) !== "")
                 this._lastAny := t
+            if v.Has("runeSpent")
+                this._runeSpent := v["runeSpent"] ? true : false
         }
     }
 
@@ -169,6 +181,8 @@ class BiomeItemsTask {
         data := Map("lastUse", lu)
         if (this._lastAny !== "")
             data["lastAny"] := ts(this._lastAny)
+        if this._runeSpent
+            data["runeSpent"] := 1
         try PotionSafety._AtomicWrite(this._path, Json.Stringify(data) "`n")
         catch as err
             this._env.Log("biome items: could not write " this._path ": " err.Message)
@@ -180,6 +194,8 @@ class BiomeItemsTask {
     ; in either read and, for an item with mustSay (the Randomizer), the two
     ; reads agree, are at least DescMinChars long and match mustSay.
     static DescIs(it, a, b) {
+        if (it.HasProp("consumable") && it.consumable)
+            return true                         ; used up by design: no one-time check
         if (BiomeItemsTask.Forbid(a) || BiomeItemsTask.Forbid(b))
             return false
         if (it.mustSay = "")
@@ -195,21 +211,63 @@ class BiomeItemsTask {
 
     ; The tile names the item: its word in the OCR text with the game font's
     ; look-alikes folded ("Biome Rondomizer" = randomizer), and not one-time.
-    static TileIs(text, word) => InStr(GameLists.Fold(text), GameLists.Fold(word)) && !BiomeItemsTask.Forbid(text)
+    static TileIs(text, word, consumable := false) => InStr(GameLists.Fold(text), GameLists.Fold(word)) && (consumable || !BiomeItemsTask.Forbid(text))
+
+    _TileIs(text, it) => BiomeItemsTask.TileIs(text, it.word, it.HasProp("consumable") && it.consumable)
+
+    ; BiomeItems.blacklist (comma list) -> Map of normalised biome names
+    static Blacklist(cfg) {
+        m := Map()
+        v := IsObject(cfg) ? cfg.Get("BiomeItems.blacklist", "") : ""
+        for n in StrSplit(String(v), ",")
+            if ((n := Biomes.Norm(n)) != "")
+                m[n] := true
+        return m
+    }
+
+    ; A Cursed Rune Fragment is due: Limited.cursedRune on, GRAVEYARD or
+    ; PUMPKIN MOON up, none used this night, not held. A normal biome ends
+    ; the night (the next GRAVEYARD / PUMPKIN MOON may use one again).
+    _RuneDue(biome) {
+        env := this._env
+        b := Biomes.Norm(biome)
+        if (this._runeSpent && b != "" && Biomes.IsNormal(b)) {
+            this._runeSpent := false
+            this._Save()
+        }
+        if !(IsObject(env.cfg) && env.cfg.Get("Limited.cursedRune", 0))
+            return false
+        ok := false
+        for n in BiomeItemsTask.RuneBiomes
+            ok := ok || (b = n)
+        if (!ok || this._runeSpent)
+            return false
+        k := BiomeItemsTask.Rune.key
+        if (this._missing.Has(k) && env.Now() - this._missing[k]
+            < (this._holdMs.Has(k) ? this._holdMs[k] : BiomeItemsTask.MissingRetryMin * 60000))
+            return false
+        return true
+    }
 
     CanRun(state) {
         env := this._env
-        if !(IsObject(env.cfg) && env.cfg.Get("BiomeItems.enabled", 0))
-            return false
+        this._state := state
         if (IsObject(state) && state.HasProp("rareActive") && state.rareActive)
             return false
         biome := (IsObject(state) && state.HasProp("biome")) ? Trim(String(state.biome)) : ""
+        if (this._RuneDue(biome) && this._InvCal() != "")
+            return true                         ; Limited: its own switch, not BiomeItems.enabled
+        if !(IsObject(env.cfg) && env.cfg.Get("BiomeItems.enabled", 0))
+            return false
         ; overnight review: only rare=1 was refused, so PUMPKIN MOON (an event
         ; biome, rare 0) and any biome missing from biomes.json were changed
         ; away. Now it must be listed AND a normal biome (Biomes.Normal).
         b := Biomes.Find(env.cfg, biome)
         if (biome = "" || b["rare"] || !b["known"] || !Biomes.IsNormal(biome))
             return false                        ; unknown yet, rare, event or unlisted: never changed
+        ; the user's blacklist (e.g. STARFALL): no item until the biome changes
+        if BiomeItemsTask.Blacklist(env.cfg).Has(Biomes.Norm(biome))
+            return false
         now := env.Now()
         if (this._lastAny !== "" && now - this._lastAny < BiomeItemsTask.ServerCdMin * 60000 + BiomeItemsTask.CdMarginSec * 1000)
             return false
@@ -269,7 +327,9 @@ class BiomeItemsTask {
 
     Run(ctx) {
         env := this._env
-        it := this._Ready(env.Now())
+        st := this._state
+        biome := (IsObject(st) && st.HasProp("biome")) ? Trim(String(st.biome)) : ""
+        it := this._RuneDue(biome) ? BiomeItemsTask.Rune : this._Ready(env.Now())
         if !IsObject(it)
             return 0
         c := this._InvCal()
@@ -371,7 +431,7 @@ class BiomeItemsTask {
                     continue
                 t := this._Read(r)
                 seen .= (seen = "" ? "" : " / ") SubStr(Trim(RegExReplace(t, "\s+", " ")), 1, 30)
-                if BiomeItemsTask.TileIs(t, it.word)
+                if this._TileIs(t, it)
                     tiles.Push(r)
             }
             if (tiles.Length > 0)
@@ -405,14 +465,14 @@ class BiomeItemsTask {
             return this._Fail(c, it, "the selected item's description is single-use or not the reusable " it.name "'s (read: '"
                 . SubStr(Trim(RegExReplace(d, "\s+", " ")), 1, 200) "'); Use not clicked")
         t := this._Read(tile)
-        if !BiomeItemsTask.TileIs(t, it.word) {
+        if !this._TileIs(t, it) {
             ; one more look: a read can catch the tile mid-redraw (live
             ; 2026-11-13: a Randomizer missed its use on one bad read)
             if !env.Wait(BiomeItemsTask.RereadMs, ctx)
                 return -1
             t := this._Read(tile)
         }
-        if !BiomeItemsTask.TileIs(t, it.word)
+        if !this._TileIs(t, it)
             return this._Fail(c, it, "the tile changed before Use; Use not clicked")
         if ctx.ShouldStop()
             return -1
@@ -449,8 +509,11 @@ class BiomeItemsTask {
                 return -1
         }
         env.Log("biome items: used " it.name)
-        env.Report("biome", "Biome item used", "Used **" it.name "**. Next one in " BiomeItemsTask.ServerCdMin " min (server cooldown).", 0x5865F2)
-        if (BiomeItemsTask.TileIs(this._Read(c.inv_tile1_rect), it.word) || env.InvOpen(c.inv_items_tab))
+        if (it.HasProp("consumable") && it.consumable)
+            env.Report("biome", "Cursed Rune Fragment used", "Used one **" it.name "** (Blood Rain). No other one until the next Graveyard / Pumpkin Moon night.", 0x8E44AD)
+        else
+            env.Report("biome", "Biome item used", "Used **" it.name "**. Next one in " BiomeItemsTask.ServerCdMin " min (server cooldown).", 0x5865F2)
+        if (this._TileIs(this._Read(c.inv_tile1_rect), it) || env.InvOpen(c.inv_items_tab))
             env.CloseInv(c.inv_open, c.inv_items_tab, ctx)       ; inventory still open: close it (checked)
         env.Wait(BiomeItemsTask.InvMs, ctx)
         env.BuyPrompt("biome items")            ; after the last click: a prompt is closed and reported
@@ -520,7 +583,10 @@ class BiomeItemsTask {
     _Used(it) {
         now := this._env.Now()
         this._lastUse[it.key] := now
-        this._lastAny := now
+        if (it.HasProp("consumable") && it.consumable)
+            this._runeSpent := true             ; one per night; no server cooldown
+        else
+            this._lastAny := now
         for m in [this._missing, this._holdMs, this._fails]
             if m.Has(it.key)
                 m.Delete(it.key)
@@ -559,7 +625,7 @@ class BiomeItemsTask {
         env := this._env
         if (this._SelectorUp() && this._EscSelector(cctx) < 0)
             return -1
-        if (BiomeItemsTask.TileIs(this._Read(c.inv_tile1_rect), it.word) || env.InvOpen(c.inv_items_tab))
+        if (this._TileIs(this._Read(c.inv_tile1_rect), it) || env.InvOpen(c.inv_items_tab))
             env.CloseInv(c.inv_open, c.inv_items_tab, cctx)
         if cctx.ShouldStop()
             return -1

@@ -98,7 +98,7 @@ class SetupCheck {
                 add("size", "Roblox screen size", "ok", (Roblox.Windowed ? "windowed" : "fullscreen") " at " sz ", a size the macro was tested at")
             else
                 add("size", "Roblox screen size", "warn", (Roblox.Windowed ? "windowed" : "fullscreen") " at " sz ": " Screen.NotTestedNote
-                    , Roblox.Windowed ? "Press F1: the macro sizes the window to a tested size" : "If something misbehaves, switch Windows to one of: " Screen.TestedText())
+                    , (Roblox.Windowed ? "If something misbehaves, size the Roblox window to one of: " : "If something misbehaves, switch Windows to one of: ") Screen.TestedText())
         }
 
         ; ---- Windows scale, HDR -------------------------------------------

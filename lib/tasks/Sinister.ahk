@@ -64,21 +64,42 @@ class SinisterReport {
         this._logFn := SinisterReport._Dep(deps, "log")
         this._nowFn := SinisterReport._Dep(deps, "now")
         this._hook := SinisterReport._Dep(deps, "hook")
-        this._key := "", this._has := false
+        this._key := "", this._has := false, this._postedAt := Map()   ; boss -> ms of its last message
         this._Reset()
     }
 
+    static SpawnGapMs := 900000      ; one message per 15 min, whoever saw it first
+
+    ; "sinister s natrual spawn" / "sinister p natrual spawn" (the user's
+    ; words, typo kept); anything else counts as s
+    static SpawnLine(boss := "s") => "sinister " (StrLower(String(boss)) = "p" ? "p" : "s") " natrual spawn"
+
     _Reset() {
-        this.msg := "", this.dead := false, this._link := "", this._open := false
+        this.msg := "", this.dead := false, this._link := "", this._open := false, this._boss := "s"
         this._lows := 0, this._lowAt := "", this._goneAt := ""
     }
 
-    Spawn(key) {
+    ; boss: "s" (Sinister S., GRAVEYARD) or "p" (Sinister P., the November
+    ; 2026 one), as the message names it
+    Spawn(key, boss := "s") {
         key := String(key)
         if (this._has && key == this._key)
             return false
+        ; the chat line and the fight see the same spawn (App shares one
+        ; report): one message per SpawnGapMs; a fight's edit still goes to it
+        now := this._Now()
+        b := (StrLower(String(boss)) = "p") ? "p" : "s"
+        if (this._postedAt.Has(b) && now - this._postedAt[b] < SinisterReport.SpawnGapMs) {
+            this._has := true, this._key := key
+            if (this._boss != b || this.dead)       ; another boss's report, or already dead: start over
+                this._Reset(), this._boss := b
+            this._open := true
+            this._Log("sinister: Sinister " StrUpper(b) ". already announced " Round((now - this._postedAt[b]) / 60000) " min ago - no second message")
+            return false
+        }
         this._has := true, this._key := key
         this._Reset()
+        this._boss := b
         this._open := true
         link := this._LinkNow()
         if (link = "") {
@@ -92,7 +113,7 @@ class SinisterReport {
         if !IsObject(this._wh)
             return false
         h := ""
-        try h := this._wh.PostText(SinisterReport.Event, link " " SinisterReport.SpawnText
+        try h := this._wh.PostText(SinisterReport.Event, link " " SinisterReport.SpawnLine(boss)
             , IsObject(this._hook) ? {hook: this._hook} : "")
         catch Any as e {
             this._Log("sinister: the Discord message failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
@@ -102,7 +123,7 @@ class SinisterReport {
             this._Log("sinister: no webhook has the sinister event - no Discord message")
             return false
         }
-        this.msg := h, this._link := link
+        this.msg := h, this._link := link, this._postedAt[b] := now
         this._Log("sinister: boss spawn message queued (" h.parts.Length " webhook(s))")
         return true
     }

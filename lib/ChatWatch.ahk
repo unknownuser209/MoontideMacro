@@ -42,6 +42,9 @@ class ChatWatch {
     __New(deps := "") {
         this._env := TaskEnv(deps)
         this._onFound := TaskEnv.Dep(deps, "onFound", "")
+        this._onBoss := TaskEnv.Dep(deps, "onBoss", "")      ; onBoss("s" | "p")
+        this._bossAt := Map()        ; "s" / "p" -> ms of the last report (or of the start)
+        this._bossPrimed := false    ; the first read only notes lines already in the chat
         this._lastPoll := ""
         this._seen := Map()          ; name -> ms of last sighting
         this._absent := Map()        ; name -> reads in a row without it since
@@ -58,12 +61,36 @@ class ChatWatch {
             this.Rebase()
     }
 
+    ; BOSSES (Halloween 2026): "Sinister S." (GRAVEYARD) and "Sinister P."
+    ; spawn in the server; the user saw one with hunting off and got no
+    ; message (2026-11-15). Any chat line naming one counts (the game font
+    ; draws i like l / 1). NOT SEEN YET: the exact wording of the game's line.
+    ; The aura "Sinister" in a roll line ("... found Sinister, chance ...")
+    ; has no S / P right after it: no match.
+    static BossRe := "i)\bs[i1l!|]n[i1l!|]st[e3]r\s*[.,:]?\s*([sp]|5(?=\s*\.))(?![a-z0-9])"
+    static BossGapSec := 900          ; one report per boss per 15 min
+
+    ; -> Array of "s" / "p", one per boss named in the OCR text
+    static DetectBoss(text) {
+        found := []
+        seen := Map()
+        pos := 1
+        while (pos := RegExMatch(String(text), ChatWatch.BossRe, &m, pos)) {
+            b := (StrLower(m[1]) = "p") ? "p" : "s"
+            if !seen.Has(b)
+                seen[b] := true, found.Push(b)
+            pos += m.Len
+        }
+        return found
+    }
+
     static Names := ["Mari", "Jester"]
     Rebase() {
         now := this._env.Now()
         for name in ChatWatch.Names
             this._seen[name] := now, this._absent[name] := 0
         this._noted := Map()
+        this._bossPrimed := false
     }
 
     static Detect(text) {
@@ -108,6 +135,7 @@ class ChatWatch {
         if (text == "")
             return []                           ; unknown: no action
 
+        this._CheckBoss(text, now)
         hits := []
         names := ChatWatch.Detect(text)
         here := Map()
@@ -139,5 +167,27 @@ class ChatWatch {
                 (this._onFound)(name)
         }
         return hits
+    }
+
+    ; A boss named in the chat -> onBoss, once per boss per BossGapSec. With
+    ; startOld, a line already there at the first read is only noted (an old
+    ; spawn is not announced at every start).
+    _CheckBoss(text, now) {
+        env := this._env
+        bosses := ChatWatch.DetectBoss(text)
+        first := !this._bossPrimed
+        this._bossPrimed := true
+        for b in bosses {
+            if (this._bossAt.Has(b) && now - this._bossAt[b] < ChatWatch.BossGapSec * 1000)
+                continue
+            this._bossAt[b] := now
+            if (first && this._startOld) {
+                env.Log("chat: a Sinister " StrUpper(b) ". line was already in the chat at the start: not announced")
+                continue
+            }
+            env.Log("chat: Sinister " StrUpper(b) ". spawned (read in the chat)")
+            if IsObject(this._onBoss)
+                try (this._onBoss)(b)
+        }
     }
 }

@@ -415,25 +415,32 @@ Test_Remote_401Stops() {
     AssertTrue(InStr(t.r.LastError, "token rejected"), "LastError")
 }
 
-Test_Remote_403Stops() {
+; 2026-11-15: a 403 stopped the remote for good, so inviting the bot later did
+; nothing until a restart. Now it tries again every 2 min, told once.
+Test_Remote_403RetriesSlowly() {
     t := RemMake()
     RemLearned(t)
     t.clk.t += 5000
     t.r.Tick()
     t.srv.Respond(403, '{"message": "Missing Access", "code": 50001}')
     t.r.Tick()
-    AssertEq(t.r.State, "stopped", "stopped")
-    found := false
+    AssertTrue(t.r.State != "stopped", "not stopped for good")
+    n := 0
     for l in t.logs
-        if InStr(l, "cannot read that channel - check its permissions and the Message Content intent")
-            found := true
-    AssertTrue(found, "403 hint logged")
+        n += InStr(l, "cannot see that channel") ? 1 : 0
+    AssertEq(n, 1, "403 hint logged")
     t.clk.t += 60000
     t.r.Tick()
-    AssertEq(t.srv.Open(), 0, "no more requests")
-    t.r.Reset()
+    AssertEq(t.srv.Open(), 0, "nothing inside 2 min")
+    t.clk.t += 61000
     t.r.Tick()
-    AssertTrue(InStr(t.srv.Last().url, "?limit=1"), "Reset learns again")
+    AssertEq(t.srv.Open(), 1, "tried again after 2 min")
+    t.srv.Respond(403, '{"message": "Missing Access", "code": 50001}')
+    t.r.Tick()
+    n := 0
+    for l in t.logs
+        n += InStr(l, "cannot see that channel") ? 1 : 0
+    AssertEq(n, 1, "told once")
 }
 
 Test_Remote_NetworkBackoff() {
@@ -540,6 +547,15 @@ Test_Remote_TestButton() {
     t.srv.route := RemRoute.Bind(Map("chan", 403))
     res := t.r.Test()
     AssertTrue(!res.ok && InStr(res.msg, "cannot see that channel"), "403 channel")
+    ; the bot in no server: an invite link with its own id
+    t.srv.route := RemRoute.Bind(Map("chan", 403, "guilds", "[]"))
+    res := t.r.Test()
+    AssertTrue(!res.ok && InStr(res.msg, "not in any server"), "no server: " res.msg)
+    AssertTrue(InStr(res.msg, "client_id=5&scope=bot&permissions=" DiscordRemote.InvitePerms), "invite link")
+    ; reads fine but the Message Content intent is off
+    t.srv.route := RemRoute.Bind(Map("app", '{"flags":0}'))
+    res := t.r.Test()
+    AssertTrue(res.ok && InStr(res.msg, "MESSAGE CONTENT INTENT"), "intent off: " res.msg)
     t.srv.route := RemRoute.Bind(Map("chan", 404))
     AssertTrue(InStr(t.r.Test().msg, "not found"), "404 channel")
     t.srv.route := RemRoute.Bind(Map("msgs", 403))
@@ -551,6 +567,10 @@ Test_Remote_TestButton() {
 }
 
 RemRoute(fail, req) {
+    if InStr(req.url, "/users/@me/guilds")
+        return [200, fail.Has("guilds") ? fail["guilds"] : '[{"id":"9"}]']
+    if InStr(req.url, "/oauth2/applications/@me")
+        return [200, fail.Has("app") ? fail["app"] : '{"flags":524288}']
     if InStr(req.url, "/users/@me")
         return fail.Has("me") ? [fail["me"], "{}"] : [200, '{"id":"5","username":"MyBot","discriminator":"1234"}']
     if InStr(req.url, "/messages")

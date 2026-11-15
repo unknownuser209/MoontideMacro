@@ -230,7 +230,7 @@ AppTestMake(opts := "") {
         t.be := AppFakeBe()
         d["biomeEvents"] := t.be
     }
-    for k in ["safetyFactory", "logWatchFactory", "calibrate", "recordRoute", "walkRoute", "recordRespawn", "creditsVerify", "splash", "tidyScreen"]
+    for k in ["safetyFactory", "logWatchFactory", "calibrate", "recordRoute", "walkRoute", "recordRespawn", "creditsVerify", "splash", "tidyScreen", "sinister"]
         if o.Has(k)
             d[k] := o[k]
     if o.Has("defaultTasks")
@@ -562,9 +562,10 @@ Test_App_ChatWatchOnlyBetweenTasks() {
     t.app.Tick()
     AssertEq(chat.checks, 1, "not while paused")
     t.cfg.Set("merchant.enabled", 0)
+    t.cfg.Set("Limited.bossAlert", 0)
     t.app.Resume()
     t.app.Tick()
-    AssertEq(chat.checks, 1, "not when merchants are off")
+    AssertEq(chat.checks, 1, "not when merchants and the boss message are off")
 }
 
 Test_App_ChatFoundNotifiesMerchant() {
@@ -812,4 +813,102 @@ Test_App_MissingAtStartRejoinsWithALink() {
     t.app.Tick()
     AppTestRunLaunched(t)
     AssertEq(rec.runs, 1, "recovery ran (it rejoins)")
+}
+
+class AppFakeUnlockRecovery extends AppFakeTask {
+    __New() {
+        super.__New("recovery", 2, false)
+        this.asks := 0
+        this.pending := false
+    }
+    RequestUnlock() {
+        if this.pending
+            return false
+        this.asks++, this.pending := true
+        return true
+    }
+    Unlocking() => this.pending
+}
+
+; live 2026-11-15: stacked game windows held the mouse; 35 min of skipped
+; tasks. After SkipRejoinAt skips in a row the recovery task is asked to
+; rejoin, and it runs without the shift lock check that keeps failing.
+Test_App_LockedSkipsAskForARejoin() {
+    inp := AppFakeShift()
+    inp.stuck := true
+    fish := AppFakeTask("fishing", 99)
+    rec := AppFakeUnlockRecovery()
+    t := AppTestMake(Map("input", inp, "tasks", Map("fishing", fish, "recovery", rec)))
+    t.app.Start()
+    Loop App.SkipRejoinAt - 1
+        t.app._RunTask(fish)
+    AssertEq(rec.asks, 0, "not yet")
+    t.app._RunTask(fish)
+    AssertEq(rec.asks, 1, "asked after " App.SkipRejoinAt " skips")
+    AssertEq(t.app._holdUntil <= t.app.Now(), true, "no hold before the rejoin")
+    found := false
+    for l in t.ui.logs
+        found := found || InStr(l, "still locked after " App.SkipRejoinAt " skips: rejoining")
+    AssertTrue(found, "logged")
+    t.app._RunTask(fish)
+    AssertEq(rec.asks, 1, "asked once while pending")
+    n := inp.shifts.Length
+    t.app._RunTask(rec)
+    AssertEq(rec.runs, 1, "the rejoin ran with the mouse still locked")
+    AssertEq(inp.shifts.Length, n, "no shift lock check for it")
+    AssertEq(fish.runs, 0, "fishing never ran locked")
+}
+
+
+class AppFakeBossReport {
+    __New() {
+        this.spawns := []
+    }
+    Spawn(key, boss := "s") => (this.spawns.Push(boss), true)
+}
+
+; the boss from the chat sends its message with hunting off (2026-11-15)
+Test_App_ChatBossSendsItsMessage() {
+    rep := AppFakeBossReport()
+    t := AppTestMake(Map("sinister", rep))
+    t.app._OnChatBoss("p")
+    AssertEq(rep.spawns.Length, 1, "sent")
+    AssertEq(rep.spawns[1], "p", "P")
+    t.app.cfg.Set("Limited.bossAlert", "0")
+    t.app._OnChatBoss("s")
+    AssertEq(rep.spawns.Length, 1, "turned off: nothing")
+    t.app.cfg.Set("Limited.bossAlert", "1")
+    t.app.cfg.Set("merchant.enabled", "0")
+    AssertEq(t.app._ChatOn(), true, "merchants off: the chat is still read for the bosses")
+}
+
+; 2026-11-15: the boss report was made after the tasks, so building the
+; minions task failed ("Minions task disabled") and hunting only idled
+Test_App_DefaultTasksBuildMinionsWithTheBossReport() {
+    t := AppTestMake(Map("defaultTasks", 1))
+    AssertTrue(t.app._taskMap.Has("minions"), "minions task built")
+    AssertTrue(IsObject(t.app.sinister), "boss report made")
+    AssertTrue(t.app._taskMap["minions"]._sin == t.app.sinister, "the hunt shares the App's boss report")
+    for l in t.ui.logs
+        AssertTrue(!InStr(l, "Minions task disabled"), "the minions task built: " l)
+}
+
+; review: the unlock rejoin skipped the shift lock check, so it does not count
+; as the lock being gone; merchant lines are ignored while merchants are off
+Test_App_UnlockRunKeepsTheSkipStreak() {
+    inp := AppFakeShift()
+    inp.stuck := true
+    fish := AppFakeTask("fishing", 99)
+    rec := AppFakeUnlockRecovery()
+    t := AppTestMake(Map("input", inp, "tasks", Map("fishing", fish, "recovery", rec)))
+    t.app.Start()
+    Loop App.SkipRejoinAt
+        t.app._RunTask(fish)
+    t.app._RunTask(rec)
+    AssertEq(t.app._skipStreak, App.SkipRejoinAt, "streak kept through the unlock run")
+    m := AppFakeMerchant()
+    t2 := AppTestMake(Map("tasks", Map("merchant", m)))
+    t2.app.cfg.Set("merchant.enabled", "0")
+    t2.app._OnChatMerchant("Mari")
+    AssertEq(m.notified.Length, 0, "merchants off: no visit queued")
 }

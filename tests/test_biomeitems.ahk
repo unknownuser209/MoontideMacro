@@ -599,3 +599,44 @@ Test_BiomeItems_OpenInventoryIsNotClickedShut() {
     AssertEq(m.t.Run(SchedCtx()), 1, "used")
     AssertTrue(m.io.Index("move 20,20") < m.io.Index("move 10,10") || !m.io.Moved(10, 10), "its button not clicked before the tab (it would close it)")
 }
+
+
+; the user, 2026-11-15: no biome items during STARFALL, wait for the next biome
+Test_BiomeItems_BlacklistWaitsForTheNextBiome() {
+    m := BiMake(Map("BiomeItems.strangeController", 1, "BiomeItems.blacklist", "starfall, Sand  Storm"), ["Strange Controller"], ["Changes the biome"])
+    AssertEq(m.t.CanRun(BiState("SAND STORM")), false, "blacklisted: no item")
+    AssertEq(m.t.CanRun(BiState("WINDY")), true, "the next biome: used")
+    b := BiomeItemsTask.Blacklist(BiCfg(Map("BiomeItems.blacklist", " starfall ,,LOST  forest")))
+    AssertEq(b.Count, 2, "two names")
+    AssertTrue(b.Has("STARFALL") && b.Has("LOST FOREST"), "normalised")
+    AssertEq(BiomeItemsTask.Blacklist(BiCfg()).Count, 0, "empty by default")
+}
+
+; Limited: ONE Cursed Rune Fragment per GRAVEYARD / PUMPKIN MOON night
+Test_BiomeItems_OneCursedRunePerNight() {
+    m := BiMake(Map("BiomeItems.enabled", 0, "Limited.cursedRune", 1), ["Cursed Rune Fragment"], ["Starts Blood Rain for 10 minutes. Consumed on use."])
+    AssertEq(m.t.CanRun(BiState("NORMAL")), false, "not in a normal biome")
+    AssertEq(m.t.CanRun(BiState("GRAVEYARD")), true, "GRAVEYARD: due, biome items off")
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m.io.Typed(), "Cursed Rune Fragment", "searched by name")
+    AssertTrue(m.io.Moved(40, 40), "Use clicked")
+    AssertEq(m.wh.Count("biome"), 1, "reported")
+    AssertEq(m.t.CanRun(BiState("BLOOD RAIN")), false, "Blood Rain: nothing")
+    AssertEq(m.t.CanRun(BiState("GRAVEYARD")), false, "GRAVEYARD again after Blood Rain: no second one")
+    AssertEq(m.t.CanRun(BiState("PUMPKIN MOON")), false, "the same night")
+    t2 := BiomeItemsTask(m.deps)
+    AssertEq(t2.CanRun(BiState("GRAVEYARD")), false, "a restart keeps it spent")
+    m.t.CanRun(BiState("NORMAL"))
+    AssertEq(m.t.CanRun(BiState("PUMPKIN MOON")), true, "after a normal biome: the next night may use one")
+    off := BiMake(Map("Limited.cursedRune", 0), ["Cursed Rune Fragment"], ["x"])
+    AssertEq(off.t.CanRun(BiState("GRAVEYARD")), false, "off by default")
+}
+
+; the rune does not start the 20 min server cooldown of the biome items
+Test_BiomeItems_RuneLeavesTheServerCooldown() {
+    m := BiMake(Map("Limited.cursedRune", 1, "BiomeItems.strangeController", 1), ["Cursed Rune Fragment"], ["Starts Blood Rain."])
+    m.t.CanRun(BiState("GRAVEYARD"))
+    AssertEq(m.t.Run(SchedCtx()), 1, "rune used")
+    m.ocr.tiles := ["Strange Controller"]
+    AssertEq(m.t.CanRun(BiState("WINDY")), true, "a normal biome right after: the Controller may go")
+}

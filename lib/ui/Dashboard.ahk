@@ -7,6 +7,7 @@
 #Include %A_LineFile%\..\..\Config.ahk
 #Include %A_LineFile%\..\..\GameLists.ahk
 #Include %A_LineFile%\..\..\Calibrate.ahk
+#Include %A_LineFile%\..\..\SetupCheck.ahk
 #Include %A_LineFile%\..\..\Clip.ahk
 #Include %A_LineFile%\..\..\RouteRecorder.ahk
 #Include %A_LineFile%\..\..\tasks\BiomeItems.ahk
@@ -168,7 +169,7 @@ class Dashboard {
         "Which quests the board may accept.",
         "Mari and Jester want-lists. Items are found by name in the shop.",
         "Rare biomes, the potions used in them, and per-potion safety caps.",
-        "Strange Controller, Biome Randomizer and Biome Selector, used in NORMAL when off cooldown.",
+        "Strange Controller, Biome Randomizer and Biome Selector, used off cooldown in the biomes you allow.",
         "The obby for the Basic Blessing, and the Memory Match board.",
         "Discord webhooks and the events each one receives.",
         "Record the click points new features need.",
@@ -2349,12 +2350,18 @@ class Dashboard {
 
     _PageCalibrate(p) {
         g := this._gui
-        this._Panel(204, 152, 808, 68, "Preset", "A ready calibration recorded fullscreen at one resolution and Windows display scale. "
-            . "Apply copies it over your calibration (the old one is kept as data\calibration.json.bak).")
-        this._calPreset := Theme.Dropdown(g, 220, 184, 220)
+        this._Panel(204, 152, 808, 68, "Preset", "A ready calibration recorded at one resolution and Windows display scale. "
+            . "Apply copies it over your calibration (the old one is kept as data\calibration.json.bak). "
+            . "Windowed: Yes lets Roblox run in a window (the window's size is the resolution); the macro never resizes it. No = fullscreen only.")
+        this._calPreset := Theme.Dropdown(g, 220, 184, 200)
         this._ids["calPreset"] := this._calPreset
-        this._ids["calPresetApply"] := Theme.Button(g, "x448 y182 w130 h30", "Apply preset", (*) => this._CalApplyPreset())
-        this._calPresetNote := Theme.Label(g, "x590 y188 w406 h20", "", "muted")
+        this._ids["calPresetApply"] := Theme.Button(g, "x428 y182 w120 h30", "Apply preset", (*) => this._CalApplyPreset())
+        Theme.Label(g, "x562 y188 w74 h20", "Windowed", "body")
+        this._calWindowed := Theme.Dropdown(g, 636, 184, 70, ["No", "Yes"])
+        this._calWindowed.Choose(this.cfg.Get("General.windowed", 0) = 1 ? 2 : 1)
+        this._calWindowed.OnEvent("Change", ObjBindMethod(this, "_CalWindowedChange"))
+        this._ids["calWindowed"] := this._calWindowed
+        this._calPresetNote := Theme.Label(g, "x716 y188 w280 h20", "", "muted")
         this._ids["calPresetNote"] := this._calPresetNote
         this._calPresets := []
         this._Panel(204, 232, 808, 384, "Steps", "Hover each target in Roblox and press the capture key (" this._CapKey() "). Nothing is clicked. Esc cancels the wizard.")
@@ -2372,6 +2379,22 @@ class Dashboard {
         p.onShow := ObjBindMethod(this, "_CalLoad")
     }
 
+    static _CalIsOptional(id) {
+        for o in SetupCheck.CalOptional
+            if (o = id)
+                return true
+        return false
+    }
+
+    ; Windowed Yes / No: saved at once and used from the next window check
+    _CalWindowedChange(ctrl, *) {
+        on := (ctrl.Value = 2)
+        this.cfg.Set("General.windowed", on ? 1 : 0)
+        try this.cfg.Save()
+        Roblox.AllowWindowed := on
+        this._CalPresetsLoad()
+    }
+
     _CalLoad() {
         lv := this._lvC
         lv.Opt("-Redraw")
@@ -2385,13 +2408,17 @@ class Dashboard {
             try rec := (s["kind"] = "rect") ? Calibrate.Rect(s["id"])
                 : (s["kind"] = "sig") ? Calibrate.Sig(s["id"]) : Calibrate.Point(s["id"])
             ok := IsObject(rec)
-            done += ok
-            this._calOk.Push(ok)
-            lv.Add(, s["id"], ok ? Chr(0x2713) " recorded" : "missing", s["prompt"])
+            ; optional steps have built-in positions: not recorded is fine
+            ; (the 3 Daily Rewards / Daily Quests steps showed "missing" on
+            ; every preset, 2026-11-14)
+            opt := !ok && Dashboard._CalIsOptional(s["id"])
+            done += (ok || opt)
+            this._calOk.Push(ok || opt)
+            lv.Add(, s["id"], ok ? Chr(0x2713) " recorded" : opt ? "default (optional)" : "missing", s["prompt"])
         }
         lv.Opt("+Redraw")
         Theme.FitLastCol(lv)           ; after +Redraw: the scrollbar is known then
-        Theme.SetText(this._calStatus, done " of " steps.Length " steps recorded")
+        Theme.SetText(this._calStatus, done " of " steps.Length " steps ready")
         this._CalPresetsLoad()
     }
 
@@ -2417,9 +2444,10 @@ class Dashboard {
         if (idx || list.Length)
             dd.Choose(idx ? idx : 1)
         mine := IsObject(sys) ? Calibrate.PresetLabel(sys) : "unknown"
-        Theme.SetText(this._calPresetNote, !list.Length ? "No presets installed: calibrate the steps below."
-            : idx ? "Matches your display (" mine ")."
-            : "No preset for your display (" mine "): calibrate the steps below.")
+        what := Roblox.AllowWindowed ? "window" : "display"
+        Theme.SetText(this._calPresetNote, !list.Length ? "No presets installed: calibrate below."
+            : idx ? "Matches your " what " (" mine ")."
+            : "No preset for your " what " (" mine ").")
     }
 
     _CalApplyPreset() {
@@ -2628,7 +2656,7 @@ class Dashboard {
 
     _PageBiomeItems(p) {
         g := this._gui
-        this._Panel(204, 152, 808, 236, "Biome items", "Used in any biome you have NOT marked rare (Alerts > Biomes), so a rare biome is never changed away. "
+        this._Panel(204, 152, 808, 352, "Biome items", "Used in any biome you have NOT marked rare (Alerts > Biomes), so a rare biome is never changed away. "
             . "One item per 20 minutes (the game's server cooldown); the first ticked item that is off its own cooldown goes first. "
             . "The ONE-TIME Biome Randomizer is never used: a tile or description that says one-time / single use is refused. "
             . "Needs the inventory calibration steps; the Biome Selector also needs selector_list_rect (the list of Drives) and selector_confirm.")
@@ -2644,6 +2672,15 @@ class Dashboard {
         this._selDrive := Theme.Dropdown(g, 420, 330, 260, items)
         this._selDrive.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
         this._ids["BiomeItems.selectorDrive"] := this._selDrive
+        ; blacklist: no item while one of these biomes is up (the user,
+        ; 2026-11-15: keep STARFALL); saved as BiomeItems.blacklist
+        Theme.Rect(g, 220, 370, 776, 1, Theme.PanelC)
+        Theme.Label(g, "x220 y382 w776 h20", "Don't use items during these biomes (wait until the biome changes):", "muted")
+        this._biBlack := Map()
+        for i, b in Biomes.Normal {
+            x := 220 + Mod(i - 1, 5) * 156, y := 410 + ((i - 1) // 5) * 34
+            this._biBlack[b] := Theme.Check(g, x, y, StrTitle(b), 0, ObjBindMethod(this, "_MarkDirty", p), "pill", 96)
+        }
         p.load := ObjBindMethod(this, "_BiomeItemsLoad")
         p.save := ObjBindMethod(this, "_BiomeItemsSave")
         this._SaveBar(p)
@@ -2656,11 +2693,19 @@ class Dashboard {
             if (d = cur)
                 idx := i + 1
         this._selDrive.Choose(idx)
+        black := BiomeItemsTask.Blacklist(this.cfg)
+        for b, c in this._biBlack
+            c.Value := black.Has(b) ? 1 : 0
     }
 
     _BiomeItemsSave() {
         t := this._selDrive.Text
         this.cfg.Set("BiomeItems.selectorDrive", (t = "(pick one)") ? "" : t)
+        list := ""
+        for b in Biomes.Normal
+            if this._biBlack[b].Value
+                list .= (list = "" ? "" : ",") b
+        this.cfg.Set("BiomeItems.blacklist", list)
         return ""
     }
 
@@ -3006,6 +3051,11 @@ class Dashboard {
         this._BoolField(632, 304, "Use shift lock in fights", "Minions.shiftLock", 1)
         this._BoolField(632, 342, "Fight the Graveyard boss", "Minions.boss", 1)
         this._BoolField(632, 380, "Hunt in NORMAL too", "Minions.normal", 0)
+        this._Panel(204, 468, 808, 112, "Bosses and Blood Rain", "Boss message: when the chat names Sinister S. or Sinister P., the boss message is sent (Alerts > Webhooks, Boss), "
+            . "whether hunting is on or off. Cursed Rune Fragment: one is used from your inventory when GRAVEYARD or PUMPKIN MOON starts (it starts Blood Rain), "
+            . "then none until the next Graveyard / Pumpkin Moon night. Needs the inventory calibration steps.")
+        this._BoolField(220, 502, "Send the boss message (Sinister S. / P.)", "Limited.bossAlert", 1, 420)
+        this._BoolField(220, 540, "Use ONE Cursed Rune Fragment per Graveyard / Pumpkin Moon", "Limited.cursedRune", 0, 520)
         p.validate := ObjBindMethod(this, "_HuntingCheck")
         this._SaveBar(p)
     }

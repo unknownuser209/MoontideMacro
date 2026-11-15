@@ -1698,6 +1698,21 @@ class MinionsTask {
         else if MinionsTask.Nearer(bar, f.prev)  ; only nearer is progress: an Escape's strafe moves the bar aside
             f.stuck := 0, f.esc := 0             ; (L66 04:08 RAINY: jump, strafe, from the start again for 60 s)
         f.prev := bar
+        ; a far bar walked at for NoGainMs that never got clearly nearer: the
+        ; stuck count above resets on every jitter of its width, so the
+        ; Escapes started over at (1/3) for minutes (logs 11-11..11-15: 34
+        ; hunts saw a bar, cast nothing, never died; "still stuck" twice in
+        ; all). Left like a stuck one; not while in reach (casting on it)
+        ; along a wall the slide has its own limit (WallMaxMs, then round it);
+        ; the clock starts again after it
+        if IsObject(f.wall)
+            f.gainW := ""
+        if (!IsObject(f.wall) && !MinionsTask.InReach(v, !MinionsTask.Unlocked(f)) && MinionsTask.NoGain(f, bar, now)) {
+            env.Log("minions: " MinionsTask.NoGainMs // 1000 " s at " bar.x "," bar.y " without getting nearer - giving up on it for " MinionsTask.AvoidMs // 1000 " s")
+            f.avoid := {x: bar.x, y: bar.y, until: env.Now() + MinionsTask.AvoidMs}
+            f.stuck := 0, f.esc := 0, f.prev := "", f.tLast := "", f.ringFor := f.fightAt, f.gainW := ""
+            return true
+        }
         ; walking stopped making progress (a terrace wall: live 2026-10-31
         ; and a night clip 2026-11-02) -> the Escapes, each checked by the
         ; next scan, then (the target above) the wall slide; then that
@@ -4665,6 +4680,26 @@ class MinionsTask {
     ; The hunt goes on past its time (ran: ms so far)
     static HuntOn(f, now, ran) => ran < MinionsTask.HuntCapMs
         && (MinionsTask.Open(f) || (f.hurtAt != "" && now - f.hurtAt < MinionsTask.HurtKeepMs))
+
+    ; NoGain: true once the target bar b has not grown NoGainGrow (and NoGainPx)
+    ; wider, nor come NoGainDropPx lower on screen, for NoGainMs; the start
+    ; (f.gainW / gainY / gainAt) moves with every real gain. A bar far
+    ; narrower than the start (another, farther target) starts it over.
+    static NoGainMs := 20000
+    static NoGainGrow := 1.15
+    static NoGainPx := 6
+    static NoGainDropPx := 20
+    static NoGain(f, b, now) {
+        if (!f.HasOwnProp("gainW") || f.gainW = "" || b.w < f.gainW * 0.6) {
+            f.gainW := b.w, f.gainY := b.y, f.gainAt := now
+            return false
+        }
+        if ((b.w >= f.gainW * MinionsTask.NoGainGrow && b.w - f.gainW >= MinionsTask.NoGainPx) || b.y - f.gainY >= MinionsTask.NoGainDropPx) {
+            f.gainW := b.w, f.gainY := b.y, f.gainAt := now
+            return false
+        }
+        return now - f.gainAt >= MinionsTask.NoGainMs
+    }
 
     static Same(b, prev) => IsObject(prev) && Abs(b.y - prev.y) <= 12 && Abs(b.w - prev.w) <= 10 && Abs(b.x - prev.x) <= 160
     ; b wider or lower than prev (none before: a new target)

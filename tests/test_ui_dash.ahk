@@ -310,7 +310,11 @@ Test_Dashboard_CalibrateCountsRectAndPointSteps() {
         Calibrate.SetRect("inv_amount_box", 684, 752, 824, 792)
         d := Dashboard(cfg)
         n := Calibrate.Steps().Length
-        AssertEq(d.Ctrl("calStatus").Text, "2 of " n " steps recorded", "point and rect steps counted as recorded")
+        opt := 0                                ; optional steps have built-in positions: ready unrecorded
+        for s in Calibrate.Steps()
+            opt += Dashboard._CalIsOptional(s["id"])
+        AssertTrue(opt >= 3, "the Daily Rewards / Daily Quests steps are optional")
+        AssertEq(d.Ctrl("calStatus").Text, (2 + opt) " of " n " steps ready", "point and rect steps counted, optional ones ready")
         lv := d.Ctrl("calibrate")
         rows := Map()
         Loop lv.GetCount()
@@ -318,6 +322,7 @@ Test_Dashboard_CalibrateCountsRectAndPointSteps() {
         AssertTrue(InStr(rows["inv_amount_box"], "recorded"), "inv_amount_box shows recorded")
         AssertTrue(!rows.Has("inv_amount_one"), "no '1' signature step any more")
         AssertEq(rows["inv_items_tab"], "missing", "unrecorded step still missing")
+        AssertEq(rows["daily_claim"], "default (optional)", "an optional step is not 'missing'")
     } finally {
         UiDashClose(d)
         Calibrate.Use(A_Temp "\vesper_cal_unused.json")

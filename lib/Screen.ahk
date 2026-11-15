@@ -124,11 +124,20 @@ class Screen {
     static _Ox(anchor) => Screen.cx
     static _Oy(anchor) => Screen.cy
 
+    ; Centred panels ("C") scale by the client's WIDTH: live 2560x1369 (a
+    ; maximized window, wider than 16:9, 2026-11-14) the Daily Quests window
+    ; kept its 1440p size, centred up / down (title 35 px higher than a
+    ; by-height box). The quest board ("RH", right edge) still scales by the
+    ; smaller factor (its quest names read that way at 2560x1369 and not by
+    ; width). At 16:9 and narrower (16:10) the width is the smaller factor,
+    ; so every tested size maps as before.
+    static E => Screen.sx
+
     static X(px, anchor := "C") {
         if Screen.IsIdentity()
             return px
         switch Screen.Mode {
-            case "C": return Round(Screen.cx + (Screen.cw - Screen.DesignW * Screen.s) / 2 + px * Screen.s)
+            case "C": return Round(Screen.cx + (Screen.cw - Screen.DesignW * Screen.E) / 2 + px * Screen.E)
             case "RH": return Round(Screen.cx + Screen.cw - (Screen.DesignW - px) * Screen.s)
         }
         return Round(Screen.cx + px * Screen.sx)
@@ -136,7 +145,9 @@ class Screen {
     static Y(py, anchor := "C") {
         if Screen.IsIdentity()
             return py
-        if (Screen.Mode = "C" || Screen.Mode = "RH")
+        if (Screen.Mode = "C")
+            return Round(Screen.cy + (Screen.ch - Screen.DesignH * Screen.E) / 2 + py * Screen.E)
+        if (Screen.Mode = "RH")
             return Round(Screen.cy + (Screen.ch - Screen.DesignH * Screen.s) / 2 + py * Screen.s)
         return Round(Screen.cy + py * Screen.sy)
     }
@@ -173,8 +184,8 @@ class Screen {
             return {x: sx, y: sy}
         switch Screen.Mode {
             case "C":
-                return {x: Round((sx - Screen.cx - (Screen.cw - Screen.DesignW * Screen.s) / 2) / Screen.s)
-                    , y: Round((sy - Screen.cy - (Screen.ch - Screen.DesignH * Screen.s) / 2) / Screen.s)}
+                return {x: Round((sx - Screen.cx - (Screen.cw - Screen.DesignW * Screen.E) / 2) / Screen.E)
+                    , y: Round((sy - Screen.cy - (Screen.ch - Screen.DesignH * Screen.E) / 2) / Screen.E)}
             case "RH":
                 return {x: Round(Screen.DesignW - (Screen.cx + Screen.cw - sx) / Screen.s)
                     , y: Round((sy - Screen.cy - (Screen.ch - Screen.DesignH * Screen.s) / 2) / Screen.s)}

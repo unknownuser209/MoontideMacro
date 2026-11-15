@@ -73,6 +73,13 @@
 
 class DiscordRemote {
     static Api := "https://discord.com/api/v10"
+    ; 403 on the channel while polling: tried again this often instead of
+    ; stopping for good, so inviting the bot / fixing its permissions works
+    ; without a restart (the user, 2026-11-15: set up "correctly", still dead)
+    static ForbiddenRetryMs := 120000
+    ; View Channel + Send Messages + Attach Files + Read Message History
+    static InvitePerms := 101376
+    static InviteUrl(appId) => "https://discord.com/oauth2/authorize?client_id=" appId "&scope=bot&permissions=" DiscordRemote.InvitePerms
     static UserAgent := "DiscordBot (MoontideMacro, 1.0)"
     static Commands := ["help", "status", "stats", "start", "stop", "pause", "resume", "screenshot", "log"]
     static Describe := Map("help", "this list", "status", "what the macro is doing", "stats", "session stats"
@@ -121,6 +128,7 @@ class DiscordRemote {
         this._inflight := ""        ; {kind: learn|poll|reply, req, started, item}
         this._unknownLogged := Map()
         this._emptyHint := false
+        this._forbidLogged := false   ; the 403 hint was told (until the channel reads again)
         this._listeningLogged := false
         this.Reset()
     }
@@ -142,6 +150,7 @@ class DiscordRemote {
 
     Reset() {
         this._halted := false
+        this._forbidLogged := false
         this._learned := false
         this._lastId := ""
         this._nextPollAt := 0
@@ -266,7 +275,14 @@ class DiscordRemote {
         if (status = 403) {
             if (rec.kind = "reply")
                 return this._Halt("Remote: the bot cannot send messages in that channel - give it Send Messages and Attach Files. Remote control stopped.")
-            return this._Halt("Remote: the bot cannot read that channel - check its permissions and the Message Content intent. Remote control stopped.")
+            ; not stopped for good: inviting the bot or fixing its permissions
+            ; must work without a restart; told once until it can read again
+            this._holdUntil := now + DiscordRemote.ForbiddenRetryMs
+            if !this._forbidLogged {
+                this._forbidLogged := true
+                this._Problem("Remote: the bot cannot see that channel (Discord: Missing Access). Press Test on Alerts > Remote to see why (usually: the bot was never invited to your server). Trying again every 2 min.")
+            }
+            return
         }
         if (status = 404 && rec.kind != "reply")
             return this._Halt("Remote: channel not found - check the channel id. Remote control stopped.")
@@ -283,6 +299,9 @@ class DiscordRemote {
     _Ok() {
         if this._netLogged
             this._Log("Remote: connected to Discord again")
+        if this._forbidLogged
+            this._Log("Remote: the bot can see the channel now")
+        this._forbidLogged := false
         this._backoff := 0
         this._netLogged := false
         if (this.LastError != "" && !this._halted)
@@ -476,9 +495,16 @@ class DiscordRemote {
             if (disc != "" && disc != "0")
                 who .= "#" disc
             who := this.Scrub(who)
+            appId := RegExReplace(DiscordRemote._Get(me, "id"), "\D")
             r := this._Sync("/channels/" this.channelId)
-            if (r.status = 403)
-                return {ok: false, msg: "Connected as " who ", but the bot cannot see that channel - invite it and give it View Channels."}
+            if (r.status = 403) {
+                ; in no server at all = never invited (or kicked): the usual case
+                g := this._Sync("/users/@me/guilds")
+                if (g.status = 200 && (gl := Json.Parse(g.body)) is Array && gl.Length = 0)
+                    return {ok: false, msg: "Connected as " who ", but the bot is not in any server yet. Invite it with this link, pick your server, then press Test again: "
+                        . DiscordRemote.InviteUrl(appId)}
+                return {ok: false, msg: "Connected as " who ", but the bot cannot see that channel - give it View Channel there (channel settings > Permissions), or check the channel id."}
+            }
             if (r.status = 404)
                 return {ok: false, msg: "Connected as " who ", but that channel was not found - check the channel id."}
             if (r.status != 200)
@@ -493,6 +519,15 @@ class DiscordRemote {
             return {ok: false, msg: "Could not reach Discord: " this.Scrub(e is Error ? e.Message : "error")}
         }
         msg := "Connected as " who ", can read #" ch
+        ; the Message Content intent: off = every command arrives empty
+        try {
+            a := this._Sync("/oauth2/applications/@me")
+            if (a.status = 200) {
+                flags := Integer("0" RegExReplace(DiscordRemote._Get(Json.Parse(a.body), "flags"), "\D"))
+                if !(flags & 0xC0000)              ; GATEWAY_MESSAGE_CONTENT (1<<18) or its LIMITED twin (1<<19)
+                    msg .= ". Turn on MESSAGE CONTENT INTENT on the bot's Bot page (developer portal), or your commands arrive empty"
+            }
+        }
         if (this.allowed.Count = 0)
             msg .= ". Add your Discord user id to the allowed users."
         if this._halted

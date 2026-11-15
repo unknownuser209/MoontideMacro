@@ -17,10 +17,10 @@ program; it reads no game memory and sends nothing anywhere you did not set up.)
 
 ## Requirements
 
-- Windows, Roblox (standard launcher, no Bloxstrap), **fullscreen or in a window**.
-  In a window, F1 sizes it to the largest tested size that fits your screen
-  (Settings: `fitWindow`), so any monitor works. Keep the window on the screen
-  and in front; minimized does not work. Tested sizes:
+- Windows, Roblox (standard launcher, no Bloxstrap), **fullscreen**, or **in a
+  window** with **Windowed: Yes** (Setup > Calibrate, next to the preset). The
+  macro uses the window as you sized it; keep it on the screen and in front
+  (minimized does not work). Tested sizes:
   2560x1440, 1920x1080, 1920x1200, 1680x1050, 1600x900, 1536x864, 1440x900,
   1366x768, 1280x800 and 1280x720. Other 16:9 / 16:10 sizes may work; 5:4
   (1280x1024) and ultrawide (2560x1080, 3440x1440) do not yet.
@@ -112,7 +112,10 @@ The sidebar hubs:
   Memory, Limbo.
 - **Limited**: features that only exist during a game event. **Hunting**
   (Halloween orbs, minions and the Graveyard boss) is here; Sol's RNG removes
-  it later in November and this tab goes with it.
+  it later in November and this tab goes with it. Also here: the **boss
+  message** (when the chat names Sinister S. or Sinister P., your Boss webhook
+  gets your private server link, even with hunting off) and **one Cursed Rune
+  Fragment per Graveyard / Pumpkin Moon night** (it starts Blood Rain).
 - **Alerts**: Biomes, Discord, Clips, **Daily summary**, **Remote**.
 - **Setup**: **Check & help**, Calibrate, Routes, **Schedule**, Settings,
   Dev tools.
@@ -170,7 +173,10 @@ Remote**):
    server.
 4. Discord **Settings > Advanced > Developer Mode** on. Right-click your channel:
    **Copy Channel ID**. Right-click yourself: **Copy User ID**. Paste both.
-5. Save, then **Test connection**.
+5. Save, then **Test connection**. It says what is wrong: a bot that is not in
+   any server yet gets an invite link to open, and a Message Content intent that
+   is off is pointed out. If the bot loses access while the macro runs, it tries
+   again every 2 minutes, so fixing it in Discord needs no restart.
 
 Commands (only from the user ids you listed): `!status`, `!stats`,
 `!screenshot`, `!log`, `!start`, `!stop`, `!pause`, `!resume`, `!help`.
@@ -386,6 +392,9 @@ Potion use is the risky part, so it is off until you set it up.
   (Alerts > Biomes page). Event biomes (Pumpkin Moon, Graveyard, Blood Rain...)
   and biomes not in `data\biomes.json` are never changed away.
 - One item per 20 minutes (the game's server cooldown).
+- **Don't use items during these biomes**: tick biomes (e.g. Starfall) on the
+  same page and no item is used while one of them is up; the macro waits until
+  the biome changes.
 - The **One-time Biome Randomizer is never used**: a tile or description that
   says one-time / single use / "used once" is refused, and when it is the first
   search result the second tile is checked instead. The Randomizer is only used
@@ -477,7 +486,7 @@ it was clipped.
 
 | You see | Do this |
 |---|---|
-| Paused: **Roblox window not usable** | Roblox is minimized, smaller than 800x450 or partly off the screen. Restore it and keep it on the screen (or press F11 for fullscreen), then press **F2**. |
+| Paused: **Roblox window not usable** | Roblox is minimized, in a window while Windowed is No, smaller than 800x450 or partly off the screen. Restore it (or press F11 for fullscreen, or set Windowed to Yes in Setup > Calibrate), then press **F2**. |
 | Paused: **Roblox lost focus** | You alt-tabbed. Click into Roblox, press **F2**. The log says which app was in front; Microsoft PC Manager's toolbar takes focus by itself: close PC Manager or turn its toolbar off. |
 | Something does not work and you need help | **Setup > Check & help**: **Check now**, then **Make support zip** and send the zip. |
 | Paused: **Roblox not found** | Open Roblox. With a private server link set, it rejoins by itself. |

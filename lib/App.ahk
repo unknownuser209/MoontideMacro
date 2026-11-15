@@ -191,6 +191,7 @@ class App {
     static LogPollMs := 1000
     static ErrorHoldMs := 5000
     static SkipHoldMaxMs := 120000   ; longest wait after repeated shift lock skips
+    static SkipRejoinAt := 3         ; that many skips in a row: rejoin (RecoveryTask.RequestUnlock)
     ; tasks that leave you away from the fishing spot: the sell trip (back
     ; to the spot through the Fisher) runs next when fishing is on
     static MovesAway := Map("quests", 1, "obby", 1, "minions", 1, "merchant", 1, "memorymatch", 1)
@@ -213,6 +214,8 @@ class App {
         if !d.Has("cfg")
             throw ValueError("App: cfg is required")
         this.cfg := d["cfg"]
+        ; Windowed: Yes / No (Setup > Calibrate): a window is used only with Yes
+        try Roblox.AllowWindowed := (this.cfg.Get("General.windowed", 0) = 1)
         this.root := App._Dep(d, "root", App.DefaultRoot())
         try ChatGuard.FlagPath := this.root "\logs\chat_hidden.flag"
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
@@ -294,6 +297,10 @@ class App {
         this.lw := this.lwFactory.Call()
         this._everStarted := false
 
+        ; one boss report for the chat line and the hunt's fight (no double
+        ; message for one spawn); made before the tasks (MinionsTask takes it)
+        this.sinister := d.Has("sinister") ? d["sinister"]
+            : SinisterReport({webhook: this.wh, cfg: this.cfg, log: this._logFn, ghost: () => this._GhostNow()})
         ; tasks
         this._taskMap := Map()
         if d.Has("tasks") {
@@ -345,7 +352,7 @@ class App {
             this.chat := d["chatWatch"]
         } else {
             this.chat := ChatWatch({cfg: this.cfg, webhook: this.wh, log: this._logFn
-                , onFound: ObjBindMethod(this, "_OnChatMerchant"), startOld: true})
+                , onFound: ObjBindMethod(this, "_OnChatMerchant"), onBoss: ObjBindMethod(this, "_OnChatBoss"), startOld: true})
         }
     }
 
@@ -366,7 +373,7 @@ class App {
                 case "biomeitems": return BiomeItemsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "obby": return ObbyTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()})
                 case "minions": return MinionsTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()
-                    , biome: () => this._BiomeNow(), ghost: () => this._GhostNow()})
+                    , biome: () => this._BiomeNow(), ghost: () => this._GhostNow(), sinister: this.sinister})
                 case "memorymatch": return MemoryMatchTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "merchant": return MerchantTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "recovery": return RecoveryTask({cfg: cfg, webhook: this.wh, log: this._logFn})
@@ -517,8 +524,8 @@ class App {
         this._everStarted := true
         this.ctx.Reset()
         try this.fixit.Reset()                  ; a new run: cards may show again
-        if this._fixOn                          ; the real app: a window at a tested size first
-            try this._FitWindow()
+        if this._fixOn                          ; windowed: the overlay off the game
+            try this._WindowedStart()
         if this._fixOn                          ; the real app: the preset that fits Roblox's screen now
             try this._UseCalibration()
         this._started := true
@@ -903,7 +910,9 @@ class App {
             ; shift lock on makes every UI click miss (live 2026-11-02: a
             ; click at the screen centre opened the Donation prompt): not
             ; confirmed off after one more try -> the task is skipped
-            if (!this._ShiftOff(this.ctx) && !this._ShiftOff(this.ctx)) {
+            ; the unlock rejoin itself never waits on the check that keeps failing
+            unlocking := (task.name = "recovery" && HasMethod(task, "Unlocking") && task.Unlocking())
+            if (!unlocking && !this._ShiftOff(this.ctx) && !this._ShiftOff(this.ctx)) {
                 skipped := true
                 ; skipped again and again: wait longer each time (5 s, 10 s
                 ; ... up to SkipHoldMaxMs), not a retry every 7 s all night
@@ -911,9 +920,18 @@ class App {
                 this._holdUntil := this.Now() + Min(App.ErrorHoldMs * (2 ** Min(this._skipStreak - 1, 6)), App.SkipHoldMaxMs)
                 if !this.ctx.ShouldStop()
                     this.Log(StrTitle(task.name) ": shift lock may still be on - skipped (no click)")
+                ; still locked after SkipRejoinAt skips in a row: game windows
+                ; stacked on each other hold the mouse and only a rejoin frees
+                ; it (live 2026-11-15: 35 min of skips until a manual rejoin)
+                if (this._skipStreak >= App.SkipRejoinAt && this._RecoveryOn() && HasMethod(this.recovery, "RequestUnlock")
+                    && !this.ctx.ShouldStop() && this.recovery.RequestUnlock()) {
+                    this._holdUntil := this.Now()
+                    this.Log("still locked after " this._skipStreak " skips: rejoining to clear the game's windows")
+                }
                 return
             }
-            this._skipStreak := 0
+            if !unlocking                           ; the rejoin skipped the check: not proof the lock is gone
+                this._skipStreak := 0
             task.Run(this.ctx)
         } catch Any as e {
             failed := true
@@ -1073,7 +1091,7 @@ class App {
             return                              ; no chat reads during a rare biome
         if !IsObject(this.chat)
             return
-        if !this.cfg.Get("merchant.enabled", 1)
+        if !this._ChatOn()
             return
         if !this._Active()
             return
@@ -1098,7 +1116,7 @@ class App {
     }
 
     _ChatWanted() {
-        if (!IsObject(this.chat) || !this.cfg.Get("merchant.enabled", 1) || this.state.rareActive || this._LimboMode())
+        if (!IsObject(this.chat) || !this._ChatOn() || this.state.rareActive || this._LimboMode())
             return false
         try {
             if !IsObject(this.calibrate.Rect("chat_rect"))
@@ -1106,6 +1124,9 @@ class App {
         }
         return true
     }
+
+    ; the chat is read for the merchants and for the bosses' lines
+    _ChatOn() => (this.cfg.Get("merchant.enabled", 1) || this.cfg.Get("Limited.bossAlert", 1)) ? true : false
 
     _ChatPollMs() {
         s := this.cfg.Get("merchant.chatPollSec", ChatWatch.DefaultPollSec)
@@ -1115,8 +1136,20 @@ class App {
     }
 
     _OnChatMerchant(name) {
+        if !this.cfg.Get("merchant.enabled", 1)  ; the chat is read for the bosses: no visits
+            return
         if IsObject(this.merchant)
             try this.merchant.Notify(name)
+    }
+
+    ; A boss named in the chat: its Discord message (the "sinister" event),
+    ; whether hunting is on or not (the user, 2026-11-15). Limited.bossAlert 0
+    ; turns it off.
+    _OnChatBoss(boss) {
+        if !this.cfg.Get("Limited.bossAlert", 1)
+            return
+        if IsObject(this.sinister)
+            try this.sinister.Spawn("chat:" boss ":" this.Now(), boss)
     }
 
     _Focus() {
@@ -1172,18 +1205,13 @@ class App {
     ; had closed after a rejoin).
     _RejoinReady() => this._RecoveryOn() && RecoveryTask.LinkOk(Trim(String(this.cfg.Get("General.privateServer", ""))))
 
-    ; Windowed Roblox (2026-11-14): at Start, a window whose client is not a
-    ; tested size (or a maximized one) is sized to the largest tested size
-    ; that fits its monitor (Roblox.FitWindow; General.fitWindow=0 keeps it),
-    ; and the overlay is moved off the game if it covers it.
-    _FitWindow() {
-        if (!this.cfg.Get("General.fitWindow", 1) || !Roblox.Hwnd())
+    ; Windowed Roblox (General.windowed=1, 2026-11-14): the window is used as
+    ; the player sized it (never moved or resized); at Start the overlay
+    ; moves off the game if it covers it.
+    _WindowedStart() {
+        Roblox.AllowWindowed := (this.cfg.Get("General.windowed", 0) = 1)
+        if !(Roblox.AllowWindowed && Roblox.Hwnd())
             return
-        r := Roblox.FitWindow()
-        if (r = "nofit")
-            this.Log("Display: no tested size fits this screen as a window; fullscreen (F11) works best here")
-        else if (r != "")
-            this.Log("Display: Roblox window sized to " r " (a tested size)")
         if (Roblox.ClientOk() = "ok" && Roblox.Windowed && IsObject(this.overlay) && HasMethod(this.overlay, "AvoidRect"))
             try this.overlay.AvoidRect(Screen.cx, Screen.cy, Screen.cw, Screen.ch)
     }

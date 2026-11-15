@@ -724,11 +724,12 @@ class Calibrate {
         if !IsObject(m)
             m := {x: 0, y: 0, w: A_ScreenWidth, h: A_ScreenHeight}
         sc := Screen.ScaleAt(m.x + 1, m.y + 1)
-        try {                                   ; windowed Roblox: its client size is "the display"
-            WinGetClientPos(, , &cw, &ch, "ahk_id " Roblox.Hwnd())
-            if (cw >= Roblox.MinW && ch >= Roblox.MinH)
-                m := {x: m.x, y: m.y, w: cw, h: ch}
-        }
+        if Roblox.AllowWindowed                 ; Windowed: Yes: the window's client size is "the display"
+            try {
+                WinGetClientPos(, , &cw, &ch, "ahk_id " Roblox.Hwnd())
+                if (cw >= Roblox.MinW && ch >= Roblox.MinH)
+                    m := {x: m.x, y: m.y, w: cw, h: ch}
+            }
         return {w: m.w, h: m.h, scale: sc}
     }
 

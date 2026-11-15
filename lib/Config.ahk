@@ -74,7 +74,7 @@ class Config {
         d := Config._CIMap()
         g := Config._CIMap()
         g["privateServer"] := ""
-        g["fitWindow"] := "1"         ; windowed Roblox: sized to the largest tested size at Start
+        g["windowed"] := "0"          ; 1 = Roblox may be in a window (used as the player sized it); 0 = fullscreen only
         g["vip"] := "1"
         g["fishing"] := "1"           ; 0 = never fish (only quests, craft, merchants, potions...)
         g["sellEvery"] := "15"
@@ -129,7 +129,15 @@ class Config {
         bi["strangeController"] := "0"
         bi["biomeSelector"] := "0"    ; spends one Drive per use
         bi["selectorDrive"] := ""     ; which Drive the Selector picks (BiomeItemsTask.Drives)
+        bi["blacklist"] := ""         ; comma list of biomes: no items used while one is up (wait for the next biome)
         d["BiomeItems"] := bi
+        ; Limited (Halloween 2026): the bosses' Discord message from the chat
+        ; (hunting on or off) and one Cursed Rune Fragment per GRAVEYARD /
+        ; PUMPKIN MOON night.
+        lm := Config._CIMap()
+        lm["bossAlert"] := "1"        ; 1 = a Sinister S. / P. line in the chat sends the "sinister" message
+        lm["cursedRune"] := "0"       ; 1 = use ONE Cursed Rune Fragment when GRAVEYARD or PUMPKIN MOON starts
+        d["Limited"] := lm
         ; Limbo (lib/tasks/Limbo.ahk): stay in THE LIMBO by Eden's spawn instead
         ; of fishing; leave for rare biomes.
         li := Config._CIMap()

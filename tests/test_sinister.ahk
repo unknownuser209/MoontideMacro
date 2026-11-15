@@ -170,6 +170,7 @@ Test_Sinister_OneMessagePerSpawn() {
     AssertEq(r.wh.posts.Length, 1, "fought again in the same spawn: no second post")
     r.rep.Gone(), r.rep.Spawn("GRAVEYARD@1")
     AssertEq(r.wh.posts.Length, 1, "same key after the biome: still one")
+    r.t.now += SinisterReport.SpawnGapMs
     r.rep.Spawn("GRAVEYARD@2")
     AssertEq(r.wh.posts.Length, 2, "a new GRAVEYARD: a new message")
 }
@@ -289,7 +290,8 @@ Test_Sinister_MinionsBossKilledEditsTheMessage() {
     m.t.Run(SchedCtx())
     AssertTrue(MnLogged(m, "boss in sight"), "seen again")
     AssertEq(m.sw.posts.Length, 1, "still one message")
-    ; a new GRAVEYARD: a new message
+    ; a new GRAVEYARD (a later night): a new message
+    m.io.t += SinisterReport.SpawnGapMs
     m.state.biome := "NORMAL", m.t.CanRun(m.state), m.state.biome := "GRAVEYARD", m.t.CanRun(m.state)
     n1 := MnSkills(m.io)
     m.t._scanFn := () => (MnSkills(m.io) < n1 + 4) ? full : []
@@ -319,4 +321,86 @@ Test_Sinister_MinionsDespawnLeavesTheMessage() {
     AssertTrue(m.t._sin is SinisterReport, "built from the deps")
     m.t.Run(SchedCtx())
     AssertEq(m.t._sin.msg, "", "no ghost dep: nothing posted")
+}
+
+
+; ---- the bosses from the chat (2026-11-15: Sinister S. spawned with hunting
+; off and nothing was sent) ---------------------------------------------------
+
+Test_Sinister_LetterPicksTheBoss() {
+    AssertEq(SinisterReport.SpawnLine("s"), "sinister s natrual spawn", "S")
+    AssertEq(SinisterReport.SpawnLine("P"), "sinister p natrual spawn", "P")
+    AssertEq(SinisterReport.SpawnLine("x"), "sinister s natrual spawn", "anything else: S")
+    r := SnRep()
+    r.rep.Spawn("chat:p:1", "p")
+    AssertEq(r.wh.posts[1].content, SnLink() " sinister p natrual spawn", "P's message")
+}
+
+; the chat line and the fight see one spawn: one message, the fight's edit
+; still goes to it
+Test_Sinister_OneMessageWhenChatAndFightSeeIt() {
+    r := SnRep()
+    AssertEq(r.rep.Spawn("chat:s:1000", "s"), true, "chat first: posted")
+    r.t.now += 60000
+    AssertEq(r.rep.Spawn("GRAVEYARD@5"), false, "the fight a minute later: no second post")
+    AssertEq(r.wh.posts.Length, 1, "one message")
+    r.rep.Killed("toast")
+    AssertEq(r.wh.edits.Length, 1, "the fight's kill edits the chat's message")
+    r.t.now += SinisterReport.SpawnGapMs
+    r.rep.Spawn("chat:s:999999", "s")
+    AssertEq(r.wh.posts.Length, 2, "15 min later: a new spawn, a new message")
+}
+
+Test_ChatWatch_DetectsTheBosses() {
+    AssertEq(ChatWatch.DetectBoss("[Graveyard]: Sinister S. has spawned!").Length, 1, "S")
+    AssertEq(ChatWatch.DetectBoss("[Graveyard]: Sinister S. has spawned!")[1], "s", "S letter")
+    AssertEq(ChatWatch.DetectBoss("Sinlster P has appeared")[1], "p", "game font i as l, P")
+    AssertEq(ChatWatch.DetectBoss("S1nister 5.")[1], "s", "5 read for S")
+    both := ChatWatch.DetectBoss("Sinister S. spawned`nSinister P. spawned`nSinister S. again")
+    AssertEq(both.Length, 2, "each boss once")
+    AssertEq(ChatWatch.DetectBoss("Player found Sinister, chance of 1 in 15,000,000").Length, 0, "the aura in a roll line")
+    AssertEq(ChatWatch.DetectBoss("Sinister Pumpkin").Length, 0, "a longer word after it")
+    AssertEq(ChatWatch.DetectBoss("Nameless ghosts pass by you...").Length, 0, "biome line")
+}
+
+Test_ChatWatch_BossOncePerSpawnAndNotAtStart() {
+    clock := QmClock(1000)
+    text := "Sinister S. has spawned"
+    bosses := []
+    mk := (old) => ChatWatch({io: QmIO(), cal: QmCal(, Map("chat_rect", {x: 10, y: 20, w: 400, h: 200}))
+        , ocr: (*) => text, now: () => clock.Now(), onBoss: (b) => bosses.Push(b), startOld: old})
+    cw := mk(false)
+    cw.Check()
+    AssertEq(bosses.Length, 1, "reported")
+    clock.t += 60000
+    cw.Check()
+    AssertEq(bosses.Length, 1, "still in the chat a minute later: once")
+    clock.t += ChatWatch.BossGapSec * 1000
+    cw.Check()
+    AssertEq(bosses.Length, 2, "15 min later: a new spawn")
+    ; at the start the line already there is old
+    bosses := []
+    cw2 := mk(true)
+    cw2.Check()
+    AssertEq(bosses.Length, 0, "line there at the start: not announced")
+    text := "Sinister P. has spawned"
+    clock.t += 5000
+    cw2.Check()
+    AssertEq(bosses.Length, 1, "a new boss line after the start: announced")
+    AssertEq(bosses[1], "p", "P")
+}
+
+; review: S then P are two bosses (two messages); "Sinister 5000" is no boss
+Test_Sinister_EachBossGetsItsOwnMessage() {
+    r := SnRep()
+    r.rep.Spawn("chat:s:1", "s")
+    r.t.now += 300000
+    r.rep.Spawn("chat:p:2", "p")
+    AssertEq(r.wh.posts.Length, 2, "P five minutes after S: its own message")
+    AssertEq(r.wh.posts[2].content, SnLink() " sinister p natrual spawn", "P's text")
+    r.t.now += 60000
+    r.rep.Spawn("chat:p:3", "p")
+    AssertEq(r.wh.posts.Length, 2, "P again inside 15 min: no second P message")
+    AssertEq(ChatWatch.DetectBoss("Sinister 5000 rolls").Length, 0, "a number is not S")
+    AssertEq(ChatWatch.DetectBoss("Sinister 5, nice").Length, 0, "5 and a comma is not S")
 }

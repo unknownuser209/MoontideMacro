@@ -345,23 +345,9 @@ Test_Roblox_WindowProblem() {
     AssertTrue(InStr(Roblox.WindowProblem(100, -20, 1280, 720, 0, 0, 2560, 1440), "off the screen"), "off the top")
     AssertTrue(InStr(Roblox.WindowProblem(100, 100, 640, 360, 0, 0, 2560, 1440), "too small"), "too small")
     AssertEq(Roblox.WindowProblem(0, 0, 0, 0, 0, 0, 2560, 1440), "Roblox is minimized", "no client")
-}
-
-Test_Roblox_BestSizeIsTheLargestTestedThatFits() {
-    b := Roblox.BestSize(2546, 1361)        ; 1440p work area less a window frame
-    AssertEq(b.w "x" b.h, "1920x1200", "1440p monitor")
-    b := Roblox.BestSize(1906, 1001)        ; 1080p
-    AssertEq(b.w "x" b.h, "1600x900", "1080p monitor")
-    b := Roblox.BestSize(1586, 857)         ; 1600x900
-    AssertEq(b.w "x" b.h, "1366x768", "900p monitor")
-    AssertEq(Roblox.BestSize(1352, 689), "", "768p monitor: nothing fits (fullscreen)")
-    b := Roblox.BestSize(1280, 720)
-    AssertEq(b.w "x" b.h, "1280x720", "exact fit")
-    for t in Screen.Tested {                ; every pick is a tested size
-        p := StrSplit(t, "x")
-        b := Roblox.BestSize(Integer(p[1]), Integer(p[2]))
-        AssertEq(b.w "x" b.h, t, "fits itself: " t)
-    }
+    ; Windowed: No (the default) -> fullscreen only
+    AssertTrue(InStr(Roblox.WindowProblem(320, 160, 1920, 1080, 0, 0, 2560, 1440, false), "Windowed is set to No"), "a window with Windowed No")
+    AssertEq(Roblox.WindowProblem(0, 0, 2560, 1440, 0, 0, 2560, 1440, false), "", "fullscreen with Windowed No")
 }
 
 Test_Overlay_AvoidsTheGameWindow() {
@@ -375,4 +361,17 @@ Test_Overlay_AvoidsTheGameWindow() {
     AssertTrue(p.x + 280 <= 320 || p.x >= 2240 || p.y + 120 <= 200 || p.y >= 1280, "moved off the window")
     p := Overlay.Avoid(100, 100, 280, 120, 0, 0, 2560, 1440, 0, 0, 2560, 1440)
     AssertEq(p.x " " p.y, "100 100", "fullscreen-sized window: no room, stays")
+}
+
+; a maximized window wider than 16:9 (live 2560x1369, 2026-11-14): the
+; Daily Quests window ("C") kept its 1440p size, centred up / down; the
+; quest board ("RH") and lengths keep the smaller (height) factor
+Test_Screen_MaximizedWindowPanels() {
+    ScrnAt(0, 23, 2560, 1369, () => (
+        AssertEq(Round(Screen.s, 4), Round(1369 / 1440, 4), "lengths: the smaller factor"),
+        AssertEq(Screen.WithMode("C", () => Screen.Y(400)), 23 + 365, "centred panel: width scale, centred"),
+        AssertEq(Screen.WithMode("C", () => Screen.X(1892)), 1892, "centred panel x unchanged"),
+        AssertEq(Screen.WithMode("RH", () => Screen.Y(400)), 23 + Round(400 * 1369 / 1440), "quest board: height scale"),
+        AssertEq(Screen.Y(720), 23 + 685, "stretched HUD centre by height")
+    ))
 }

@@ -6964,3 +6964,23 @@ Test_Daily_CalibrationStepsExist() {
     AssertEq(ids.Get("daily_claim", ""), "point", "Claim step")
     AssertEq(ids.Get("daily_close", ""), "point", "X step")
 }
+
+; bug hunt 2026-11-15: a far bar that never gets clearly nearer is left after
+; NoGainMs, whatever its width jitters by; real gains restart the clock
+Test_Minions_NoGainLeavesAFarBar() {
+    f := {}
+    b := {x: 1200, y: 400, w: 40}
+    AssertEq(MinionsTask.NoGain(f, b, 0), false, "first sight starts the clock")
+    AssertEq(MinionsTask.NoGain(f, {x: 1210, y: 404, w: 44}, 10000), false, "jitter, 10 s")
+    AssertEq(MinionsTask.NoGain(f, {x: 1190, y: 402, w: 38}, 19000), false, "jitter, 19 s")
+    AssertEq(MinionsTask.NoGain(f, {x: 1200, y: 405, w: 45}, MinionsTask.NoGainMs), true, "20 s without a real gain: leave it")
+    g := {}
+    MinionsTask.NoGain(g, b, 0)
+    AssertEq(MinionsTask.NoGain(g, {x: 1200, y: 400, w: 50}, 15000), false, "25% wider: a gain")
+    AssertEq(MinionsTask.NoGain(g, {x: 1200, y: 400, w: 52}, 30000), false, "the clock restarted at 15 s")
+    AssertEq(MinionsTask.NoGain(g, {x: 1200, y: 400, w: 52}, 35100), true, "20 s after the last gain")
+    h := {}
+    MinionsTask.NoGain(h, b, 0)
+    AssertEq(MinionsTask.NoGain(h, {x: 1200, y: 425, w: 40}, 19000), false, "25 px lower on screen: a gain")
+    AssertEq(MinionsTask.NoGain(h, {x: 900, y: 300, w: 20}, 30000), false, "a much narrower bar: another target, clock restarts")
+}

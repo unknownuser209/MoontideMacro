@@ -117,7 +117,7 @@ Test_Presets_DashboardPickerAndApply() {
         ; a system with no preset: the note says to calibrate
         Calibrate.SystemFn := () => {w: 3440, h: 1440, scale: 100}
         d._CalLoad()
-        AssertTrue(InStr(d.Ctrl("calPresetNote").Text, "calibrate the steps below"), "note: no preset")
+        AssertTrue(InStr(d.Ctrl("calPresetNote").Text, "No preset for your display"), "note: no preset")
         AssertTrue(InStr(d.Ctrl("calPresetNote").Text, "3440x1440"), "note names the display")
     } finally {
         Calibrate.SystemFn := old
