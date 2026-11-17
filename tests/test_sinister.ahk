@@ -7,6 +7,9 @@
 
 SnLink() => "https://www.roblox.com/share?code=abc123def&type=Server"
 
+; a SinisterReport card (object {desc, color, buttons}) holds text
+SnHas(card, text) => IsObject(card) && InStr(card.desc, text)
+
 ; body (SAFEARRAY) -> parsed JSON Map
 SnJson(arr) {
     buf := WhBytes(arr)
@@ -139,7 +142,7 @@ Test_Sinister_SpawnMessageText() {
     AssertEq(r.rep.Spawn("GRAVEYARD@1"), true, "posted")
     AssertEq(r.wh.posts.Length, 1, "one post")
     AssertEq(r.wh.posts[1].event, "sinister", "the sinister event")
-    AssertEq(r.wh.posts[1].content, SnLink() " sinister s natrual spawn", "the user's text")
+    AssertTrue(SnHas(r.wh.posts[1].content, "## Boss Spawned - Sinister S.") && SnHas(r.wh.posts[1].content, "[Join Server](" SnLink() ")"), "the user's text")
 }
 
 Test_Sinister_NoSendInAGhostServerOrWithoutALink() {
@@ -193,7 +196,7 @@ Test_Sinister_KilledByLowPlateThenGone() {
     r.t.now += 600
     r.rep.Note("", false)
     AssertEq(r.wh.edits.Length, 1, "edited")
-    AssertEq(r.wh.edits[1].content, SnLink() " dead", "<link> dead")
+    AssertTrue(SnHas(r.wh.edits[1].content, "## Boss Dead - Sinister"), "<link> dead")
     AssertTrue(r.wh.edits[1].handle == r.rep.msg, "the same message")
     r.rep.Killed("toast"), r.rep.Note("", false)
     AssertEq(r.wh.edits.Length, 1, "edited once")
@@ -279,9 +282,9 @@ Test_Sinister_MinionsBossKilledEditsTheMessage() {
     m.t._scanFn := () => (MnSkills(m.io) < 4) ? full : (MnSkills(m.io) < 10) ? low : []
     m.t.Run(SchedCtx())
     AssertEq(m.sw.posts.Length, 1, "one message at boss in sight")
-    AssertEq(m.sw.posts[1].content, SnLink() " sinister s natrual spawn", "its text")
+    AssertTrue(SnHas(m.sw.posts[1].content, "## Boss Spawned - Sinister S.") && SnHas(m.sw.posts[1].content, "[Join Server](" SnLink() ")"), "its text")
     AssertEq(m.sw.edits.Length, 1, "the plate went low, then gone: edited")
-    AssertEq(m.sw.edits[1].content, SnLink() " dead", "dead")
+    AssertTrue(SnHas(m.sw.edits[1].content, "## Boss Dead - Sinister"), "dead")
     AssertTrue(MnLogged(m, "sinister: boss down (its plate went"), "by the plate rule")
     ; the same GRAVEYARD fought again (a stop let it in): no second message
     m.t._hunted := ""
@@ -328,12 +331,12 @@ Test_Sinister_MinionsDespawnLeavesTheMessage() {
 ; off and nothing was sent) ---------------------------------------------------
 
 Test_Sinister_LetterPicksTheBoss() {
-    AssertEq(SinisterReport.SpawnLine("s"), "sinister s natrual spawn", "S")
-    AssertEq(SinisterReport.SpawnLine("P"), "sinister p natrual spawn", "P")
-    AssertEq(SinisterReport.SpawnLine("x"), "sinister s natrual spawn", "anything else: S")
+    AssertEq(SinisterReport.BossName("s"), "Sinister S.", "S")
+    AssertEq(SinisterReport.BossName("P"), "Sinister P.", "P")
+    AssertEq(SinisterReport.BossName("x"), "Sinister S.", "anything else: S")
     r := SnRep()
     r.rep.Spawn("chat:p:1", "p")
-    AssertEq(r.wh.posts[1].content, SnLink() " sinister p natrual spawn", "P's message")
+    AssertTrue(SnHas(r.wh.posts[1].content, "## Boss Spawned - Sinister P.") && SnHas(r.wh.posts[1].content, "[Join Server](" SnLink() ")"), "P's message")
 }
 
 ; the chat line and the fight see one spawn: one message, the fight's edit
@@ -397,10 +400,34 @@ Test_Sinister_EachBossGetsItsOwnMessage() {
     r.t.now += 300000
     r.rep.Spawn("chat:p:2", "p")
     AssertEq(r.wh.posts.Length, 2, "P five minutes after S: its own message")
-    AssertEq(r.wh.posts[2].content, SnLink() " sinister p natrual spawn", "P's text")
+    AssertTrue(SnHas(r.wh.posts[2].content, "## Boss Spawned - Sinister P.") && SnHas(r.wh.posts[2].content, "[Join Server](" SnLink() ")"), "P's text")
     r.t.now += 60000
     r.rep.Spawn("chat:p:3", "p")
     AssertEq(r.wh.posts.Length, 2, "P again inside 15 min: no second P message")
     AssertEq(ChatWatch.DetectBoss("Sinister 5000 rolls").Length, 0, "a number is not S")
     AssertEq(ChatWatch.DetectBoss("Sinister 5, nice").Length, 0, "5 and a comma is not S")
+}
+
+
+; 2026-11-16, the user: the boss message looks like the "Biome Started" card
+Test_Sinister_CardLooksLikeTheBiomeCard() {
+    c := SinisterReport.SpawnCard(SnLink(), "p", 1700000000)
+    AssertEq(c.desc, "<t:1700000000:F> (<t:1700000000:R>)`n> ## Boss Spawned - Sinister P.`n> **[Join Server](" SnLink() ")**", "the biome card's layout")
+    AssertEq(c.buttons[1].url, SnLink(), "Join Server button")
+    d := SinisterReport.DeadCard(SnLink(), "s", 1700000060)
+    AssertEq(d.desc, "<t:1700000060:F> (<t:1700000060:R>)`n> ## Boss Dead - Sinister S.", "dead card")
+    ; sent as an embed with no title and no ping, edited as an embed
+    w := SnWh([{status: 200, sendError: "", pending: 0, body: '{"id":"9"}'}, {status: 200, sendError: "", pending: 0}])
+    h := w.wh.PostText("sinister", c)
+    w.wh.Flush(), w.wh.Flush()
+    j := SnJson(w.fake.bodies[1])
+    AssertEq(j["embeds"][1]["description"], c.desc, "embed text")
+    AssertEq(j["embeds"][1].Has("title"), false, "no title, like the biome cards")
+    AssertEq(j["embeds"][1]["color"], 0xE8731C, "P's colour")
+    AssertEq(j["components"][1]["components"][1]["url"], SnLink(), "the button")
+    AssertEq(Json.Stringify(j["allowed_mentions"], 0), '{"parse":[]}', "never a ping")
+    AssertEq(j.Has("content"), false, "no plain text")
+    w.wh.EditText(h, d), w.wh.Flush(), w.wh.Flush()
+    AssertEq(w.fake.opened[2]["method"], "PATCH", "edited")
+    AssertEq(SnJson(w.fake.bodies[2])["embeds"][1]["description"], d.desc, "the dead card")
 }

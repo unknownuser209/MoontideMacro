@@ -676,7 +676,11 @@ class Calibrate {
         return {w: Integer(m[1]), h: Integer(m[2]), scale: Integer(m[3])}
     }
 
-    static PresetLabel(p) => p.w "x" p.h " " Chr(0xB7) " " p.scale "%"
+    ; the preset list shows resolutions (the scale is its own dropdown); a
+    ; preset made at a scale other than 100% says so
+    static PresetLabel(p) => p.w "x" p.h (p.scale != 100 ? " " Chr(0xB7) " " p.scale "%" : "")
+    ; a display {w, h, scale} for the notes: "1920x1080 at 125%"
+    static DisplayLabel(sys) => sys.w "x" sys.h " at " sys.scale "%"
 
     ; -> Array of {w, h, scale, label, path}, biggest resolution first, then
     ; by scale. Files that do not follow the name pattern are left out.
@@ -699,18 +703,52 @@ class Calibrate {
 
     static _PresetBefore(a, b) => (a.w * a.h != b.w * b.h) ? (a.w * a.h > b.w * b.h) : (a.w != b.w) ? (a.w > b.w) : (a.scale <= b.scale)
 
-    ; the preset made at display sys {w, h, scale}, or ""
+    ; the preset for display sys {w, h, scale}, or "": made at that size and
+    ; scale; else at that size at 100%; else at that size at any scale. The
+    ; macro maps by the Roblox window (DPI aware) and Roblox does not grow
+    ; its game UI with the Windows scale, so a preset fits any scale at its
+    ; size (2026-11-16: every shipped preset is 100%, and 125% users got
+    ; none). Not checked live at a scale other than 100% yet.
     static MatchPreset(list, sys) {
         if !IsObject(sys)
             return ""
         for p in list
             if (p.w = sys.w && p.h = sys.h && p.scale = sys.scale)
                 return p
+        for p in list
+            if (p.w = sys.w && p.h = sys.h && p.scale = 100)
+                return p
+        for p in list
+            if (p.w = sys.w && p.h = sys.h)
+                return p
         return ""
     }
 
     ; () -> {w, h, scale}: this system's display. Tests swap it.
     static SystemFn := () => Calibrate.SystemDisplay()
+
+    ; Calibrate > Scale (General.displayScale, 2026-11-16): 0 = Auto (the
+    ; Windows scale read from the monitor), else the percent picked. App and
+    ; the dashboard set it.
+    static ScaleOverride := 0
+    static Scales := ["Auto", "100%", "125%", "150%", "175%", "200%"]
+    ; "125%" / "125" -> 125; "Auto" or anything not in Scales -> 0
+    static ScaleFromText(t) {
+        if !RegExMatch(Trim(String(t)), "^(\d{2,3})%?$", &m)
+            return 0
+        for s in Calibrate.Scales
+            if (s = m[1] "%")
+                return Integer(m[1])
+        return 0
+    }
+
+    ; this system's display with the picked scale in place of the read one
+    static System() {
+        sys := Calibrate.SystemFn.Call()
+        if (IsObject(sys) && Calibrate.ScaleOverride > 0)
+            return {w: sys.w, h: sys.h, scale: Calibrate.ScaleOverride}
+        return sys
+    }
 
     ; The monitor Roblox is on (the primary one when Roblox is not open):
     ; its resolution in physical px and its Windows display scale in %.
@@ -760,8 +798,8 @@ class Calibrate {
                 continue
             if (Calibrate._StepsKey(p.path) == mine) {
                 sys := ""
-                try sys := Calibrate.SystemFn.Call()
-                Calibrate.AutoNote := "your calibration is the " p.label " preset but your screen is " (IsObject(sys) ? Calibrate.PresetLabel(sys) : "another size")
+                try sys := Calibrate.System()
+                Calibrate.AutoNote := "your calibration is the " p.label " preset but your screen is " (IsObject(sys) ? Calibrate.DisplayLabel(sys) : "another size")
                     . ": using the matching preset (your file is unchanged; Calibrate > Apply preset makes it permanent)"
                 return pp
             }
@@ -782,7 +820,7 @@ class Calibrate {
     ; Path of the preset matching this system's display, or "".
     static PresetPath(path := "") {
         p := ""
-        try p := Calibrate.MatchPreset(Calibrate.Presets(path), Calibrate.SystemFn.Call())
+        try p := Calibrate.MatchPreset(Calibrate.Presets(path), Calibrate.System())
         return IsObject(p) ? p.path : ""
     }
 

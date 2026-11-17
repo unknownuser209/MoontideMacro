@@ -24,6 +24,11 @@ program; it reads no game memory and sends nothing anywhere you did not set up.)
   2560x1440, 1920x1080, 1920x1200, 1680x1050, 1600x900, 1536x864, 1440x900,
   1366x768, 1280x800 and 1280x720. Other 16:9 / 16:10 sizes may work; 5:4
   (1280x1024) and ultrawide (2560x1080, 3440x1440) do not yet.
+- Any Windows display scale (100%, 125%, 150%...): the macro measures the
+  Roblox window, so the preset for your resolution works at every scale.
+  **Scale** (Setup > Calibrate, next to Windowed) is read from Windows when
+  set to Auto; pick yours if it shows the wrong one. Only 100% has been
+  tested in game so far.
 - **Be careful:** Memory Match works better at some screen sizes than others,
   and minion hunting is still very buggy at every size. Keep an eye on both.
 - Nothing to install: the release zip includes `MoontideMacro.exe`. If you
@@ -114,9 +119,15 @@ The sidebar hubs:
   (Halloween orbs, minions and the Graveyard boss) is here; Sol's RNG removes
   it later in November and this tab goes with it. Also here: the **boss
   message** (when the chat names Sinister S. or Sinister P., your Boss webhook
-  gets your private server link, even with hunting off) and **one Cursed Rune
+  gets a "Boss Spawned - Sinister S. / P." card with a Join Server button for
+  your private server, even with hunting off; it changes to "Boss Dead" when
+  the hunt sees it die) and **one Cursed Rune
   Fragment per Graveyard / Pumpkin Moon night** (it starts Blood Rain).
-- **Alerts**: Biomes, Discord, Clips, **Daily summary**, **Remote**.
+- **Alerts**: Biomes, Discord, Clips, **Daily summary**, **Remote**. Under
+  Discord, **Rare aura alert** (off by default): a new aura you roll that is
+  as rare as the number you set (1 in 10,000,000 by default) or rarer goes to
+  the webhooks with Rare ticked, with a screenshot, and pings the user ID you
+  type there.
 - **Setup**: **Check & help**, Calibrate, Routes, **Schedule**, Settings,
   Dev tools.
 
@@ -186,6 +197,11 @@ Commands (only from the user ids you listed): `!status`, `!stats`,
 When Roblox updates while the macro runs, auto-rejoin waits for the Roblox
 launcher (or Bloxstrap / Fishstrap) to finish installing before it counts a
 failed join, and logs that Roblox is updating.
+
+When Roblox crashes or disconnects, auto-rejoin takes over even if the
+crashed game loses focus. And if the macro paused because Roblox lost focus
+and Roblox then closes or disconnects, the macro resumes by itself and
+rejoins. A pause you made with F2 always stays.
 
 ## First run checklist (in this order)
 

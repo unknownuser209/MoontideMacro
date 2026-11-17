@@ -216,6 +216,7 @@ class App {
         this.cfg := d["cfg"]
         ; Windowed: Yes / No (Setup > Calibrate): a window is used only with Yes
         try Roblox.AllowWindowed := (this.cfg.Get("General.windowed", 0) = 1)
+        try Calibrate.ScaleOverride := Calibrate.ScaleFromText(this.cfg.Get("General.displayScale", 0))   ; Scale: Auto / picked
         this.root := App._Dep(d, "root", App.DefaultRoot())
         try ChatGuard.FlagPath := this.root "\logs\chat_hidden.flag"
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
@@ -604,6 +605,7 @@ class App {
         if !this._started
             return false
         this.ctx.Pause()
+        this._pauseReason := ""          ; by hand: never resumed by the macro
         try this.input.ReleaseAll()
         try this.clip.CancelAll()
         this.Log("Paused")
@@ -749,6 +751,7 @@ class App {
             return
         }
         win := this._Window()
+        this._MaybeAutoResume(win)
         if IsObject(this._running) {
             this._Monitor(now, win)
             this._Status()
@@ -779,6 +782,18 @@ class App {
         ; Input must never land outside Roblox. Recovery is exempt: it
         ; rejoins (no window yet) and focuses Roblox itself.
         if (cur.name != "recovery") {
+            ; a rejoin is waiting (disconnect screen, ghost server): a crashed
+            ; client that loses focus or shrinks is halted for recovery, not
+            ; paused (live 2026-11-16: paused 14 s after the disconnect was
+            ; read, recovery never ran, 2.5 h lost)
+            if ((win = "notfs" || win = "missing" || !this._Active()) && this._RejoinWaiting()) {
+                if !this.ctx.IsHalted() {
+                    this.ctx.RequestPreempt(true)
+                    try this.input.ReleaseAll()
+                    this.Log(StrTitle(cur.name) ": Roblox " (win = "ok" ? "lost focus" : win = "missing" ? "window gone" : "window not usable") " with a rejoin waiting, stopping for recovery")
+                }
+                return
+            }
             if (win = "notfs") {
                 this._PauseFor("notfs")
                 return
@@ -824,6 +839,17 @@ class App {
     }
 
     _StartNext(now, win) {
+        ; a rejoin is waiting: recovery runs first, without the focus / window
+        ; checks (it closes the client and focuses Roblox itself)
+        if this._RejoinWaiting() {
+            nxt := Scheduler.Next([this.recovery], this.state, now)
+            if IsObject(nxt) {
+                this._note := ""
+                this._Launch(nxt)
+            } else
+                this._note := "Waiting to rejoin"
+            return
+        }
         if (win = "notfs") {
             this._PauseFor("notfs")
             return
@@ -1199,6 +1225,31 @@ class App {
     }
 
     _RecoveryOn() => IsObject(this.recovery) && this.cfg.Get("recovery.enabled", 1)
+
+    ; RecoveryTask has a rejoin waiting (disconnect screen seen, ghost server,
+    ; locked mouse) that it can do (link ok).
+    _RejoinWaiting() {
+        if !(this._RecoveryOn() && HasMethod(this.recovery, "Rejoining"))
+            return false
+        try return this.recovery.Rejoining(this.state) ? true : false
+        return false
+    }
+
+    ; Paused by the macro itself (focus / window), never by F2: Roblox closed
+    ; or a rejoin is waiting -> resumed so recovery rejoins (live 2026-11-16:
+    ; a crash left it paused for hours). No screen read here: Roblox is not
+    ; in front, an OCR would read whatever is.
+    _MaybeAutoResume(win) {
+        if !this.ctx.IsPaused() || this.ctx.IsStopped() || IsObject(this._running)
+            return
+        if !(this._pauseReason = App.Msg["unfocused"][1] || this._pauseReason = App.Msg["notfs"][1] || this._pauseReason = App.Msg["missing"][1])
+            return
+        if !((win = "missing" && this._RejoinReady()) || this._RejoinWaiting())
+            return
+        this.Log("Resumed: Roblox " (win = "missing" ? "closed" : "needs a rejoin") " while paused (" this._pauseReason "), auto-rejoin takes over")
+        this._pauseReason := ""
+        this.ctx.Resume()
+    }
     ; Roblox closed at F1 / F2: auto-rejoin can open the private server (on,
     ; with a usable link). Before, Start paused ("Roblox not found") and F2
     ; was refused until Roblox was opened by hand (live 2026-11-11: Roblox
@@ -1210,6 +1261,7 @@ class App {
     ; moves off the game if it covers it.
     _WindowedStart() {
         Roblox.AllowWindowed := (this.cfg.Get("General.windowed", 0) = 1)
+        try Calibrate.ScaleOverride := Calibrate.ScaleFromText(this.cfg.Get("General.displayScale", 0))
         if !(Roblox.AllowWindowed && Roblox.Hwnd())
             return
         if (Roblox.ClientOk() = "ok" && Roblox.Windowed && IsObject(this.overlay) && HasMethod(this.overlay, "AvoidRect"))

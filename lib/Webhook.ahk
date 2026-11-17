@@ -49,8 +49,10 @@
 ;                            event checkboxes (start announcement). No
 ;                            mention, no @everyone. Returns the count queued.
 ;   wh.PostText(eventType, content, opts) -> WebhookText handle, or "" when
-;                            no webhook gets it. ONE plain message (content
-;                            only, no embed) per routed webhook, NEVER a
+;                            no webhook gets it. ONE message per routed
+;                            webhook: content a String = plain text (no
+;                            embed); an object {desc, color[, buttons]} = a
+;                            card (one embed, no title). NEVER a
 ;                            ping: allowed_mentions {"parse": []} and the
 ;                            hook's mention unused. Posted with ?wait=true:
 ;                            Discord answers with the message, whose id is
@@ -164,9 +166,13 @@ class Webhook {
             return
         wantMention := Webhook._Truthy(Webhook._Opt(opts, "mention", false))
         wantEveryone := (eventType = "rare") && Webhook._Truthy(Webhook._Opt(opts, "everyone", false))
+        ; opts.ping: one user / role ID for this message, in place of each
+        ; hook's own mention (the rare aura alert's user ID)
+        ping := Webhook.NormalizeMention(Webhook._Opt(opts, "ping", ""))
         if (SubStr(String(title), 1, 7) = "[TEST] ") {      ; fake events never ping anyone
             wantMention := false
             wantEveryone := false
+            ping := ""
         }
         shot := String(Webhook._Opt(opts, "screenshot", ""))
         fields := Webhook._Opt(opts, "fields", "")
@@ -174,7 +180,7 @@ class Webhook {
         thumb := String(Webhook._Opt(opts, "thumbnail", ""))
         title := Webhook._Decorate(eventType, title)
         for w in hooks {
-            mention := wantMention ? Webhook.NormalizeMention(w.Has("mention") ? w["mention"] : "") : ""
+            mention := (ping != "") ? ping : wantMention ? Webhook.NormalizeMention(w.Has("mention") ? w["mention"] : "") : ""
             this._Enqueue(w, eventType, title, desc, color, mention, wantEveryone, shot, "", fields, buttons, thumb)
         }
     }
@@ -253,11 +259,20 @@ class Webhook {
                 this._EnqueueText(part, handle.event, content, part.id)
                 n++
             } else if (part.state = "pending") {
-                part.edit := String(content)        ; sent once the post's id comes
+                part.edit := IsObject(content) ? content : String(content)   ; sent once the post's id comes
                 n++
             }
         }
         return n
+    }
+
+    ; A card for PostText / EditText: {desc, color[, buttons]} -> one embed
+    ; with no title (like the biome cards), never a ping.
+    static _CardPayload(card) {
+        p := Webhook._BuildPayload("", Webhook._Opt(card, "desc", ""), Webhook._Opt(card, "color", 0xF2A93B)
+            , "", "", false, "", Webhook._Opt(card, "buttons", ""), "")
+        p["allowed_mentions"] := Map("parse", [])
+        return p
     }
 
     ; msgId "" = the post (?wait=true, the id kept from Discord's answer),
@@ -267,7 +282,8 @@ class Webhook {
             name: part.name,
             url: part.url,
             event: eventType,
-            payload: Map("content", SubStr(String(content), 1, 2000), "allowed_mentions", Map("parse", [])),
+            payload: IsObject(content) ? Webhook._CardPayload(content)
+                : Map("content", SubStr(String(content), 1, 2000), "allowed_mentions", Map("parse", [])),
             screenshot: "", fileName: "", thumb: "", thumbName: "",
             done: ObjBindMethod(this, "_TextDone", part, msgId != ""),
             onOk: msgId = "" ? ObjBindMethod(this, "_TextPosted", part, eventType) : "",
@@ -290,7 +306,7 @@ class Webhook {
             return
         }
         part.id := id, part.state := "ok"
-        if (part.edit != "") {
+        if (IsObject(part.edit) || part.edit != "") {
             c := part.edit, part.edit := ""
             this._EnqueueText(part, eventType, c, id)
         }

@@ -681,3 +681,24 @@ Test_Recovery_DisconnectRejoinClearsAPendingUnlock() {
     AssertEq(rig.runs.Length, 1, "one rejoin")
     AssertEq(rig.task.Unlocking(), false, "the unlock is done with it")
 }
+
+; App asks this (no screen read) to let a waiting rejoin win over a focus
+; pause (live 2026-11-16: a crash paused the macro for 2.5 h)
+Test_Recovery_RejoiningTellsAWaitingRejoin() {
+    rig := RcRig()
+    AssertEq(rig.task.Rejoining(rig.state), false, "nothing waiting")
+    n := rig.ocrCalls
+    rig.task.Rejoining(rig.state)
+    AssertEq(rig.ocrCalls, n, "no screen read")
+    rig.screen := "Disconnected`nLost connection to the game server, please reconnect (Error Code: 277)"
+    rig.clock.t += 5000
+    rig.task.CanRun(rig.state)
+    AssertEq(rig.task.Rejoining(rig.state), true, "disconnect screen seen")
+    rig.task.Run(rig.Ctx())
+    AssertEq(rig.task.Rejoining(rig.state), false, "handled by the rejoin")
+    rig.state.ghost := true
+    AssertEq(rig.task.Rejoining(rig.state), true, "ghost server")
+    rig2 := RcRig("")
+    rig2.state.ghost := true
+    AssertEq(rig2.task.Rejoining(rig2.state), false, "no usable link: nothing it can do")
+}

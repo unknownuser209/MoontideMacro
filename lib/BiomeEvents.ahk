@@ -301,6 +301,8 @@ class BiomeEvents {
         }
         if (test && this._cfg.Get("General.dryRun", 1) != 1)
             return
+        if (!had && A_TickCount >= Auras.QuietUntil)
+            this._AuraAlert(name, test)
         if !(this._cfg.Get("Medal.onRareAura", 0) || this._cfg.Get("Medal.clipCutscenes", 0))
             return
         if (A_TickCount < Auras.QuietUntil) {
@@ -324,6 +326,35 @@ class BiomeEvents {
         }
         this._Log("Aura: " name " (clip: " d["why"] ")")
         try this._clip.Trigger("aura:" name)
+    }
+
+    ; Rare aura alert ([AuraAlert], 2026-11-16): a new live aura (not equipped
+    ; before, not put on by the macro) whose 1-in-N rarity (datauras.json)
+    ; is minRarity or more -> the `rare` webhooks get a screenshot, its name
+    ; and rarity, and a ping of AuraAlert.userId. Unknown auras: nothing.
+    static AuraAlertMin := 10000000
+    _AuraAlert(name, test := false) {
+        if !this._cfg.Get("AuraAlert.enabled", 0)
+            return
+        e := Auras.Find(this._cfg, name)
+        if !IsObject(e)
+            return
+        rarity := (e.Has("rarity") && e["rarity"] is Integer) ? e["rarity"] : 0
+        min := Auras.ParseRarity(this._cfg.Get("AuraAlert.minRarity", String(BiomeEvents.AuraAlertMin)))
+        if (min = "" || min < 1)
+            min := BiomeEvents.AuraAlertMin
+        if (rarity < min)
+            return
+        shot := ""
+        try shot := this._shotFn.Call()
+        disp := e["name"]
+        now := DateDiff(A_NowUTC, "19700101000000", "Seconds")
+        desc := "## Rare aura rolled`n**" disp "** (1 in " Auras.Format(rarity) ")"
+            . (e.Has("category") && e["category"] != "" ? "`n" e["category"] : "")
+        fields := [Webhook.Field(Emoji.Clock " Rolled", "<t:" now ":T> (<t:" now ":R>)")]
+        user := Trim(String(this._cfg.Get("AuraAlert.userId", "")))
+        this._Log("Aura: " disp " (1 in " Auras.Format(rarity) "): rare aura alert" (user != "" ? " with a ping" : ""))
+        this._Send("rare", (test ? "[TEST] " : "") "RARE AURA: " disp, desc, 0xF2A93B, {ping: test ? "" : user, screenshot: shot, fields: fields})
     }
 
     ; true when General.everyonePing=1 and the biome is in General.everyoneBiomes.

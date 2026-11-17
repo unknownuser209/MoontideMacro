@@ -675,3 +675,23 @@ Test_Screenshot_BadHwndReturnsEmpty() {
     AssertEq(Screenshot.Capture(0), "", "zero hwnd")
     AssertEq(Screenshot.Capture(0x7FFFFFF1), "", "nonexistent hwnd")
 }
+
+; 2026-11-16: the rare aura alert pings one user ID set for it (opts.ping),
+; whatever the hook's own mention; a [TEST] message never pings
+Test_Webhook_PingOverridesTheHookMention() {
+    list := [WhMake("user", WhFakeUrl("u"), "123456789", 1, ["rare"]), WhMake("none", WhFakeUrl("n"), "", 1, ["rare"])]
+    wh := Webhook(WhStubCfg(list))
+    wh.dryRun := true
+    wh.Send("rare", "t", "d", 1, {ping: "555666777888"})
+    wh.Flush()
+    for rec in wh.sent {
+        j := Json.Parse(rec.json)
+        AssertEq(j["content"], "<@555666777888>", "the alert's user " rec.name)
+        AssertEq(j["allowed_mentions"]["users"][1], "555666777888", "only that user may be pinged " rec.name)
+    }
+    wh.sent := []
+    wh.Send("rare", "[TEST] t", "d", 1, {ping: "555666777888"})
+    wh.Flush()
+    for rec in wh.sent
+        AssertEq(Json.Parse(rec.json).Has("content"), false, "test: no ping " rec.name)
+}

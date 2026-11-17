@@ -61,7 +61,7 @@
 ; gives up (the boss bar UI up keeps it going), the UI bar never a target
 ; (NotBossUi) and boss=1 in the stats line.
 ; Discord (SinisterReport, lib\tasks\Sinister.ahk): boss in sight -> ONE
-; "<private server link> sinister s natrual spawn" on the "sinister" event
+; the "Boss Spawned - Sinister S." card (Join Server link) on the "sinister" event
 ; per GRAVEYARD start (never in a ghost server, never a ping); the fight's
 ; ticks feed it the plate's fill and sight, deaths and the toast; killed
 ; (GUESSED, see there) -> that message edited to "<link> dead". The biome

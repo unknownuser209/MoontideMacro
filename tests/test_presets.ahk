@@ -38,7 +38,8 @@ Test_Presets_ParseName() {
     AssertEq(p.w " " p.h " " p.scale, "1920 1080 125", "full path")
     for bad in ["calibration.json", "calibration_2560x1440.json", "calibration_2560x1440_100.json.bak", "notes_1920x1080_100.json", "calibration_axb_100.json"]
         AssertEq(Calibrate.ParsePresetName(bad), "", bad " is not a preset")
-    AssertEq(Calibrate.PresetLabel({w: 2560, h: 1440, scale: 100}), "2560x1440 " Chr(0xB7) " 100%", "label")
+    AssertEq(Calibrate.PresetLabel({w: 2560, h: 1440, scale: 100}), "2560x1440", "label: the resolution (the scale has its own dropdown)")
+    AssertEq(Calibrate.PresetLabel({w: 1920, h: 1080, scale: 125}), "1920x1080 " Chr(0xB7) " 125%", "a preset made at another scale says so")
 }
 
 Test_Presets_ListsWhateverIsThere() {
@@ -50,7 +51,7 @@ Test_Presets_ListsWhateverIsThere() {
         labels := ""
         for p in list
             labels .= p.label "|"
-        AssertEq(labels, StrReplace("2560x1440 . 100%|1920x1080 . 100%|1920x1080 . 125%|", ".", Chr(0xB7)), "sorted, the odd file left out")
+        AssertEq(labels, StrReplace("2560x1440|1920x1080|1920x1080 . 125%|", ".", Chr(0xB7)), "sorted, the odd file left out")
         AssertTrue(InStr(list[1].path, "calibration_2560x1440_100.json"), "path kept")
         AssertEq(Calibrate.Presets(A_Temp "\vesper_no_such_dir\calibration.json").Length, 0, "no folder: none")
     } finally
@@ -61,8 +62,15 @@ Test_Presets_MatchToSystem() {
     list := [{w: 2560, h: 1440, scale: 100, path: "a"}, {w: 1920, h: 1080, scale: 125, path: "b"}]
     AssertEq(Calibrate.MatchPreset(list, {w: 2560, h: 1440, scale: 100}).path, "a", "exact")
     AssertEq(Calibrate.MatchPreset(list, {w: 1920, h: 1080, scale: 125}).path, "b", "1080p at 125%")
-    AssertEq(Calibrate.MatchPreset(list, {w: 2560, h: 1440, scale: 150}), "", "same size, other scale: no")
-    AssertEq(Calibrate.MatchPreset(list, {w: 1920, h: 1080, scale: 100}), "", "other scale: no")
+    ; 2026-11-16: every shipped preset is 100%; the macro maps by the Roblox
+    ; window (DPI aware) and Roblox does not grow its game UI with the Windows
+    ; scale, so the same resolution at another scale uses it
+    AssertEq(Calibrate.MatchPreset(list, {w: 2560, h: 1440, scale: 150}).path, "a", "same size, other scale: that preset")
+    AssertEq(Calibrate.MatchPreset(list, {w: 1920, h: 1080, scale: 100}).path, "b", "other scale: that preset")
+    AssertEq(Calibrate.MatchPreset(list, {w: 3440, h: 1440, scale: 100}), "", "other size: none")
+    two := [{w: 1920, h: 1080, scale: 125, path: "x125"}, {w: 1920, h: 1080, scale: 100, path: "x100"}]
+    AssertEq(Calibrate.MatchPreset(two, {w: 1920, h: 1080, scale: 125}).path, "x125", "the exact scale first")
+    AssertEq(Calibrate.MatchPreset(two, {w: 1920, h: 1080, scale: 150}).path, "x100", "else the 100% one")
     AssertEq(Calibrate.MatchPreset(list, ""), "", "unknown system")
     sys := Calibrate.SystemDisplay()
     AssertTrue(sys.w > 0 && sys.h > 0 && sys.scale >= 100, "this system's display is read")
@@ -109,7 +117,7 @@ Test_Presets_DashboardPickerAndApply() {
         Calibrate.Use(dir "\cal.json", cfg)
         d := Dashboard(cfg)
         dd := d.Ctrl("calPreset")
-        AssertEq(dd.Text, "1920x1080 " Chr(0xB7) " 100%", "pre-selected to this display")
+        AssertEq(dd.Text, "1920x1080", "pre-selected to this display")
         AssertTrue(InStr(d.Ctrl("calPresetNote").Text, "Matches your display"), "note: matches")
         d._CalApplyPreset()
         AssertEq(Calibrate.Point("inv_open").x, 75, "preset applied")
@@ -158,4 +166,52 @@ Test_Presets_Shipped1080MatchesThe1440OneButTheChat() {
         r := Screen.Rect(c["x"], c["y"], c["w"], c["h"])
         AssertEq(r.x " " r.y " " (r.x + r.w) " " (r.y + r.h), "13 102 476 367", "chat box at its 1080p pixels")
     } finally Screen.Reset()
+}
+
+
+; 2026-11-16, the user: a Scale dropdown like Windowed (Auto = detected)
+Test_Presets_ScaleOverride() {
+    old := Calibrate.SystemFn, was := Calibrate.ScaleOverride
+    try {
+        Calibrate.SystemFn := () => {w: 1920, h: 1080, scale: 100}
+        Calibrate.ScaleOverride := 0
+        AssertEq(Calibrate.System().scale, 100, "Auto: the detected scale")
+        Calibrate.ScaleOverride := 125
+        AssertEq(Calibrate.System().scale, 125, "picked: that scale")
+        AssertEq(Calibrate.System().w, 1920, "the size is still measured")
+        AssertEq(Calibrate.ScaleFromText("150%"), 150, "dropdown text -> percent")
+        AssertEq(Calibrate.ScaleFromText("Auto"), 0, "Auto -> 0")
+        AssertEq(Calibrate.ScaleFromText("junk"), 0, "anything else -> Auto")
+    } finally {
+        Calibrate.SystemFn := old, Calibrate.ScaleOverride := was
+    }
+}
+
+Test_Presets_DashboardScaleDropdown() {
+    dir := UiDashTmp()
+    d := ""
+    old := Calibrate.SystemFn, was := Calibrate.ScaleOverride
+    try {
+        DirCreate(dir "\presets")
+        PrWrite(dir "\presets\calibration_1920x1080_100.json")
+        PrWrite(dir "\cal.json", '"inv_open":{"x":7,"y":8,"color":"0x000000"}')
+        cfg := Config.Load(dir)
+        AssertEq(cfg.Get("General.displayScale", ""), "0", "Auto by default")
+        Calibrate.SystemFn := () => {w: 1920, h: 1080, scale: 100}
+        Calibrate.Use(dir "\cal.json", cfg)
+        d := Dashboard(cfg)
+        dd := d.Ctrl("calScale")
+        AssertEq(dd.Text, "Auto", "shows Auto")
+        dd.Choose(3)                                ; 125%
+        d._CalScaleChange(dd)
+        AssertEq(cfg.Get("General.displayScale", ""), "125", "saved")
+        AssertEq(Calibrate.ScaleOverride, 125, "used at once")
+        AssertTrue(InStr(d.Ctrl("calPresetNote").Text, "125%"), "the note names the scale: " d.Ctrl("calPresetNote").Text)
+        AssertEq(d.Ctrl("calPreset").Text, "1920x1080", "the 100% preset still fits")
+    } finally {
+        Calibrate.SystemFn := old, Calibrate.ScaleOverride := was
+        UiDashClose(d)
+        Calibrate.Use(A_Temp "esper_cal_unused.json")
+        try DirDelete(dir, true)
+    }
 }

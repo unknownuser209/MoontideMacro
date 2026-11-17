@@ -138,6 +138,16 @@ class Config {
         lm["bossAlert"] := "1"        ; 1 = a Sinister S. / P. line in the chat sends the "sinister" message
         lm["cursedRune"] := "0"       ; 1 = use ONE Cursed Rune Fragment when GRAVEYARD or PUMPKIN MOON starts
         d["Limited"] := lm
+        ; Rare aura alert (2026-11-16): a new aura the player rolled, as rare
+        ; as minRarity or rarer, goes to the Rare webhooks with a screenshot
+        ; and pings userId.
+        g0 := d["General"]
+        g0["displayScale"] := "0"     ; Calibrate > Scale: 0 = Auto (read from Windows), else 100/125/150/175/200
+        aa := Config._CIMap()
+        aa["enabled"] := "0"
+        aa["userId"] := ""            ; Discord user ID (or &role ID) to ping; "" = no ping
+        aa["minRarity"] := "10000000" ; 1 in N or rarer (datauras.json)
+        d["AuraAlert"] := aa
         ; Limbo (lib/tasks/Limbo.ahk): stay in THE LIMBO by Eden's spawn instead
         ; of fishing; leave for rare biomes.
         li := Config._CIMap()

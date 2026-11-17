@@ -2188,9 +2188,26 @@ class Dashboard {
                 this._ids["hook" i ".ev" j] := c
         }
         this._hookAdd := Theme.Button(g, "x216 y" 202 + Dashboard.MaxHooks * 36 + 4 " w150 h30", "+  Add webhook", (*) => this.HookAdd())
+        ; rare aura alert (2026-11-16): the Rare webhooks, a screenshot, one ping
+        this._Panel(204, 552, 808, 66, "Rare aura alert", "A new aura you roll that is as rare as the number on the right (1 in N) or rarer "
+            . "goes to the webhooks with Rare ticked, with a screenshot, and pings the user ID. Leave the ID empty for no ping.")
+        this._BoolField(216, 584, "Ping on rare aura", "AuraAlert.enabled", 0, 210)
+        this._StrField(452, 584, "User ID", "AuraAlert.userId", "", 180, 70)
+        this._StrField(728, 584, "Rarer than 1 in", "AuraAlert.minRarity", "10000000", 130, 118)
         p.load := ObjBindMethod(this, "_HooksLoad")
         p.save := ObjBindMethod(this, "_HooksSave")
+        p.validate := ObjBindMethod(this, "_HooksCheck")
         this._SaveBar(p)
+    }
+
+    ; "" or why the Webhooks page cannot be saved (the rare aura alert fields).
+    _HooksCheck() {
+        id := Trim(this.Ctrl("AuraAlert.userId").Value)
+        if (id != "" && Webhook.NormalizeMention(id) = "")
+            return "aura alert: the user ID is a number like 123456789012345678 (Discord: right-click yourself > Copy User ID)"
+        if (Auras.ParseRarity(this.Ctrl("AuraAlert.minRarity").Value) = "")
+            return "aura alert rarity: type a number like 10,000,000, 10m or 1b"
+        return ""
     }
 
     _HooksLoad() {
@@ -2350,24 +2367,39 @@ class Dashboard {
 
     _PageCalibrate(p) {
         g := this._gui
-        this._Panel(204, 152, 808, 68, "Preset", "A ready calibration recorded at one resolution and Windows display scale. "
+        this._Panel(204, 152, 808, 84, "Preset", "A ready calibration recorded at one resolution. "
             . "Apply copies it over your calibration (the old one is kept as data\calibration.json.bak). "
-            . "Windowed: Yes lets Roblox run in a window (the window's size is the resolution); the macro never resizes it. No = fullscreen only.")
-        this._calPreset := Theme.Dropdown(g, 220, 184, 200)
+            . "Windowed: Yes lets Roblox run in a window (the window's size is the resolution); the macro never resizes it. No = fullscreen only. "
+            . "Scale: your Windows display scale. Auto reads it from Windows; the macro measures the Roblox window, so any scale works with the preset for your resolution.")
+        this._calPreset := Theme.Dropdown(g, 220, 184, 160)
         this._ids["calPreset"] := this._calPreset
-        this._ids["calPresetApply"] := Theme.Button(g, "x428 y182 w120 h30", "Apply preset", (*) => this._CalApplyPreset())
-        Theme.Label(g, "x562 y188 w74 h20", "Windowed", "body")
-        this._calWindowed := Theme.Dropdown(g, 636, 184, 70, ["No", "Yes"])
+        this._ids["calPresetApply"] := Theme.Button(g, "x388 y182 w120 h30", "Apply preset", (*) => this._CalApplyPreset())
+        Theme.Label(g, "x524 y188 w74 h20", "Windowed", "body")
+        this._calWindowed := Theme.Dropdown(g, 598, 184, 70, ["No", "Yes"])
         this._calWindowed.Choose(this.cfg.Get("General.windowed", 0) = 1 ? 2 : 1)
         this._calWindowed.OnEvent("Change", ObjBindMethod(this, "_CalWindowedChange"))
         this._ids["calWindowed"] := this._calWindowed
-        this._calPresetNote := Theme.Label(g, "x716 y188 w280 h20", "", "muted")
+        ; Scale (2026-11-16): like Windowed, saved at once
+        Theme.Label(g, "x686 y188 w46 h20", "Scale", "body")
+        ; made empty, then filled (as the preset list): made with its 6 items
+        ; the control is 6 rows tall and the page below it stopped painting
+        this._calScale := Theme.Dropdown(g, 732, 184, 90)
+        this._calScale.Add(Calibrate.Scales)
+        sc := Calibrate.ScaleFromText(this.cfg.Get("General.displayScale", 0))
+        idx := 1
+        for i, t in Calibrate.Scales
+            if (Calibrate.ScaleFromText(t) = sc && sc > 0)
+                idx := i
+        this._calScale.Choose(idx)
+        this._calScale.OnEvent("Change", ObjBindMethod(this, "_CalScaleChange"))
+        this._ids["calScale"] := this._calScale
+        this._calPresetNote := Theme.Label(g, "x220 y216 w776 h18", "", "muted")
         this._ids["calPresetNote"] := this._calPresetNote
         this._calPresets := []
-        this._Panel(204, 232, 808, 384, "Steps", "Hover each target in Roblox and press the capture key (" this._CapKey() "). Nothing is clicked. Esc cancels the wizard.")
+        this._Panel(204, 248, 808, 368, "Steps", "Hover each target in Roblox and press the capture key (" this._CapKey() "). Nothing is clicked. Esc cancels the wizard.")
         cw := [200, 110, 466]
-        Theme.ListHeader(g, 220, 260, cw, ["Step", "Status", "What to hover"])
-        this._lvC := Theme.ListView(g, 220, 278, 776, 322, ["Step", "Status", "What to hover"], cw, "+Multi", ObjBindMethod(this, "_CalColor"))
+        Theme.ListHeader(g, 220, 276, cw, ["Step", "Status", "What to hover"])
+        this._lvC := Theme.ListView(g, 220, 294, 776, 306, ["Step", "Status", "What to hover"], cw, "+Multi", ObjBindMethod(this, "_CalColor"))
         this._ids["calibrate"] := this._lvC
         Theme.Button(g, "x204 y628 w170 h30", "Record selected", (*) => this._CalRun("selected"), "primary")
         Theme.Button(g, "x382 y628 w110 h30", "Run all", (*) => this._CalRun("all"))
@@ -2387,6 +2419,15 @@ class Dashboard {
     }
 
     ; Windowed Yes / No: saved at once and used from the next window check
+    ; Scale: Auto (0) or a percent; saved at once, used for the preset match
+    _CalScaleChange(ctrl, *) {
+        sc := Calibrate.ScaleFromText(ctrl.Text)
+        this.cfg.Set("General.displayScale", sc)
+        try this.cfg.Save()
+        Calibrate.ScaleOverride := sc
+        this._CalPresetsLoad()
+    }
+
     _CalWindowedChange(ctrl, *) {
         on := (ctrl.Value = 2)
         this.cfg.Set("General.windowed", on ? 1 : 0)
@@ -2427,7 +2468,7 @@ class Dashboard {
     _CalPresetsLoad() {
         list := [], sys := ""
         try list := Calibrate.Presets()
-        try sys := Calibrate.SystemFn.Call()
+        try sys := Calibrate.System()
         this._calPresets := list
         labels := []
         for p in list
@@ -2443,10 +2484,10 @@ class Dashboard {
                 idx := i
         if (idx || list.Length)
             dd.Choose(idx ? idx : 1)
-        mine := IsObject(sys) ? Calibrate.PresetLabel(sys) : "unknown"
+        mine := IsObject(sys) ? Calibrate.DisplayLabel(sys) : "unknown"
         what := Roblox.AllowWindowed ? "window" : "display"
         Theme.SetText(this._calPresetNote, !list.Length ? "No presets installed: calibrate below."
-            : idx ? "Matches your " what " (" mine ")."
+            : idx ? "Matches your " what " (" mine ")." ((IsObject(sys) && match.scale != sys.scale) ? " Made at " match.scale "%: it fits any scale (the macro measures the Roblox window)." : "")
             : "No preset for your " what " (" mine ").")
     }
 

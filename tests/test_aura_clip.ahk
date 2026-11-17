@@ -562,3 +562,81 @@ Test_AuraClip_EveryCutsceneAura() {
     } finally
         r.Done()
 }
+
+; ---- rare aura alert (2026-11-16, the user: ping a user ID with a
+; screenshot when the player gets a rare aura) ---------------------------------
+
+class AaRig extends AcRig {
+    __New(on := 1) {
+        super.__New()
+        this.cfg.Set("Medal.onRareAura", 0)          ; independent of the clip setting
+        this.cfg.Set("AuraAlert.enabled", on)
+        this.cfg.Set("AuraAlert.userId", "123456789012345678")
+        this.cfg.Set("AuraAlert.minRarity", "10m")
+        this.sends := []
+        rig := this
+        this.wh := {Send: (self, ev, title, desc, color, opts := "") => rig.sends.Push({ev: ev, title: title, desc: desc, opts: opts})}
+        this.be := BiomeEvents(Map("cfg", this.cfg, "state", this.state, "wh", this.wh,
+            "log", (t) => this.logs.Push(t), "clip", this.clip,
+            "shotFn", () => "C:\shot.png", "soundFn", (s) => 0,
+            "hadFile", this.dir "\had.txt", "hadLogDir", this.dir))   ; auras equipped before, as in the App
+    }
+}
+
+Test_AuraAlert_PingsTheUserWithAScreenshot() {
+    r := AaRig()
+    try {
+        r.Aura("Gargantua")
+        AssertEq(r.sends.Length, 1, "one alert")
+        s := r.sends[1]
+        AssertEq(s.ev, "rare", "on the Rare webhooks")
+        AssertEq(s.opts.ping, "123456789012345678", "pings the user ID")
+        AssertEq(s.opts.screenshot, "C:\shot.png", "with a screenshot")
+        AssertTrue(InStr(s.desc, "Gargantua") && InStr(s.desc, "1 in 430,000,000"), "names it and its rarity: " s.desc)
+        r.Aura("Gargantua")
+        AssertEq(r.sends.Length, 1, "equipped again: no second alert")
+        r.Aura("Common"), r.Aura("Nobody Knows This One")
+        AssertEq(r.sends.Length, 1, "common and unknown auras: nothing")
+        r.Aura("Starscourge")
+        AssertEq(r.sends.Length, 2, "1 in 10,000,000 counts (at the threshold)")
+        Auras.Quiet(60000)
+        r.Aura("Equinox")
+        AssertEq(r.sends.Length, 2, "put on by the macro: nothing")
+        Auras.QuietUntil := 0
+        r.Aura("Starscourge : Radiant", 0)
+        AssertEq(r.sends.Length, 2, "not live (startup): nothing")
+    } finally {
+        r.Done()
+    }
+}
+
+Test_AuraAlert_OffByDefaultAndWhenOff() {
+    r := AaRig(0)
+    try {
+        r.Aura("Gargantua")
+        AssertEq(r.sends.Length, 0, "off: nothing")
+    } finally {
+        r.Done()
+    }
+    dir := AcTmpDir()
+    try {
+        cfg := Config.Load(dir)
+        AssertEq(cfg.Get("AuraAlert.enabled", ""), "0", "off by default")
+        AssertEq(cfg.Get("AuraAlert.minRarity", ""), "10000000", "1 in 10M by default")
+    } finally {
+        try DirDelete(dir, true)
+    }
+}
+
+; no user ID set: the alert still goes out, with no ping
+Test_AuraAlert_NoUserIdNoPing() {
+    r := AaRig()
+    try {
+        r.cfg.Set("AuraAlert.userId", "")
+        r.Aura("Gargantua")
+        AssertEq(r.sends.Length, 1, "sent")
+        AssertEq(r.sends[1].opts.ping, "", "no ping")
+    } finally {
+        r.Done()
+    }
+}

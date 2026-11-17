@@ -267,3 +267,84 @@ Test_App_RestartRecreatesLogWatch() {
     AssertEq(made.Length, 2, "restart makes a fresh LogWatch (silent backfill)")
     AssertTrue(t.app.lw == made[2], "new instance in use")
 }
+
+; recovery fake with a rejoin waiting (disconnect screen seen / ghost server)
+class AppFakeRejoinRecovery extends AppFakeTask {
+    __New() {
+        super.__New("recovery", 2, false)
+        this.pend := false
+    }
+    Rejoining(state := "") => this.pend
+}
+
+; live 2026-11-16: Roblox crashed (disconnect screen read, quests told to stop
+; for recovery), then lost focus 14 s later; the macro paused for focus and
+; recovery never ran: 2.5 h lost until the user came back. A waiting rejoin
+; now takes over: the task is halted, no pause, and recovery launches even
+; though Roblox will not take focus.
+Test_App_LostFocusWithARejoinWaitingHandsOverToRecovery() {
+    rec := AppFakeRejoinRecovery()
+    quests := AppFakeTask("quests", 50, true, (self, ctx) => (rec.pend := true, rec.can := true
+        , t.rb.activeOk := false, t.rb.focusOk := false, t.app.Tick()
+        , self.paused := ctx.IsPaused(), self.halted := CleanupCtx.Halted(ctx), self.can := false))
+    t := AppTestMake(Map("tasks", Map("recovery", rec, "quests", quests)))
+    t.app.Start()
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(quests.paused, false, "no focus pause with a rejoin waiting")
+    AssertEq(quests.halted, true, "the task is halted: no more input")
+    AssertEq(t.app.ctx.IsPaused(), false, "not paused")
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(rec.runs, 1, "recovery launched without Roblox focus")
+}
+
+; paused for focus (alt-tab) and then Roblox closed: auto-rejoin takes over
+; instead of staying paused for hours
+Test_App_FocusPauseResumesWhenRobloxCloses() {
+    rec := AppFakeRejoinRecovery()
+    fish := AppFakeTask("fishing", 99, true, (self, ctx) => (t.rb.activeOk := false, t.app.Tick(), self.can := false))
+    t := AppTestMake(Map("tasks", Map("recovery", rec, "fishing", fish)
+        , "cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0, "General.privateServer", "https://www.roblox.com/share?code=abc&type=Server")))
+    t.app.Start()
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(t.app.ctx.IsPaused(), true, "alt-tab pauses")
+    t.app.Tick()
+    AssertEq(t.app.ctx.IsPaused(), true, "still paused with Roblox open")
+    t.rb.win := 0
+    rec.can := true
+    t.app.Tick()
+    AssertEq(t.app.ctx.IsPaused(), false, "Roblox closed: resumed for the rejoin")
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(rec.runs, 1, "recovery ran")
+}
+
+; a disconnect seen before the focus pause also resumes it
+Test_App_FocusPauseResumesForAWaitingRejoin() {
+    rec := AppFakeRejoinRecovery()
+    fish := AppFakeTask("fishing", 99, true, (self, ctx) => (t.rb.activeOk := false, t.app.Tick(), self.can := false))
+    t := AppTestMake(Map("tasks", Map("recovery", rec, "fishing", fish)
+        , "cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0, "General.privateServer", "https://www.roblox.com/share?code=abc&type=Server")))
+    t.app.Start()
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(t.app.ctx.IsPaused(), true, "alt-tab pauses")
+    rec.pend := true, rec.can := true
+    t.app.Tick()
+    AssertEq(t.app.ctx.IsPaused(), false, "resumed for the waiting rejoin")
+}
+
+; F2 by hand is never undone, even when Roblox closes
+Test_App_ManualPauseStaysWhenRobloxCloses() {
+    rec := AppFakeRejoinRecovery()
+    t := AppTestMake(Map("tasks", Map("recovery", rec, "fishing", AppFakeTask("fishing", 99, false))
+        , "cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0, "General.privateServer", "https://www.roblox.com/share?code=abc&type=Server")))
+    t.app.Start()
+    t.app.Pause()
+    t.rb.win := 0
+    rec.can := true, rec.pend := true
+    t.app.Tick()
+    AssertEq(t.app.ctx.IsPaused(), true, "a pause by hand stays")
+}

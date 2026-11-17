@@ -18,9 +18,9 @@
 ;   rep.Spawn(key)   the fight with the boss begins (MinionsTask: boss in
 ;                    sight). key = this spawn (the GRAVEYARD's start): the
 ;                    same key again posts nothing (one message per spawn,
-;                    whether it was posted or skipped). Posts
-;                    "<link> sinister s natrual spawn" (the user's words) on
-;                    the "sinister" event, unless the link is empty or not a
+;                    whether it was posted or skipped). Posts a card like
+;                    the biome cards ("Boss Spawned - Sinister S." + Join
+;                    Server) on the "sinister" event, unless the link is empty or not a
 ;                    https://www.roblox.com/ link, or ghost() is not false.
 ;   rep.Note(fill, seen [, now])  a fight tick: fill = the boss plate's HP
 ;                    fill (0..1) read this tick, "" = none read; seen = its
@@ -30,7 +30,7 @@
 ;   rep.Killed(why)  dead for sure (a kill toast): the edit
 ;   rep.Gone()       the biome changed: the spawn is over; not dead by then
 ;                    = it despawned, the message stays as it is
-;   rep.dead         true once the edit to "<link> dead" was made
+;   rep.dead         true once the edit to "Boss Dead" was made
 ;   rep.msg          the WebhookText handle ("" = nothing posted)
 ;
 ; KILLED (GUESSED: the boss not seen dying yet). The boss (2500 HP, its
@@ -49,8 +49,7 @@
 
 class SinisterReport {
     static Event := "sinister"
-    static SpawnText := "sinister s natrual spawn"     ; the user's words, typo kept
-    static DeadText := "dead"
+    static Color := Map("s", 0x5B2A86, "p", 0xE8731C)    ; GRAVEYARD purple, PUMPKIN MOON orange
     static DeadFill := 0.08
     static LowReads := 2
     static LowKeepMs := 5000
@@ -70,9 +69,25 @@ class SinisterReport {
 
     static SpawnGapMs := 900000      ; one message per 15 min, whoever saw it first
 
-    ; "sinister s natrual spawn" / "sinister p natrual spawn" (the user's
-    ; words, typo kept); anything else counts as s
-    static SpawnLine(boss := "s") => "sinister " (StrLower(String(boss)) = "p" ? "p" : "s") " natrual spawn"
+    ; "Sinister S." / "Sinister P." (anything else counts as S)
+    static BossName(boss := "s") => "Sinister " (StrLower(String(boss)) = "p" ? "P" : "S") "."
+
+    ; The cards, in the style of the biome cards (2026-11-16, the user: match
+    ; "Biome Started"): time, a quoted heading, the Join Server link + button.
+    ; unix: seconds (default now).
+    static SpawnCard(link, boss := "s", unix := "") {
+        u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
+        b := (StrLower(String(boss)) = "p") ? "p" : "s"
+        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Spawned - " SinisterReport.BossName(b) "`n> **[Join Server](" link ")**"
+            , color: SinisterReport.Color[b], buttons: [{label: "Join Server", url: link}]}
+    }
+
+    static DeadCard(link, boss := "s", unix := "") {
+        u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
+        b := (StrLower(String(boss)) = "p") ? "p" : "s"
+        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Dead - " SinisterReport.BossName(b)
+            , color: SinisterReport.Color[b], buttons: [{label: "Join Server", url: link}]}
+    }
 
     _Reset() {
         this.msg := "", this.dead := false, this._link := "", this._open := false, this._boss := "s"
@@ -113,7 +128,7 @@ class SinisterReport {
         if !IsObject(this._wh)
             return false
         h := ""
-        try h := this._wh.PostText(SinisterReport.Event, link " " SinisterReport.SpawnLine(boss)
+        try h := this._wh.PostText(SinisterReport.Event, SinisterReport.SpawnCard(link, b)
             , IsObject(this._hook) ? {hook: this._hook} : "")
         catch Any as e {
             this._Log("sinister: the Discord message failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
@@ -162,7 +177,7 @@ class SinisterReport {
         this._Log("sinister: boss down (" why ")")
         if !IsObject(this.msg)
             return false
-        try this._wh.EditText(this.msg, this._link " " SinisterReport.DeadText)
+        try this._wh.EditText(this.msg, SinisterReport.DeadCard(this._link, this._boss))
         catch Any as e {
             this._Log("sinister: the edit failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
             return false

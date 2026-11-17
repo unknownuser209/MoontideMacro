@@ -152,6 +152,19 @@ class RecoveryTask {
     ; shift lock check (that check is what keeps failing).
     Unlocking() => this._unlock
 
+    ; A rejoin is waiting and can be done: the disconnect screen was seen, a
+    ; ghost server, or the locked mouse; recovery on with a usable link. No
+    ; screen read (App asks while Roblox may not be in front). state: the
+    ; App's (default: the one CanRun saw last).
+    Rejoining(state := "") {
+        env := this._env
+        if IsObject(env.cfg) && !env.cfg.Get("recovery.enabled", 1)
+            return false
+        if !RecoveryTask.LinkOk(this._Link())
+            return false
+        return (this._discSeen || this._unlock || this._Ghost(IsObject(state) ? state : this._state)) ? true : false
+    }
+
     ; A LogWatch join kind ("private" | "other") -> "ghost" | "clear" | ""
     ; (no change). Off with Recovery.antiGhost=0; never while Limbo is on or
     ; the player is in THE LIMBO (the Portable Crack is a teleport too).

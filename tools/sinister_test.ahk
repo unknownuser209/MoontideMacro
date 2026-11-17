@@ -10,10 +10,10 @@
 ;   & "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" /ErrorStdOut tools\sinister_test.ahk "<webhook name>" [seconds] | Out-Host
 ;
 ; Through SinisterReport + Webhook.PostText / EditText, the code path of the
-; macro: posts "<private server link> sinister s natrual spawn" to the named
+; macro: posts the "Boss Spawned - Sinister S." card (Join Server link) to the named
 ; webhook entry of settings.ini (name not case sensitive; its enabled flag
 ; and event boxes ignored, never a ping), waits [seconds] (default 30), then
-; edits that message to "<private server link> dead". No ghost-server check
+; edits that message to the "Boss Dead" card. No ghost-server check
 ; (the user runs it on purpose). Prints only scrubbed lines: never a webhook
 ; URL or the link. Exit 0 = posted and edited.
 ; ---------------------------------------------------------------------------
