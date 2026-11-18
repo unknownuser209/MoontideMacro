@@ -369,8 +369,8 @@ Test_AuraClip_DashboardMedalLayout() {
     try {
         cfg := Config.Load(dir)
         d := Dashboard(cfg)
-        pn := d.Ctrl("panel:Clips:Medal clips")
-        AssertTrue(IsObject(pn), "Clips has a Medal clips panel")
+        pn := d.Ctrl("panel:Clips:Clips")
+        AssertTrue(IsObject(pn), "Clips has a Clips panel")
         px := 0, py := 0, pw := 0, ph := 0
         pn.GetPos(&px, &py, &pw, &ph)
         tips := []
@@ -382,7 +382,7 @@ Test_AuraClip_DashboardMedalLayout() {
             }
         }
         AssertTrue(tips.Length >= 1, "Clips help lives in a tip")
-        keys := ["Medal.enabled", "Medal.clipHotkey", "Medal.delaySec", "Medal.cooldownSec", "Medal.onRareBiome"
+        keys := ["Medal.enabled", "Medal.app", "Medal.clipHotkey", "Medal.delaySec", "Medal.cooldownSec", "Medal.onRareBiome"
             , "Medal.onRareAura", "Medal.auraMinRarity", "Medal.auraAlwaysCategories", "Medal.auras"]
         rects := []
         for k in keys {
@@ -636,6 +636,29 @@ Test_AuraAlert_NoUserIdNoPing() {
         r.Aura("Gargantua")
         AssertEq(r.sends.Length, 1, "sent")
         AssertEq(r.sends[1].opts.ping, "", "no ping")
+    } finally {
+        r.Done()
+    }
+}
+
+; Dev tools: a fake rare aura alert to one webhook, with the ping, even
+; with the alert switched off (a preview)
+Test_AuraAlert_TestToOneWebhook() {
+    r := AaRig(0)
+    try {
+        tos := []
+        r.be._wh := {SendTo: (self, hook, title, desc, color, opts := "") => tos.Push({hook: hook, title: title, desc: desc, opts: opts})}
+        hook := Map("name", "Dev", "url", "x")
+        msg := r.be.AuraAlertTo(hook)
+        AssertEq(tos.Length, 1, "sent once")
+        AssertTrue(tos[1].hook == hook, "to that webhook")
+        AssertEq(tos[1].opts.ping, "123456789012345678", "with the ping")
+        AssertEq(tos[1].opts.screenshot, "C:\shot.png", "and a screenshot")
+        AssertTrue(InStr(tos[1].title, "Starscourge") && InStr(tos[1].desc, "[TEST]"), "the least rare aura at the threshold, marked: " tos[1].title)
+        AssertTrue(InStr(msg, "Starscourge"), "says which: " msg)
+        AssertEq(r.sends.Length, 0, "nothing on the routed webhooks")
+        r.be.AuraAlertTo(hook, "Gargantua")
+        AssertTrue(InStr(tos[2].title, "Gargantua"), "a named aura")
     } finally {
         r.Done()
     }

@@ -306,7 +306,7 @@ Test_Updater_OnlyWhenStopped() {
 
 Test_Updater_ProtectedPaths() {
     for p in ["settings.ini", "Settings.INI", "data\calibration.json", "data/routes.json", "data\quests.json", "data\merchants.json"
-        , "data\potions.json", "data\biomes.json", "data\auras_had.txt", "data\biome_items_state.json", "data\auras_learnt.json", "logs\a.log", "backup\1.0\Vesper.ahk"]
+        , "data\potions.json", "data\biomes.json", "data\auras_had.txt", "data\biome_items_state.json", "data\auras_learnt.json", "data\aura_hints.json", "logs\a.log", "backup\1.0\Vesper.ahk"]
         AssertTrue(Updater.IsProtected(p), "protected " p)
     for p in ["Vesper.ahk", "lib\App.ahk", "data\default_routes.json", "data\coords.json", "data\auras.json", "data\auras_abilities.json", "assets\ui\moon_0.png"]
         AssertTrue(!Updater.IsProtected(p), "not protected " p)
@@ -625,4 +625,39 @@ Test_Updater_LauncherKeptWhenPresent() {
     AssertTrue(Updater.IsLauncher("moontidemacro.EXE"), "any case")
     AssertTrue(!Updater.IsLauncher("lib\MoontideMacro.exe"), "only at the top")
     AssertTrue(!Updater.IsLauncher("Vesper.ahk"), "not the scripts")
+}
+
+; 2026-11-16, the user: see how many people use the macro, without tracking
+; anyone: the GitHub download counts of each release (dev copy only)
+Test_Updater_DownloadCounts() {
+    body := '[{"tag_name":"v1.4.5","assets":[{"name":"MoontideMacro-v1.4.5.zip","download_count":3}]}'
+        . ',{"tag_name":"v1.4","assets":[{"name":"a.zip","download_count":4},{"name":"b.txt","download_count":1}]}'
+        . ',{"tag_name":"v1.3","assets":[]}]'
+    r := Updater.DownloadCounts(body)
+    AssertEq(r.total, 8, "every asset of every release")
+    AssertEq(r.rows.Length, 3, "one row per release")
+    AssertEq(r.rows[1].tag " " r.rows[1].n, "v1.4.5 3", "newest first")
+    AssertEq(r.rows[2].n, 5, "assets added up")
+    AssertEq(r.rows[3].n, 0, "no assets: 0")
+    AssertEq(Updater.DownloadText(r), "Total: 8 downloads`nv1.4.5: 3   v1.4: 5   v1.3: 0", "the text")
+    AssertEq(Updater.DownloadCounts("not json"), "", "bad reply: nothing")
+    many := {total: 9, rows: []}
+    Loop 9
+        many.rows.Push({tag: "v0." A_Index, n: 1})
+    AssertTrue(InStr(Updater.DownloadText(many), "v0.6: 1") && !InStr(Updater.DownloadText(many), "v0.7"), "6 newest per line set: " Updater.DownloadText(many))
+    ; the rest is added up, so the line matches the total (it showed 14 of 26)
+    AssertTrue(InStr(Updater.DownloadText(many), "older: 3"), "older releases added up: " Updater.DownloadText(many))
+    AssertTrue(!InStr(Updater.DownloadText(r), "older"), "6 or fewer releases: no older")
+    ; the dev copy is the folder with the marker file (never published); a
+    ; clone of the public repo has .git but no marker
+    d := A_Temp "\vesper_dlc_" A_TickCount
+    DirCreate(d)
+    try {
+        AssertEq(Updater.IsDevCopy(d), false, "an unzipped release: no")
+        DirCreate(d "\.git")
+        AssertEq(Updater.IsDevCopy(d), false, "a clone of the public repo: no")
+        FileAppend("", d "\" Updater.DevMarker)
+        AssertEq(Updater.IsDevCopy(d), true, "the owner's copy: yes")
+    } finally
+        try DirDelete(d, true)
 }

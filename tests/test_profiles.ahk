@@ -136,6 +136,7 @@ Test_Profiles_ImportSkipsSecretAndUnknownKeys() {
     try {
         cfg := PfCfg(dir)
         cfg.Set("Remote.enabled", 0)
+        cfg.Set("General.joinButton", 0)
         other :="https://discord.com/api/webhooks/555/OtherPersonHook"
         text := "; shared`r`n[General]`r`nsellEvery=42`r`nfishing=0`r`nprivateServer=https://www.roblox.com/share?code=OTHERCODE`r`n"
             . "dryRun=0`r`njoinButton=1`r`nmadeUpKey=7`r`n`r`n[Webhook.1]`r`nname=Theirs`r`nurl=" other "`r`nmention=<@1>`r`n`r`n"

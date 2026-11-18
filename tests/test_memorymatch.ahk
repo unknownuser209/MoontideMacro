@@ -389,6 +389,23 @@ Test_MM_PlaysAndReports() {
     }
 }
 
+; 2026-11-16, the owner: a button to reset the Memory Match timer
+Test_MM_ResetTimer() {
+    p := A_Temp "\vesper_mm_reset_" A_TickCount ".json"
+    try {
+        t := MemoryMatchTask({statePath: p, clock: () => "20261116120000"})
+        t._Write(12 * 3600, true)
+        AssertEq(t.NextTry(), "20261117000000", "12 h away")
+        AssertEq(t.Due(), false, "not due")
+        AssertEq(t.ResetTimer(), true, "written")
+        AssertEq(t.NextTry(), "", "no next try")
+        AssertEq(t.Due(), true, "due now")
+        AssertEq(t._Load()["lastPlayed"], "20261116120000", "when it last played is kept")
+    } finally {
+        try FileDelete(p)
+    }
+}
+
 Test_MM_NeverClicksWhileTilesMove() {
     ; the user's rule: wait for the flip / flip-back / match animation
     b := MmStd()

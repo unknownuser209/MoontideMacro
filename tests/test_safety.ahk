@@ -798,3 +798,35 @@ Test_Safety_StatusEventOpenUsedInEvent() {
         AssertEq(s.Status(), "usage_write_failed", "halted")
     } finally SafetyCleanup(d)
 }
+
+; 2026-11-17: a daily quest "Use 10 Lucky Potion" is an event capped at the
+; uses it still needs, not at the biome caps; its uses leave the biome
+; day/run caps alone; QuestMax a day over all quests; locked stays refused
+Test_Safety_QuestEventOwnCap() {
+    d := SafetyTempDir()
+    try {
+        s := SafetyNew(SafetyLuckyCfg(1, 3, 3), d "\usage.json")
+        AssertTrue(s.BeginQuest("QUEST|q1", 10), "quest begun")
+        AssertEq(s.Plan("Lucky Potion", 10, "QUEST|q1", 50).qty, 10, "10 allowed (day cap 3 does not apply)")
+        Loop 10
+            s.Record("Lucky Potion", "QUEST|q1")
+        AssertEq(s.Plan("Lucky Potion", 1, "QUEST|q1", 50).reason, "cap_quest", "quest cap reached")
+        AssertTrue(SafetyThrows(() => s.Record("Lucky Potion", "QUEST|q1")), "11th use refused")
+    } finally
+        SafetyCleanup(d)
+    d := SafetyTempDir()
+    try {
+        s := SafetyNew(SafetyLuckyCfg(1, 3, 3), d "\usage.json")
+        AssertTrue(s.BeginQuest("QUEST|q2", 5), "quest begun")
+        Loop 5
+            s.Record("Lucky Potion", "QUEST|q2")
+        SafetyBegin(s, "GLITCHED|t1")
+        AssertEq(s.Plan("Lucky Potion", 1, "GLITCHED|t1", 50).reason, "ok", "biome caps untouched by the quest")
+        AssertTrue(s.BeginQuest("QUEST|q3", 25), "another quest")
+        AssertEq(s.Plan("Lucky Potion", 25, "QUEST|q3", 50).qty, PotionSafety.QuestMax - 5, "day total over quests")
+        s2 := SafetyNew(SafetyCfg(SafetyEntry("Lucky Potion", 1, 1, 3, 3)), d "\usage2.json")
+        AssertTrue(s2.BeginQuest("QUEST|q4", 10), "begun")
+        AssertEq(s2.Plan("Lucky Potion", 10, "QUEST|q4", 50).reason, "locked", "a locked potion stays refused")
+    } finally
+        SafetyCleanup(d)
+}

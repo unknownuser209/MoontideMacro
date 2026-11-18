@@ -98,7 +98,9 @@
 ;      circle. Minions.spots on (default off, their bearings are false, see
 ;      Spots): from spawn straight at the fixed Spots, and a bar, a glow or the
 ;      orbs due with a route learned to that spot (_RouteLearn, data\
-;      minions_routes.json): the route replayed until a bar is near. Nothing for
+;      minions_routes.json): the route replayed until a bar is near. Spots off,
+;      Minions.routes on (default): the spots are learned, the bearings bars and
+;      glows were first seen at from spawn (_SpotFor), no blind replay. Nothing for
 ;      ScanTurns turns: one respawn wait, then GiveUp (not before OrbLateMs
 ;      after the biome started). Every walk: not at the island's edge
 ;      (_EdgeGuard; on the way to a bar: EdgeBarTurnMs, no half turn away from
@@ -480,6 +482,15 @@ class MinionsTask {
     static HurtOpenDrop := 0.03
     static HurtOpenMs := 15000
     static OpenStayMs := 15000
+    ; The open orb not hurt: OrbStallMs and OrbStallCasts casts with its HP
+    ; (OrbHp) not OrbStallDrop lower -> a minion out of sight keeps it Locked:
+    ; one look round in place for it (_MinionLook). CORRUPTION 03:03:03-15:
+    ; 0.90 -> 0.42 beside it; 03:03:32 a whole minion in one scan; then
+    ; 0.13-0.17 for 160 s, ~60 casts, the combo at 0 ("Not even close" over
+    ; the player), never a look away from the orb
+    static OrbStallMs := 20000
+    static OrbStallDrop := 0.05
+    static OrbStallCasts := 4
     static HurtKeepMs := 30000
     static HuntCapMs := 900000
     ; The Quest Board's interact prompt (real crop minions_prompt_board): up
@@ -584,6 +595,11 @@ class MinionsTask {
     static WallInWalks := 3
     static WallPeelMs := 500
     static WallSlideMaxMs := 7000
+    ; Steps in a row (strafes and peels) that left the view the same: that
+    ; way is blocked (a corner), the next leg now. Night 11-18 WINDY
+    ; 23:59:14-28: 14 s sliding left in a corner, not a px moved; the first
+    ; step right moved and climbed the ledge
+    static WallDeadSteps := 3
     static WallGainPx := 12      ; px: over Same's tolerance
     static WallLooks := 2        ; a hop lifts the camera: one look is no gain
     static WallBlindSteps := 4   ; steps on with the target out of sight (overhead, behind a ledge)
@@ -658,6 +674,7 @@ class MinionsTask {
     static Spots := [{b: 850, tol: 30}, {b: 265, tol: 40}, {b: 385, tol: 30}, {b: 120, tol: 30}, {b: 1198, tol: 30}, {b: 574, tol: 30}]
     static SpotLooseMs := 190    ; more tol for the dead reckoned way to a fight (GUESSED)
     static RouteFails := 2       ; replays that failed in a row: the stored route dropped
+    static RouteTol := 150       ; ms: a learned spot's spread (18 degrees; the orbs' bearing from spawn, GUESSED)
     static RouteCone := 750      ; ms: a bar this near the way a blind route goes next keeps it on (90 degrees, GUESSED)
     ; Orbs and minions come ~35-40 s after a normal biome starts (live
     ; 2026-11-02; ~3 of 13 biomes had none): nothing in sight -> keep
@@ -738,6 +755,29 @@ class MinionsTask {
 
     name := "minions"
     priority := 6
+    _fightNow := ""             ; the fight's state while _FightRun runs (Holds)
+
+    ; App's preempt check: a fight on (HuntOn: the orb open, or a bar hurt
+    ; HurtKeepMs ago at most) is not left for a task of HoldPriority or more
+    ; (obby, quests, memory match, biome items, craft); recovery, potions and
+    ; merchants still come first. CORRUPTION 03:06:55: the orb at 0.15 after
+    ; 3 minions down, "Minions: interrupted for Obby"; the hunt after it
+    ; never found the orb again. Logged once a fight per task.
+    static HoldPriority := 4
+    Holds(nxt) {
+        f := this._fightNow
+        if !(IsObject(f) && IsObject(nxt) && nxt.HasOwnProp("priority") && nxt.priority >= MinionsTask.HoldPriority
+            && MinionsTask.HuntOn(f, this._env.Now(), 0))
+            return false
+        if !f.HasOwnProp("held")
+            f.held := Map()
+        name := nxt.HasOwnProp("name") ? nxt.name : "?"
+        if !f.held.Has(name) {
+            f.held[name] := true
+            this._env.Log("minions: " name " waits - the orb fight is on")
+        }
+        return true
+    }
 
     __New(deps := "") {
         this._env := TaskEnv(deps)
@@ -776,6 +816,12 @@ class MinionsTask {
         this._swap.logoOk := true    ; Eden's name panel is a logo (live 2026-10-31)
         this._biome := ""            ; the biome seen last by CanRun
         this._biomeAt := ""          ; Now() when CanRun saw it start ("" = unknown)
+        this._fightSpot := ""        ; {spot, biomeAt}: a learned spot fought at beside, its biome (_RouteDue)
+        ; the orb of this biome killed: no hunt again in it (night 11-18:
+        ; STARFALL 06:12 kill, then 06:15 and 06:18 two hunts of 124 s with
+        ; nothing; SAND STORM 06:33 kill, then 06:35 and 06:38 nothing
+        ; killed, 0 casts); the blind replay of its spot (_fightSpot) gone too
+        this._orbKilled := false
         this._hunted := ""           ; Now() of the last finished hunt in this biome ("" = none)
         this._biomeDown := 0         ; minion toasts since this biome began or its orb fell (f.down)
         this._lock := false          ; shift lock confirmed on (no w aim taps)
@@ -788,6 +834,7 @@ class MinionsTask {
         ; ms walked along the bearing, _Moved; x right, y ahead of the
         ; respawn way) and the falls off the island seen (Falls, FallAhead)
         this._pos := {x: 0, y: 0}
+        this._pastPos := []          ; _pos at the last ticks' starts (FightFall)
         this._falls := [], this._patrols := 0, this._toBar := false, this._fallFree := 0, this._edgeFree := 0, this._patrolling := false, this._searched := Map(), this._walls := []
         this._edgeWay := ""          ; where the last _EdgeGuard fired, {x, y, b, at} (_FallWay)
         ; the moves since the last respawn ({k, ms, b}: _Note), how many of
@@ -818,11 +865,27 @@ class MinionsTask {
         if (b = MinionsTask.BossBiome) {
             if (!env.cfg.Get("Minions.boss", 1) || this._hunted != "")
                 return false
-        } else if (!MinionsTask.Biomes.Has(b) || (this._hunted != "" && this._env.Now() - this._hunted < MinionsTask.RehuntMs))
+        } else if (!MinionsTask.Biomes.Has(b) || this._orbKilled || (this._hunted != "" && this._env.Now() - this._hunted < MinionsTask.RehuntMs))
             return false
         else if (this._NoHunt(b) && !this._PrepDue())
             return false
         return IsObject(this._swap._AuraCal()) && (!env.cfg.Get("Minions.putBack", 0) || this._swap._Aura().known)
+    }
+
+    ; Why no hunt in biome b, short, for the overlay while it fishes ("" =
+    ; nothing to say). A tester saw orb mode on and only fishing (2026-11-17).
+    WaitNote(b) {
+        if (b = "")
+            return ""
+        if !IsObject(this._swap._AuraCal())
+            return "orbs need the aura storage calibrated"
+        if (b = MinionsTask.BossBiome)
+            return ""
+        if !this._Huntable(b)
+            return "no orbs in " b
+        if (b = this._biome && this._hunted != "")
+            return "orbs hunted in this biome"
+        return ""
     }
 
     ; A new biome: new orbs, not hunted yet.
@@ -832,6 +895,7 @@ class MinionsTask {
         this._biome := b
         this._biomeAt := this._env.Now()
         this._hunted := ""
+        this._orbKilled := false
         this._biomeDown := 0
     }
 
@@ -1179,19 +1243,21 @@ class MinionsTask {
     _Fight(ctx) {
         try
             return this._FightRun(ctx)
-        finally
+        finally {
+            this._fightNow := ""
             this._Stop()
+        }
     }
 
     _FightRun(ctx) {
         env := this._env
         maxMs := (this._boss ? MinionsTask.BossMaxSec : MinionsTask.Secs(env.cfg.Get("Minions.maxSec", MinionsTask.MaxSec))) * 1000
         start := env.Now()
-        f := {maxSeen: 0, down: 0, waits: 0, deaths: 0, casts: 0, orbDown: 0, how: "", biomeGone: false
+        f := {maxSeen: 0, down: 0, waits: 0, deaths: 0, casts: 0, orbDown: 0, how: "", biomeGone: false, stallAt: "", stallHp: 1, stallCasts: 0, fellN: 0, blindSaid: false
             , last: [], shift: 0, barAt: "", lastSeen: this._boss ? start : "", seen: false   ; BossLook just saw it
             , standing: false, foes: [], foeAt: 0, dodges: 0, stepped: false, lowAt: 0, castEnd: 0, fillAt: "", orbFill: "", orbAt: 0, orbReads: [], orbBearing: "", toast: ""
             , blockedTo: 0, vTry: 0, vPts: 0, vOff: 0, orbHurt: false, hurtFirst: "", hurtFirstAt: 0, loneFoe: false, orbHigh: false, menuLooked: false, promptSaid: false, patrol: false, pLeg: 0, pLeft: 0
-            , prev: "", stuck: 0, esc: 0, wall: "", wallOff: "", avoid: "", tLast: "", lookedBack: false, lost: MinionsTask.LostLooks, peek: 0
+            , prev: "", stuck: 0, esc: 0, escFrom: "", wall: "", wallOff: "", avoid: "", tLast: "", lookedBack: false, lost: MinionsTask.LostLooks, peek: 0
             , empty: 0, rewaited: false, gAvoid: "", gAt: "", gStuck: 0, gEsc: 0, gWall: "", glowing: false
             , gLast: "", gMiss: 0, gTurned: false, gNudged: false
             ; the bearing (this._bearing) a bar or glow was seen at last, and
@@ -1223,6 +1289,8 @@ class MinionsTask {
         ; stored route is on ("" = none: bar, glow, due, death), it met an
         ; edge, it led here, the blind one of this hunt spent
         f.spot := "", f.spotAt := 0, f.rWhy := "", f.rEdge := false, f.rUsed := false, f.rTried := false
+        this._fightNow := f
+        this._pastPos := []
         this._RoutesRead()
         this._trail := [], this._trailTo := 0, this._trailB := "", this._aimed := true
         if (!IsObject(this._respawnLog) && !IsObject(this._scanFn))
@@ -1305,9 +1373,9 @@ class MinionsTask {
         orbDown := (f.orbDown && !sweep.orb) ? 1 : 0     ; an orb in the sweep is not down
         down := orbDown ? f.kills + 1 : f.kills
         if orbDown
-            this._biomeDown := 0                 ; the next orb has its own minions
+            this._biomeDown := 0, this._orbKilled := true, this._fightSpot := ""   ; the next orb has its own minions
         env.Log(MinionsTask.Stats(f.maxSeen, down, f.waits, env.Now() - start, sweep.left, sweep.orb, orbDown
-            , f.casts, f.orbFill, f.deaths, orbDown ? f.how : "", this._boss ? 1 : 0))
+            , f.casts, orbDown ? 0 : f.orbFill, f.deaths, orbDown ? f.how : "", this._boss ? 1 : 0))   ; a kill: 0 (05:06:52 logged a whole bar read last, 1.00)
         return down
     }
 
@@ -1334,6 +1402,10 @@ class MinionsTask {
         if f.boss
             this._sin.Died()
         fell := MinionsTask.Fell(f.barAt, env.Now(), MinionsTask.WasHurt(this._hpLog))   ; _AfterDeath clears that log
+        if (!fell && !MinionsTask.WasHurt(this._hpLog) && IsObject(w := MinionsTask.FightFall(this._pastPos, this._pos, env.Now()))) {
+            this._falls.Push({x: w.x, y: w.y, b: w.b, at: env.Now()})
+            env.Log("minions: died in the fight, never hurt - off the edge? That way (bearing " w.b " ms) is kept: no dodge or back step there")
+        }
         if (fell && f.replay && f.rWhy != "")
             this._RouteFailed(f)
         this._TrailRoute(f, fell)
@@ -1343,6 +1415,8 @@ class MinionsTask {
         if fell {
             w := MinionsTask.FallOut(this._FallWay())
             this._falls.Push({x: w.x, y: w.y, b: w.b, at: env.Now()})
+            if (++f.fellN = MinionsTask.FallStop)
+                f.patrol := false
             env.Log("minions: died (" why ") with no bar in sight - fell off the island? That way (bearing " w.b " ms"
                 . (w.HasOwnProp("faced") ? " out from spawn, not the " w.faced " ms faced back to it" : "")
                 . ", " MinionsTask.Along(w, w.b) " ms out) is kept as the edge; no walk back by it")
@@ -1408,6 +1482,9 @@ class MinionsTask {
 
     _TickStart(now) {
         this._tickAt := now, this._partAt := now, this._parts := MinionsTask._NoParts()
+        this._pastPos.Push({x: this._pos.x, y: this._pos.y, at: now})
+        while (this._pastPos.Length > 12)
+            this._pastPos.RemoveAt(1)
     }
 
     ; The time since the last _Mark goes to part.
@@ -1540,6 +1617,8 @@ class MinionsTask {
         if (MinionsTask.Hurt(v) || (was != "" && f.orbFill < was))
             f.hurtAt := now
         this._LogFill(f, v, now)
+        if (IsObject(v.orb) && !v.minions.Length && MinionsTask.OrbStalled(f, now))
+            return this._MinionLook(ctx, f)
         f.ahead := !v.minions.Length || MinionsTask.InFront(v)
         f.atBars := IsObject(v.anchor)
         hud := (f.atBars || f.standing) ? this._Hud() : ""   ; no skill while seeking: no panel to read
@@ -1593,6 +1672,30 @@ class MinionsTask {
         ; ran off the edge (9 uses, 2 falls, L44-L51)
         f.backed := true
         return this._HomeStart(f, true)
+    }
+
+    ; The orb stalled (OrbStalled): a circle in place, ScanTurnMs a look, till a
+    ; minion bar is in sight (the next ticks go after it: minions first) or
+    ; the circle is done (facing the orb again, skills on). The clock again.
+    ; -> false = stopped.
+    _MinionLook(ctx, f) {
+        env := this._env
+        env.Log("minions: the orb's HP stuck at " Round(MinionsTask.OrbHp(f), 2) " for " (env.Now() - f.stallAt) // 1000 " s, "
+            . (f.casts - f.stallCasts) " casts - a minion out of sight keeps it locked? looking round")
+        this._Stop()
+        raw := [], found := false
+        Loop MinionsTask.SweepTurns {
+            if ctx.ShouldStop()
+                return false
+            this._Turn("Left", MinionsTask.ScanTurnMs)
+            raw := this._Scan()
+            if (found := MinionsTask.View(raw).minions.Length > 0)
+                break
+        }
+        env.Log(found ? "minions: a minion found - after it" : "minions: no minion in a circle - on at the orb")
+        f.last := raw, f.shift := 0, f.stepped := false, f.standing := false
+        f.stallAt := env.Now(), f.stallCasts := f.casts
+        return !ctx.ShouldStop()
     }
 
     ; The orb open, beside it (Stay), no bar and no stand on: a circle where
@@ -1665,6 +1768,8 @@ class MinionsTask {
                 env.Log("minions: beside it (bar " bar.w " px) - standing and casting" MinionsTask.BarNote(bar))
                 this._Flush()                    ; the walk here, on the trail
                 this._RouteLearn(f)
+                if (f.spot != "" && this._routes.Has(f.spot))
+                    this._fightSpot := {spot: f.spot, biomeAt: this._biomeAt}
             }
             if (IsObject(f.wall) && IsObject(v.orb) && MinionsTask.Beside(v))    ; the way up (a minion that came down: none)
                 this._WallFound(f.wall), f.wall := ""
@@ -1695,8 +1800,16 @@ class MinionsTask {
             }
         } else if MinionsTask.Same(bar, f.prev)
             f.stuck++
-        else if MinionsTask.Nearer(bar, f.prev)  ; only nearer is progress: an Escape's strafe moves the bar aside
-            f.stuck := 0, f.esc := 0             ; (L66 04:08 RAINY: jump, strafe, from the start again for 60 s)
+        else if MinionsTask.Nearer(bar, f.prev) {  ; only nearer is progress: an Escape's strafe moves the bar aside
+            f.stuck := 0                         ; (L66 04:08 RAINY: jump, strafe, from the start again for 60 s)
+            ; the Escapes go on unless the widest bar in sight grew clearly
+            ; (NoGainGrow, NoGainPx) since they began: a hop's camera and the
+            ; anchor hopping between minions read as "nearer" (night 11-18
+            ; WINDY 23:59:05..10; RAINY 02:03-02:04 after a first fix that
+            ; still took the anchor's y: 7 times (1/3), (2/3), never the wall)
+            if (!f.esc || MinionsTask.Grew(v, f.escFrom))
+                f.esc := 0
+        }
         f.prev := bar
         ; a far bar walked at for NoGainMs that never got clearly nearer: the
         ; stuck count above resets on every jitter of its width, so the
@@ -1722,6 +1835,8 @@ class MinionsTask {
         ok := this._Approach(ctx, f.stuck, &esc, &wall, bar, MinionsTask.Almost(v) ? MinionsTask.NearStepMs : "")
         this._toBar := false
         walled := IsObject(f.wall) && !IsObject(wall)
+        if (esc && !f.esc)
+            f.escFrom := MinionsTask.WidestW(v)  ; where the Escapes began (Grew)
         f.esc := esc, f.wall := wall
         if (ok < 0) {
             env.Log("minions: still stuck at " bar.x "," bar.y " - giving up on it for " MinionsTask.AvoidMs // 1000 " s")
@@ -2071,7 +2186,7 @@ class MinionsTask {
         ; walked to, the bars scanned again each step; walks that get no
         ; closer (GlowSame since gAt) -> the Escapes, then that glow is left
         ; for AvoidMs
-        glows := this._Beacon()
+        glows := this._NoBlind(f) ? [] : this._Beacon()
         if IsObject(f.gAvoid) {
             if (env.Now() >= f.gAvoid.until)
                 f.gAvoid := ""
@@ -2189,7 +2304,11 @@ class MinionsTask {
         due := this._biomeAt = "" || env.Now() - this._biomeAt >= MinionsTask.PatrolAfterMs
         if (due && f.empty >= MinionsTask.SweepTurns && this._RouteDue(f))
             return this._RouteStep(ctx, f, false)
-        if (patrol && due && f.empty >= MinionsTask.SweepTurns) {
+        if (patrol && due && f.empty >= MinionsTask.SweepTurns && this._NoBlind(f) && !f.blindSaid) {
+            f.blindSaid := true
+            env.Log("minions: nothing in sight - no map walk " (f.fellN >= MinionsTask.FallStop ? "after " f.fellN " falls this hunt" : "in " this._biome) ", looking from here")
+        }
+        if (patrol && due && f.empty >= MinionsTask.SweepTurns && !this._NoBlind(f)) {
             if this._FightLost(f)
                 return this._HomeStart(f)
             env.Log("minions: nothing in sight - walking the map")
@@ -2496,7 +2615,7 @@ class MinionsTask {
     ; the respawn (_RespawnSettle). why: _DeathSeen's. -> false = stopped.
     _AfterDeath(ctx, why := "") {
         env := this._env, t0 := env.Now()
-        this._hpLog := [], this._bearing := 0, this._pos := {x: 0, y: 0}, this._aimed := false
+        this._hpLog := [], this._bearing := 0, this._pos := {x: 0, y: 0}, this._aimed := false, this._pastPos := []
         if this._lockTried
             this._ShiftOff(ctx)
         if !this._RespawnSettle(ctx, why, t0)
@@ -2575,7 +2694,7 @@ class MinionsTask {
         if (stuck < MinionsTask.StuckWalks)
             return this._Walk(ctx, ms) ? 1 : 0
         if IsObject(wall) {
-            wall.up := false, wall.gain := 0, wall.y := t.y, wall.w := t.w
+            wall.up := false, wall.gain := 0, wall.y := t.y, wall.w := t.w, wall.dead := 0
             return this._WallStep(ctx, &wall)
         }
         if (esc < MinionsTask.Escapes.Length) {
@@ -2588,7 +2707,7 @@ class MinionsTask {
         ; the side that found a way up in this biome before first
         side := MinionsTask.WallSides.Get(this._biome, "a")
         wall := {side: side, leg: 1, ms: 0, y: t.y, w: t.w, up: false, gain: 0, quiet: 0, blind: 0, spent: 0, tick: this._env.Now()
-            , back: 0, stuck: false, below: 0, belowTo: 0}
+            , back: 0, stuck: false, dead: 0, below: 0, belowTo: 0}
         this._WallLog(side)
         return this._WallStep(ctx, &wall)
     }
@@ -2609,11 +2728,14 @@ class MinionsTask {
         }
         v := this._View()
         edge := IsObject(v) && v.edge
-        if (edge || wall.ms >= MinionsTask.WallLeg(wall.leg)) {
+        dead := wall.dead >= MinionsTask.WallDeadSteps
+        if (edge || dead || wall.ms >= MinionsTask.WallLeg(wall.leg)) {
             if edge
                 this._env.Log("minions: wall - the island's edge, no further this way")
+            else if dead
+                this._env.Log("minions: wall - no headway this way (" wall.dead " steps, the view the same)")
             done := wall.ms
-            wall.leg++, wall.ms := 0, wall.quiet := 0
+            wall.leg++, wall.ms := 0, wall.quiet := 0, wall.dead := 0
             if (wall.leg > 4) {
                 wall := ""
                 return -1
@@ -2641,7 +2763,9 @@ class MinionsTask {
         if wall.stuck
             wall.quiet := Max(wall.quiet, wall.ms + 2 * MinionsTask.WallStepMs)
         v2 := this._View()
-        wall.stuck := IsObject(v) && IsObject(v2) && !wall.stuck && MinionsTask.ViewSame(v.sig, v2.sig)
+        same := IsObject(v) && IsObject(v2) && MinionsTask.ViewSame(v.sig, v2.sig)
+        wall.dead := same ? wall.dead + 1 : 0
+        wall.stuck := !wall.stuck && same
         return 1
     }
 
@@ -3042,6 +3166,30 @@ class MinionsTask {
     ; rebuilds them. Off, the routes learned to them are off too.
     _SpotsOn() => !this._boss && this._env.cfg.Get("Minions.spots", 0)
 
+    ; Routes without Spots (Minions.routes, default 1): the spots are learned,
+    ; each the bearing from spawn (AbsBearing) a bar or glow was first seen
+    ; at. Night 11-18: the orbs on terraces above spawn (WINDY 23:58 at the
+    ; house, RAINY 23:56 at the leaderboard, WINDY 00:06 on the hill) took
+    ; 30-70 s of walls each and mostly no cast; the routes only learned with
+    ; Minions.spots on, never in the user's install. A way up found once is
+    ; replayed next time (a bar near ends it, two fails drop it); no blind
+    ; replay (_RouteDue: Spots only), no new spot from dead reckoning.
+    _RoutesOn() => !this._boss && (this._SpotsOn() || this._env.cfg.Get("Minions.routes", 1))
+
+    ; The spot at bearing a: Spots' (Minions.spots on), else the learned one
+    ; within RouteTol (+ loose) of it; none and add: a new one at a.
+    _SpotFor(a, loose := 0, add := false) {
+        if this._SpotsOn()
+            return MinionsTask.SpotOf(a, loose)
+        best := "", least := 0
+        for key in this._routes {
+            d := Abs(MinionsTask.Wrap(a - Integer(key)))
+            if (d <= MinionsTask.RouteTol + loose && (!IsObject(best) || d < least))
+                best := {b: Integer(key), tol: MinionsTask.RouteTol}, least := d
+        }
+        return IsObject(best) ? best : add ? {b: a, tol: MinionsTask.RouteTol} : ""
+    }
+
     ; Bearings mean something: nothing walked since the camera was aimed.
     _AtSpawn() => this._aimed && !this._trail.Length
 
@@ -3072,11 +3220,11 @@ class MinionsTask {
     ; route started. -> true = a stored route goes on: no bar near, and a
     ; blind one (due) only for a bar about the way it goes next.
     _RouteBar(f, v, bar) {
-        if !this._SpotsOn()
+        if !this._RoutesOn()
             return false
         near := MinionsTask.InReach(v)
         a := MinionsTask.AbsBearing(this._bearing, bar.x)
-        if (!f.replay && !near && this._AtSpawn() && IsObject(s := MinionsTask.SpotOf(a))) {
+        if (!f.replay && !near && this._AtSpawn() && IsObject(s := this._SpotFor(a, 0, true))) {
             f.spot := String(s.b)
             this._RouteStart(f, "bar")
         }
@@ -3087,7 +3235,7 @@ class MinionsTask {
 
     ; A glow g from spawn: its spot kept. -> true = its route started.
     _RouteGlow(f, g) {
-        if !(this._SpotsOn() && this._AtSpawn() && IsObject(s := MinionsTask.SpotOf(MinionsTask.AbsBearing(this._bearing, g.x))))
+        if !(this._RoutesOn() && this._AtSpawn() && IsObject(s := this._SpotFor(MinionsTask.AbsBearing(this._bearing, g.x), 0, true)))
             return false
         f.spot := String(s.b)
         return this._RouteStart(f, "glow")
@@ -3096,7 +3244,20 @@ class MinionsTask {
     ; The orbs due, nothing seen: once a hunt the route of the likeliest spot
     ; that has one. -> true = started.
     _RouteDue(f) {
-        if (f.rTried || !this._SpotsOn() || !this._AtSpawn())
+        if (f.rTried || !this._AtSpawn())
+            return false
+        ; learned spots: only the one fought at in this very biome (a hunt
+        ; cut by a task, a death, a hunt again: CORRUPTION 03:08, the orb at
+        ; 0.15 behind spot 1012's route, walked the map and fell instead).
+        ; Due, so no fail when no orb is there; an edge in view still stops it
+        if (!this._SpotsOn() && this._RoutesOn()) {
+            fs := this._fightSpot
+            if !(IsObject(fs) && fs.biomeAt = this._biomeAt && this._biomeAt != "" && this._routes.Has(fs.spot))
+                return false
+            f.rTried := true, f.spot := fs.spot
+            return this._RouteStart(f, "due")
+        }
+        if !this._SpotsOn()
             return false
         for s in MinionsTask.Spots
             if this._routes.Has(String(s.b)) {
@@ -3110,7 +3271,7 @@ class MinionsTask {
     ; A fall: no (_TrailRoute's cut trail, or nothing).
     _RouteBack(f, fell) {
         f.rWhy := "", f.rUsed := false
-        if (fell || !this._SpotsOn() || !this._routes.Has(f.spot))
+        if (fell || !this._RoutesOn() || !this._routes.Has(f.spot))
             return false
         f.route := this._routes[f.spot].steps.Clone()
         return true
@@ -3150,11 +3311,11 @@ class MinionsTask {
     ; the spot the player stands towards). The shortest one kept; a stored
     ; one that led here counts its fails from 0 again.
     _RouteLearn(f) {
-        if !(this._SpotsOn() && this._aimed && this._trail.Length)
+        if !(this._RoutesOn() && this._aimed && this._trail.Length)
             return
         if (f.spot = "") {
             a := MinionsTask.PosBearing(this._pos)
-            if (a = "" || !IsObject(s := MinionsTask.SpotOf(a, MinionsTask.SpotLooseMs)))
+            if (a = "" || !IsObject(s := this._SpotFor(a, MinionsTask.SpotLooseMs)))
                 return
             f.spot := String(s.b)
         }
@@ -3603,6 +3764,8 @@ class MinionsTask {
 
     ; The orbs' glows now (OrbBeacon.Scan: one grab, only while no bar is
     ; in sight).
+    _NoBlind(f) => MinionsTask.LavaBiomes.Has(this._biome) || f.fellN >= MinionsTask.FallStop
+
     _Beacon() {
         if IsObject(this._beaconFn)
             return (this._beaconFn)()
@@ -4611,6 +4774,8 @@ class MinionsTask {
                 sc += 50
             if MinionsTask.FallAhead(falls, pos, b, ms, now)
                 sc += 20
+            if MinionsTask.FallAhead(MinionsTask.SeaFalls(), pos, b, ms, 0)
+                sc += 20
             if IsObject(walls)                   ; walls given up on in this biome
                 for w in walls
                     if MinionsTask.OnWall(w, b)
@@ -4648,6 +4813,21 @@ class MinionsTask {
     ; The orb's minions are down (OpenDown), beside it in this life too. Not
     ; on the way there: a re-hunt keeps the count and starts at spawn.
     ; no minion bar lately too: toasts overcount (L54 12:03:51 "open", minions 0.79, 0.13 at 12:04:05)
+    ; OrbStallMs of casts at an open orb that left its HP where it was
+    ; (f.stallAt / stallHp / stallCasts: the clock, moved by every drop)
+    static OrbStalled(f, now) {
+        hp := MinionsTask.OrbHp(f)
+        if (hp = "" || f.boss || !MinionsTask.Unlocked(f)) {
+            f.stallAt := ""
+            return false
+        }
+        if (f.stallAt = "" || hp <= f.stallHp - MinionsTask.OrbStallDrop) {
+            f.stallAt := now, f.stallHp := hp, f.stallCasts := f.casts
+            return false
+        }
+        return now - f.stallAt >= MinionsTask.OrbStallMs && f.casts - f.stallCasts >= MinionsTask.OrbStallCasts
+    }
+
     static Open(f) => f.down >= MinionsTask.OpenDown && !(f.HasOwnProp("foes") && f.foes.Length)
     static Stay(f) => f.here && MinionsTask.Open(f)
 
@@ -4689,17 +4869,39 @@ class MinionsTask {
     static NoGainGrow := 1.15
     static NoGainPx := 6
     static NoGainDropPx := 20
+    ; Not asked for NoGainGapMs (the bar out of sight, a look round, a stand
+    ; beside, the wall): the clock stood still meanwhile. Night 11-18 WINDY
+    ; 23:58:31: a 30 px bar seen, lost 2 s later, 23 s of looks; found again
+    ; at 23:58:56 and left at once ("20 s ... without getting nearer") for 30 s
+    static NoGainGapMs := 4000
     static NoGain(f, b, now) {
         if (!f.HasOwnProp("gainW") || f.gainW = "" || b.w < f.gainW * 0.6) {
-            f.gainW := b.w, f.gainY := b.y, f.gainAt := now
+            f.gainW := b.w, f.gainY := b.y, f.gainAt := now, f.gainSeen := now
             return false
         }
-        if ((b.w >= f.gainW * MinionsTask.NoGainGrow && b.w - f.gainW >= MinionsTask.NoGainPx) || b.y - f.gainY >= MinionsTask.NoGainDropPx) {
+        if (f.HasOwnProp("gainSeen") && now - f.gainSeen > MinionsTask.NoGainGapMs)
+            f.gainAt += now - f.gainSeen
+        f.gainSeen := now
+        if MinionsTask.Gained(b, {w: f.gainW, y: f.gainY}) {
             f.gainW := b.w, f.gainY := b.y, f.gainAt := now
             return false
         }
         return now - f.gainAt >= MinionsTask.NoGainMs
     }
+
+    ; The bar b clearly nearer than ref ({w, y}; none: a new target, yes):
+    ; NoGainGrow and NoGainPx wider, or NoGainDropPx lower on screen
+    static Gained(b, ref) => !IsObject(ref) || (b.w >= ref.w * MinionsTask.NoGainGrow && b.w - ref.w >= MinionsTask.NoGainPx)
+        || b.y - ref.y >= MinionsTask.NoGainDropPx
+
+    ; the widest bar of v (View's) and whether it grew clearly past w0
+    static WidestW(v) {
+        w := IsObject(v.orb) ? MinionsTask.FullW(v.orb) : 0
+        for b in v.minions
+            w := Max(w, MinionsTask.FullW(b))
+        return w
+    }
+    static Grew(v, w0) => !IsNumber(w0) || (w := MinionsTask.WidestW(v)) >= w0 * MinionsTask.NoGainGrow && w - w0 >= MinionsTask.NoGainPx
 
     static Same(b, prev) => IsObject(prev) && Abs(b.y - prev.y) <= 12 && Abs(b.w - prev.w) <= 10 && Abs(b.x - prev.x) <= 160
     ; b wider or lower than prev (none before: a new target)
@@ -5770,7 +5972,52 @@ class MinionsTask {
     static FallGuardMs := 4000   ; a fall this soon after _EdgeGuard fired went the way it fired at (_FallWay)
     static EdgeQuietMs := 3000
     static FallCos := 0.5        ; within 60 degrees of the way it fell
+    ; Falls off the island from spawn seen night 11-18, each on the map walk
+    ; ("nothing in sight - walking the map", 4-12 s in), the respawn way
+    ; (bearing 0) the first heading PatrolHeading tried with nothing searched:
+    ; 00:06 WINDY bearing -2625 (375), 8647 ms out; 00:50 bearing 0, 3406 ms;
+    ; 01:30 SNOWY (the beach, the sea check off there) and 03:09 CORRUPTION
+    ; both bearing 32, ~8000 ms. The map walk's headings count them as falls
+    ; (PatrolHeading); nothing else does: an orb that way (glows at 2979,
+    ; 482) is still walked to
+    static SeaFallsAt := [[0, 3406], [32, 7972], [375, 8647]]
+    ; No walk on a guess (_NoBlind: no glow, no map walk; bars and stored
+    ; routes still) in a biome whose sea is lava, or after FallStop falls in
+    ; one hunt. HELL 03:50-03:52: 5 deaths in 135 s, 4 "fell off the island?",
+    ; each after walking to an "orb glow" (the red sea's glow / an orb over
+    ; it) at bearing 0..156, casts=0
+    static LavaBiomes := Map("HELL", 1)
+    static FallStop := 2
+    static SeaFalls() {
+        out := []
+        for a in MinionsTask.SeaFallsAt {
+            u := MinionsTask.Way(a[1])
+            out.Push({x: u.x * a[2], y: u.y * a[2], b: a[1], at: 0})
+        }
+        return out
+    }
     static FallBehindMs := 700   ; a fall behind spawn along its way by more: kept out from spawn (FallOut)
+    ; A death in a fight with the HP never low (WasHurt): a fall off the edge
+    ; in a dodge or a back step (night 11-18: 04:20:08 at 69%, 04:35:27 and
+    ; 04:35:51 never hurt, each a strafe off the island at night, where the
+    ; sea check sees no blue; the second life dodged off the same spot). The
+    ; way the player moved over the last FightFallMs or so (pos now from the
+    ; latest tick start that long ago, past: {x, y, at}) -> {x, y, b} at pos, "" = it
+    ; hardly moved (FightFallMinMs)
+    static FightFallMs := 500    ; about a dodge step (DodgeStepMs): the move that went over
+    static FightFallMinMs := 150
+    static FightFall(past, pos, now) {
+        i := past.Length
+        while (i >= 1 && now - past[i].at < MinionsTask.FightFallMs)
+            i--
+        if (i < 1)
+            return ""
+        d := {x: pos.x - past[i].x, y: pos.y - past[i].y}
+        if (Sqrt(d.x * d.x + d.y * d.y) < MinionsTask.FightFallMinMs)
+            return ""
+        return {x: pos.x, y: pos.y, b: MinionsTask.PosBearing(d)}
+    }
+
     static Fell(barAt, now, hurt) => !hurt && (barAt = "" || now - barAt >= MinionsTask.FallQuietMs)
 
     ; the unit step for bearing b (ms, Right +; FullTurnMs a circle): x right,

@@ -176,6 +176,21 @@ class MemoryMatchTask {
         return ""
     }
 
+    ; Dashboard "Reset timer" (2026-11-16, the owner's ask): the next try is
+    ; now (nextTry removed, lastPlayed kept). -> true when written.
+    ResetTimer() {
+        data := this._Load()
+        if data.Has("nextTry")
+            data.Delete("nextTry")
+        try {
+            PotionSafety._AtomicWrite(this._path, Json.Stringify(data) "`n")
+            return true
+        } catch as err {
+            this._env.Log("memory match: could not write " this._path ": " err.Message)
+            return false
+        }
+    }
+
     _Load() {
         try {
             v := Json.Parse(FileRead(this._path, "UTF-8"))
@@ -362,7 +377,7 @@ class MemoryMatchTask {
                     this._Write(MemoryMatchTask.RetryMin * 60)
                 ; not on a preempt: the next task does not need it, and a
                 ; preempt for a vanished Roblox window must send no keys
-                if !ctx.ShouldStop()
+                if (!ctx.ShouldStop() && env.RespawnAfter())
                     Input.ResetToSpawn(ctx, io)
             }
         }

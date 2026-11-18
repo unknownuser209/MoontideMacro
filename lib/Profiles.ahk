@@ -41,9 +41,10 @@ class Profiles {
     ; question, a shared file must not point the updater elsewhere or put
     ; the private server link into webhooks (joinButton)
     ; General.alertSound: a file path (a shared "\\host\share\x.wav" would make
-    ; Windows connect to someone else's PC on the next rare biome)
-    static NoShare := ["General.dryRun", "Potions.dryRun", "General.joinButton", "UI.setupDone", "Update.repo", "Update.check", "Update.auto"
-        , "General.alertSound"]
+    ; Windows connect to someone else's PC on the next rare biome); UI.customPictureFile
+    ; likewise (the custom theme's own picture; its colours are shared)
+    static NoShare := ["General.dryRun", "Potions.dryRun", "General.joinButton", "General.joinDefaultOn", "UI.setupDone", "Update.repo", "Update.check", "Update.auto"
+        , "General.alertSound", "UI.customPictureFile"]
 
     static Description(name) {
         switch name {

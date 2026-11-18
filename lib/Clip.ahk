@@ -4,7 +4,9 @@
 #Include %A_LineFile%\..\RouteRecorder.ahk
 #Include %A_LineFile%\..\Auras.ahk
 ; ---------------------------------------------------------------------------
-; Clip: Medal.tv clip trigger (spec 4.6b). Static; configure once with Setup.
+; Clip: clip trigger for a clip app (spec 4.6b): Medal, Discord clips, NVIDIA
+; / AMD Instant Replay, OBS Replay Buffer or any other app with a save-clip
+; hotkey ([Medal] app, 2026-11-16). Static; configure once with Setup.
 ;
 ;   Clip.Setup(cfg, wh := "", logFn := "", opts := "")
 ;     cfg    Config ([Medal] enabled, clipHotkey, delaySec, cooldownSec, auras)
@@ -17,8 +19,13 @@
 ;              io                      Input backend (default real input)
 ;              stopFn() -> bool        optional; true = macro stopped, a
 ;                                      scheduled clip is dropped at fire time
-;   Clip.Trigger(reason) -> "scheduled" | "disabled" | "no_medal" | "cooldown"
-;                           | "bad_hotkey"
+;   Clip.Apps / Clip.App(id)   the clip apps {id, name, exes, key}: the
+;                          process names one of which must run (none for
+;                          "other") and the app's default save-clip hotkey
+;   Clip.Trigger(reason) -> "scheduled" | "disabled" | "no_app" | "cooldown"
+;                           | "bad_hotkey" | "idle"
+;     Clip.Idle (idle mode, set by the App while it runs): no key is ever
+;     pressed, so every enabled Trigger is "idle" (logged once per idle run).
 ;     reason "rare" or "aura:<name>". Reason class = text before ":"; one
 ;     cooldown (cooldownSec, default 30) per class. Non-blocking: the hotkey
 ;     is tapped delaySec (default 3) later from a one-shot timer, and only if
@@ -65,6 +72,24 @@ class Clip {
     static DefaultCooldownSec := 30
     static DefaultCaptureKey := "F4"   ; must equal Calibrate.DefaultCaptureKey (tested)
     static DeferMs := 1000
+    ; the clip apps: process names (any one running; none = not checked) and
+    ; their default save-clip hotkey
+    static Apps := [
+        {id: "medal", name: "Medal", exes: ["medal.exe"], key: "F8"},
+        {id: "discord", name: "Discord", exes: ["Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe"], key: "Alt+C"},
+        {id: "nvidia", name: "NVIDIA Instant Replay", exes: ["NVIDIA Overlay.exe"], key: "Alt+F10"},
+        {id: "amd", name: "AMD Instant Replay", exes: ["RadeonSoftware.exe"], key: "Ctrl+Shift+S"},
+        {id: "obs", name: "OBS Replay Buffer", exes: ["obs64.exe", "obs32.exe"], key: ""},
+        {id: "other", name: "your clip app", exes: [], key: ""}]
+    static AppIndex(id) {
+        for i, a in Clip.Apps
+            if (a.id = Trim(String(id)))
+                return i
+        return 1
+    }
+    static App(id) => Clip.Apps[Clip.AppIndex(id)]
+    static _AppNow() => Clip.App(IsObject(Clip._cfg) ? Clip._cfg.Get("Medal.app", "medal") : "medal")
+    static _AppExe(a) => a.exes.Length ? a.exes[1] : ""
     static MaxDefers := 120
     static _gen := 0              ; bumped by CancelAll/Reset; stale timers no-op
     static _stopFn := ""
@@ -78,6 +103,8 @@ class Clip {
     static _last := Map()         ; reason class -> ms when last scheduled
     static _warnedMissing := false
     static _warnedKey := false
+    static Idle := false          ; idle mode: no keys at all (Trigger -> "idle")
+    static _idleTold := false
 
     static Setup(cfg, wh := "", logFn := "", opts := "") {
         Clip.Reset()
@@ -104,6 +131,17 @@ class Clip {
         Clip._last := Map()
         Clip._warnedMissing := false
         Clip._warnedKey := false
+        Clip.Idle := false
+        Clip._idleTold := false
+    }
+
+    ; Idle mode on / off (the App's Start / Stop). On: scheduled clips are
+    ; dropped and no hotkey is pressed until it is off again.
+    static SetIdle(on) {
+        Clip.Idle := on ? true : false
+        Clip._idleTold := false
+        if on
+            Clip._gen += 1
     }
 
     static ReasonClass(reason) {
@@ -242,6 +280,13 @@ class Clip {
         cfg := Clip._cfg
         if !IsObject(cfg) || !cfg.Get("Medal.enabled", 0)
             return "disabled"
+        if Clip.Idle {
+            if !Clip._idleTold {
+                Clip._idleTold := true
+                Clip._Log("Clip: idle mode presses no keys; clips are skipped while it runs")
+            }
+            return "idle"
+        }
         key := Clip._Hotkey()
         why := Clip.HotkeyProblem(key, cfg)
         if (why != "") {
@@ -251,12 +296,13 @@ class Clip {
             }
             return "bad_hotkey"
         }
-        if !Clip._MedalRunning() {
+        if !Clip._AppRunning() {
             if !Clip._warnedMissing {
                 Clip._warnedMissing := true
-                Clip._Log("Clip: Medal (medal.exe) is not running; clip skipped")
+                a := Clip._AppNow()
+                Clip._Log("Clip: " a.name " (" Clip._AppExe(a) ") is not running; clip skipped")
             }
-            return "no_medal"
+            return "no_app"
         }
         Clip._warnedMissing := false
         cls := Clip.ReasonClass(reason)
@@ -275,8 +321,8 @@ class Clip {
     ; Timer callback: tap the hotkey if not cancelled/stopped, no potion is
     ; being handled (else re-arm) and Medal is still running.
     static _Fire(reason, key, gen, defers) {
-        if (gen != Clip._gen)
-            return                                  ; cancelled (stop / reset)
+        if (gen != Clip._gen || Clip.Idle)
+            return                                  ; cancelled (stop / reset / idle mode)
         if IsObject(Clip._stopFn) {
             stopped := true
             try stopped := Clip._stopFn.Call() ? true : false
@@ -293,8 +339,8 @@ class Clip {
             Clip._timerFn.Call(() => Clip._Fire(reason, key, gen, defers + 1), Clip.DeferMs)
             return
         }
-        if !Clip._MedalRunning() {
-            Clip._Log("Clip: Medal closed before the clip; skipped")
+        if !Clip._AppRunning() {
+            Clip._Log("Clip: " Clip._AppNow().name " closed before the clip; skipped")
             return
         }
         try {
@@ -303,15 +349,16 @@ class Clip {
             Clip._Log("Clip: hotkey send failed: " (e is Error ? e.Message : "error"))
             return
         }
-        Clip._Log("Clip: Medal clip hotkey sent (" reason ")")
+        app := Clip._AppNow().name
+        Clip._Log("Clip: " app " clip hotkey sent (" reason ")")
         if IsObject(Clip._wh) {
-            desc := "Medal clip hotkey sent for: " reason
+            desc := StrTitle(SubStr(app, 1, 1)) SubStr(app, 2) " clip hotkey sent for: " reason
             if (Clip.ReasonClass(reason) = "aura") {
-                try desc := "Medal clip hotkey sent for a rare aura.`n"
+                try desc := StrTitle(SubStr(app, 1, 1)) SubStr(app, 2) " clip hotkey sent for a rare aura.`n"
                     . Auras.Describe(Clip._cfg, SubStr(reason, InStr(reason, ":") + 1))
             }
             try Clip._wh.Send("clips", "Clip saved", desc
-                . "`n(the clip stays in Medal; it is not uploaded)", 0x9B59B6)
+                . "`n(the clip stays in " app "; it is not uploaded)", 0x9B59B6)
         }
     }
 
@@ -335,13 +382,24 @@ class Clip {
         k := Clip._cfg.Get("Medal.clipHotkey", "")
         if (Trim(k) = "")
             k := Clip._cfg.Get("Medal.hotkey", "")
+        if (Trim(k) = "")
+            k := Clip._AppNow().key                 ; none typed: the app's default
         return Trim(k)
     }
 
-    static _MedalRunning() {
-        try return Clip._procFn.Call("medal.exe") ? true : false
-        catch
-            return false
+    ; the picked clip app is running (any of its process names; "other":
+    ; nothing to check)
+    static _AppRunning() {
+        a := Clip._AppNow()
+        if !a.exes.Length
+            return true
+        for exe in a.exes {
+            try {
+                if Clip._procFn.Call(exe)
+                    return true
+            }
+        }
+        return false
     }
 
     static _Norm(s) => StrLower(Trim(RegExReplace(String(s), "\s+", " ")))

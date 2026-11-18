@@ -884,6 +884,31 @@ Test_Sell_RepeatsWhileMoreToSell() {
     }
 }
 
+; sell.loop.maxRounds 0: no round, and the sold line no longer reads an
+; unset round start (the task errored)
+Test_Sell_ZeroRoundsNoError() {
+    t := FsMakeCfg()
+    FsScreen.Install()
+    try {
+        co := t.cfg.Data("coords")
+        co["sell"]["loop"]["maxRounds"] := 0
+        t.cfg.SetData("coords", co)
+        st := SchedState()
+        st.fishLoops := 5   ; fish caught: the shop is visited
+        st.needRepath := true
+        io := RsIO()                            ; reads the shop (test_reset_checks.ahk)
+        io.fisher := RsAtFisher
+        FsSellScreen(io, 2)
+        logs := []
+        SellTask(t.cfg, st, FsDeps(io, "", true, logs)).Run(SchedCtx())
+        AssertEq(io.Count("click@1002,831"), 0, "no sell round")
+        AssertTrue(FsHasLog(logs, "sell: sold 0 fish types"), "the sold line written (" FsJoin(logs, " / ") ")")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
 Test_Sell_ShopNotLoadedClosesAndGoesOn() {
     t := FsMakeCfg()
     FsScreen.Install()

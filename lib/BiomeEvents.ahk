@@ -345,16 +345,51 @@ class BiomeEvents {
             min := BiomeEvents.AuraAlertMin
         if (rarity < min)
             return
+        m := this._AuraMsg(e, false)
+        this._Log("Aura: " m.name " (1 in " Auras.Format(m.rarity) "): rare aura alert" (m.user != "" ? " with a ping" : ""))
+        this._Send("rare", (test ? "[TEST] " : "") m.title, m.desc, 0xF2A93B, {ping: test ? "" : m.user, screenshot: m.shot, fields: m.fields})
+    }
+
+    ; the alert's parts for aura entry e (data\auras.json); test: marked
+    _AuraMsg(e, test) {
+        rarity := (e.Has("rarity") && e["rarity"] is Integer) ? e["rarity"] : 0
         shot := ""
         try shot := this._shotFn.Call()
         disp := e["name"]
         now := DateDiff(A_NowUTC, "19700101000000", "Seconds")
-        desc := "## Rare aura rolled`n**" disp "** (1 in " Auras.Format(rarity) ")"
+        desc := (test ? "**[TEST]** from Dev tools, no aura was rolled`n" : "")
+            . "## Rare aura rolled`n**" disp "** (1 in " Auras.Format(rarity) ")"
             . (e.Has("category") && e["category"] != "" ? "`n" e["category"] : "")
-        fields := [Webhook.Field(Emoji.Clock " Rolled", "<t:" now ":T> (<t:" now ":R>)")]
-        user := Trim(String(this._cfg.Get("AuraAlert.userId", "")))
-        this._Log("Aura: " disp " (1 in " Auras.Format(rarity) "): rare aura alert" (user != "" ? " with a ping" : ""))
-        this._Send("rare", (test ? "[TEST] " : "") "RARE AURA: " disp, desc, 0xF2A93B, {ping: test ? "" : user, screenshot: shot, fields: fields})
+        return {name: disp, rarity: rarity, shot: shot, desc: desc, title: "RARE AURA: " disp
+            , fields: [Webhook.Field(Emoji.Clock " Rolled", "<t:" now ":T> (<t:" now ":R>)")]
+            , user: Trim(String(this._cfg.Get("AuraAlert.userId", "")))}
+    }
+
+    ; Dev tools: the rare aura alert sent to one webhook (hook Map), with the
+    ; ping and a screenshot, even with the alert off. name: an aura from
+    ; data\auras.json; "" = the least rare one at the threshold. -> its name,
+    ; or "" when no aura fits.
+    AuraAlertTo(hook, name := "") {
+        e := (name != "") ? Auras.Find(this._cfg, name) : ""
+        if !IsObject(e) {
+            min := Auras.ParseRarity(this._cfg.Get("AuraAlert.minRarity", String(BiomeEvents.AuraAlertMin)))
+            if (min = "" || min < 1)
+                min := BiomeEvents.AuraAlertMin
+            best := ""
+            for a in Auras.List(this._cfg) {
+                r := (a.Has("rarity") && a["rarity"] is Integer) ? a["rarity"] : 0
+                if (r >= min && (!IsObject(best) || r < best["rarity"]))
+                    best := a
+            }
+            e := best
+        }
+        if !IsObject(e)
+            return ""
+        m := this._AuraMsg(e, true)
+        this._Log("Test event: rare aura alert for " m.name " to webhook " (hook.Has("name") ? hook["name"] : "?"))
+        if IsObject(this._wh)
+            try this._wh.SendTo(hook, m.title, m.desc, 0xF2A93B, {event: "rare", ping: m.user, screenshot: m.shot, fields: m.fields})
+        return m.name
     }
 
     ; true when General.everyonePing=1 and the biome is in General.everyoneBiomes.
@@ -366,10 +401,19 @@ class BiomeEvents {
 
     ; Private-server link for the rare webhook, or "". Never logged.
     _JoinLink() {
-        if (!this._cfg.Get("General.joinButton", 0) || this._Ghost())
+        if (!this._cfg.Get("General.joinButton", 1) || this._Ghost())
             return ""
-        link := Trim(this._cfg.Get("General.privateServer", ""))
-        return RegExMatch(link, "i)^https://(?:www\.)?roblox\.com/[^\s()\[\]]+$") ? link : ""
+        return BiomeEvents.JoinUrl(this._cfg.Get("General.privateServer", ""))
+    }
+
+    ; A pasted private-server link as a clickable https://www.roblox.com/
+    ; link, or "" (2026-11-17: a friend's link pasted without https:// gave
+    ; no Join Server link at all).
+    static JoinUrl(link) {
+        link := Trim(String(link), " `t`r`n<>")
+        if RegExMatch(link, "i)^(?:https?://)?((?:www\.)?roblox\.com/[^\s()\[\]]+)$", &m)
+            return "https://" (SubStr(m[1], 1, 4) = "www." ? "" : "www.") m[1]
+        return ""
     }
 
     static IsNormal(name) => StrUpper(Trim(String(name))) = "NORMAL"

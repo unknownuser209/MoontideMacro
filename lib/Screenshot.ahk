@@ -12,9 +12,20 @@
 ;
 ; Note: it grabs what is on screen, so the window must be visible and not
 ; covered. Live capture is a manual check (needs a real window).
+; Idle mode (Screenshot.FromWindow := true): the copy is the window's OWN
+; image (PrintWindow PW_CLIENTONLY | PW_RENDERFULLCONTENT), never the
+; screen, so it holds only Roblox and is taken with Roblox behind other
+; windows too. Without FromWindow only Roblox in front is captured.
 ; ---------------------------------------------------------------------------
 
 class Screenshot {
+    static FromWindow := false      ; idle mode: PrintWindow copy, Roblox need not be in front
+
+    ; Pure: how a capture may be made -> "window" (PrintWindow: only the
+    ; window's own pixels), "screen" (a screen copy: Roblox in front only)
+    ; or "" (refused: a screen copy would show what covers Roblox).
+    static Source(active, fromWindow) => fromWindow ? "window" : active ? "screen" : ""
+
     static Capture(hwnd) {
         try
             return Screenshot._Capture(hwnd)
@@ -39,8 +50,10 @@ class Screenshot {
             return ""
         ; the copy comes from the SCREEN: with another window in front it
         ; would land in the picture (and in a Discord post). Only Roblox in
-        ; front is captured (privacy audit 2026-11-10).
-        if !WinActive("ahk_id " hwnd)
+        ; front is captured (privacy audit 2026-11-10). Idle mode copies the
+        ; window's own image instead (PrintWindow: nothing else in it).
+        src := Screenshot.Source(WinActive("ahk_id " hwnd) ? true : false, Screenshot.FromWindow)
+        if (src = "")
             return ""
         ; the CLIENT rect (no title bar / borders; the same as the window
         ; rect for fullscreen Roblox), at its physical size (DPI aware)
@@ -73,9 +86,13 @@ class Screenshot {
             if (!hdcScreen || !hdcMem || !hbm)
                 return ""
             hbmOld := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbm, "Ptr")
-            ; SRCCOPY | CAPTUREBLT
-            if !DllCall("BitBlt", "Ptr", hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h
-                , "Ptr", hdcScreen, "Int", x, "Int", y, "UInt", 0x40CC0020, "Int")
+            if (src = "window") {
+                ; PW_CLIENTONLY | PW_RENDERFULLCONTENT: the client as Roblox
+                ; draws it, whatever covers it on the screen
+                if !DllCall("PrintWindow", "Ptr", hwnd, "Ptr", hdcMem, "UInt", 3, "Int")
+                    return ""
+            } else if !DllCall("BitBlt", "Ptr", hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h
+                , "Ptr", hdcScreen, "Int", x, "Int", y, "UInt", 0x40CC0020, "Int")   ; SRCCOPY | CAPTUREBLT
                 return ""
             DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hbmOld, "Ptr")
             hbmOld := 0

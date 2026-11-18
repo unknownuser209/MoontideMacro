@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Json.ahk
+#Include %A_LineFile%\..\Prof.ahk
 #Include %A_LineFile%\..\Ocr.ahk
 #Include %A_LineFile%\..\Screenshot.ahk
 #Include %A_LineFile%\..\Screen.ahk
@@ -76,6 +77,7 @@ class InputScreenIO {
     ; mapping to the Roblox client (unchanged at 2560x1440). Unmap: back.
     static Map(x, y) => Screen.Pt(x, y)
     static Unmap(x, y) => Screen.Inv(x, y)
+    static OwnHiddenSettleMs := 80     ; our window hidden from under the cursor -> Roblox hover
     Down(k) {
         SendInput("{" k " down}")
     }
@@ -91,9 +93,44 @@ class InputScreenIO {
         MouseMove(-1, 0, 0, "R")
     }
     ClickHere() {
-        Click("Down")
-        Sleep(20)
-        Click("Up")
+        ; one of the macro's own windows under the cursor (the overlay put
+        ; over Mari's X, live 2026-11-17): the click went to it, its drag
+        ; started a window move that waited for a mouse-up that had already
+        ; come, and the task hung until a real click (11:38 for 70 min, 14:07
+        ; for 26 min). Hidden for the click, shown again without focus.
+        own := InputScreenIO.OwnWindowAt()
+        if own {
+            DllCall("ShowWindow", "Ptr", own, "Int", 0)
+            ; Roblox never saw the cursor arrive (the move went to our
+            ; window): nudged again so it has the hover before the click
+            ; (live 15:27 and 16:04: the shop stayed open without it)
+            CoordMode("Mouse", "Screen")
+            MouseMove(1, 0, 0, "R")
+            MouseMove(-1, 0, 0, "R")
+            Sleep(InputScreenIO.OwnHiddenSettleMs)
+        }
+        try {
+            Click("Down")
+            Sleep(20)
+            Click("Up")
+        } finally {
+            if own
+                DllCall("ShowWindow", "Ptr", own, "Int", 4)      ; SW_SHOWNOACTIVATE
+        }
+    }
+    ; The top-level window of THIS process at a screen point (default: the
+    ; cursor), or 0.
+    static OwnWindowAt(sx := "", sy := "") {
+        if (sx = "" || sy = "") {
+            CoordMode("Mouse", "Screen")
+            MouseGetPos(&sx, &sy)
+        }
+        h := DllCall("WindowFromPoint", "Int64", (sy << 32) | (sx & 0xFFFFFFFF), "Ptr")
+        if !h
+            return 0
+        root := DllCall("GetAncestor", "Ptr", h, "UInt", 2, "Ptr")     ; GA_ROOT
+        DllCall("GetWindowThreadProcessId", "Ptr", root, "UInt*", &pid := 0)
+        return (pid = DllCall("GetCurrentProcessId", "UInt")) ? root : 0
     }
     ; n wheel notches ("up" | "down") at the current mouse position,
     ; gapMs apart. Tasks call this in short chunks so they can check stop.
@@ -154,6 +191,13 @@ class InputScreenIO {
     ; a Sleep can overshoot by a whole timer tick. -> false as soon as
     ; ctx.ShouldStop().
     Wait(ms, ctx := "") {
+        Prof.Begin("wait")
+        try
+            return this._Wait(ms, ctx)
+        finally
+            Prof.End()
+    }
+    _Wait(ms, ctx) {
         deadline := Input.NowMs() + ms
         Loop {
             if (IsObject(ctx) && ctx.ShouldStop())
@@ -370,6 +414,13 @@ class Input {
     static InRoute := false
 
     static PlayRoute(steps, ctx, io := "") {
+        Prof.Begin("walk")
+        try
+            return Input._PlayRoute(steps, ctx, io)
+        finally
+            Prof.End()
+    }
+    static _PlayRoute(steps, ctx, io) {
         steps := Input.ParseRoute(steps)
         io := Input._Backend(io)
         held := Map()   ; lowercased key -> key as sent (this route's keys)
@@ -581,6 +632,13 @@ class Input {
     static RespawnSyncFn := ""    ; () -> the respawn log read from now on
     static _preEnter := ""        ; called right before the respawn's Enter (FastReset)
     static ResetToSpawn(ctx := "", io := "", blind := false) {
+        Prof.Begin("respawn")
+        try
+            return Input._ResetToSpawn(ctx, io, blind)
+        finally
+            Prof.End()
+    }
+    static _ResetToSpawn(ctx, io, blind) {
         io := Input._Backend(io)
         if (Input.FastReset && !Input._quick && !blind && HasMethod(io, "Ocr")) {
             Input._preEnter := Input.RespawnSyncFn      ; synced right before Enter

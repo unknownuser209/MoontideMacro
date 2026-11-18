@@ -450,7 +450,7 @@ Test_Wf_StartFieldsReflectConfig() {
         , "Quests: " Emoji.Check " On", "Merchants: " Emoji.Check " On`nMari, Jester"
         , "Potions: " Emoji.Shield " Dry run (none used)"
         , "@everyone: " Emoji.Check " On`nDreamspace " Chr(0xB7) " Glitched " Chr(0xB7) " Cyberspace"
-        , "Medal clips: " Emoji.Cross " Off", "Auto-rejoin: " Emoji.Check " On", "Route: VIP"]
+        , "Clips: " Emoji.Cross " Off", "Auto-rejoin: " Emoji.Check " On", "Route: VIP"]
         AssertTrue(InStr(s, need), "default fields have: " need)
     fl := App.StartFields(AppFakeCfg(Map()))
     AssertEq(fl[1]["inline"], 1, "status fields are inline")
@@ -462,7 +462,7 @@ Test_Wf_StartFieldsReflectConfig() {
     AssertTrue(!InStr(s, "sells every"), "no sell detail with fishing off (2026-11-02: it said On with fishing=0)")
     for need in ["Fishing: " Emoji.Cross " Off", "Auto-craft: " Emoji.Cross " Off", "Quests: " Emoji.Cross " Off"
         , "Merchants: " Emoji.Cross " Off", "Potions: " Emoji.Warn " LIVE", "@everyone: " Emoji.Cross " Off"
-        , "Medal clips: " Emoji.Check " On`nKey F9`nrare biomes`n"
+        , "Clips: " Emoji.Check " On`nMedal`nKey F9`nrare biomes`n"
         , "Auto-rejoin: " Emoji.Cross " Off", "Route: Standard"]
         AssertTrue(InStr(s, need), "changed fields have: " need)
     AssertTrue(!InStr(s, "Lucky Potion"), "no potions listed when craft is off")
@@ -472,7 +472,7 @@ Test_Wf_StartFieldsReflectConfig() {
     for f in App.StartFields(AppFakeCfg(Map("Medal.enabled", 1, "Medal.clipHotkey", "F8", "Medal.onRareBiome", 0
         , "Medal.onRareAura", 1, "Medal.auraMinRarity", "1000000000", "Medal.auraAlwaysCategories", "Challenged")))
         s .= f["name"] ": " f["value"] "`n"
-    AssertTrue(InStr(s, "Medal clips: " Emoji.Check " On`nKey F8`nauras " Chr(0x2265) " 1 in 1,000,000,000 + Challenged"), "custom threshold: " s)
+    AssertTrue(InStr(s, "Clips: " Emoji.Check " On`nMedal`nKey F8`nauras " Chr(0x2265) " 1 in 1,000,000,000 + Challenged"), "custom threshold: " s)
     AssertTrue(!InStr(s, "rare biomes"), "rare biomes omitted when onRareBiome=0")
     s := ""
     for f in App.StartFields(AppFakeCfg(Map("Medal.enabled", 1, "Medal.clipHotkey", "F8", "Medal.onRareAura", 1)))
@@ -481,7 +481,12 @@ Test_Wf_StartFieldsReflectConfig() {
     s := ""
     for f in App.StartFields(AppFakeCfg(Map("Medal.enabled", 0, "Medal.onRareAura", 1)))
         s .= f["name"] ": " f["value"] "`n"
-    AssertTrue(InStr(s, "Medal clips: " Emoji.Cross " Off") && !InStr(s, "auras"), "disabled: just Off")
+    AssertTrue(InStr(s, "Clips: " Emoji.Cross " Off") && !InStr(s, "auras"), "disabled: just Off")
+    ; the clip app is named (2026-11-16)
+    s := ""
+    for f in App.StartFields(AppFakeCfg(Map("Medal.enabled", 1, "Medal.app", "discord", "Medal.clipHotkey", "Alt+C")))
+        s .= f["name"] ": " f["value"] "`n"
+    AssertTrue(InStr(s, "Clips: " Emoji.Check " On`nDiscord`nKey Alt+C"), "Discord named: " s)
 }
 
 ; ---- dashboard --------------------------------------------------------------

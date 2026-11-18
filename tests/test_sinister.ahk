@@ -167,6 +167,25 @@ Test_Sinister_NoSendInAGhostServerOrWithoutALink() {
     AssertEq(r.wh.edits.Length, 0, "nothing posted: nothing edited")
 }
 
+; General.joinButton off: the boss card goes out without the private server
+; link or its button (as the biome cards); still nothing in a ghost server
+Test_Sinister_JoinButtonOffSendsNoLink() {
+    wh := SnFakeWh()
+    rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => false})
+    AssertTrue(rep.Spawn("k"), "posted")
+    c := wh.posts[1].content
+    AssertTrue(SnHas(c, "Boss Spawned - Sinister S."), "the boss named")
+    AssertTrue(!InStr(c.desc, "roblox.com") && !InStr(c.desc, "Join Server"), "no link in the card")
+    AssertTrue(!IsObject(c.buttons), "no Join Server button")
+    rep.Killed("toast")
+    d := wh.edits[1].content
+    AssertTrue(!IsObject(d.buttons) && !InStr(d.desc, "roblox.com"), "the dead card has no link either")
+    wh2 := SnFakeWh()
+    rep2 := SinisterReport({webhook: wh2, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => true})
+    rep2.Spawn("k")
+    AssertEq(wh2.posts.Length, 0, "ghost server: nothing")
+}
+
 Test_Sinister_OneMessagePerSpawn() {
     r := SnRep()
     r.rep.Spawn("GRAVEYARD@1"), r.rep.Note(0.9, true), r.rep.Spawn("GRAVEYARD@1")
@@ -430,4 +449,47 @@ Test_Sinister_CardLooksLikeTheBiomeCard() {
     w.wh.EditText(h, d), w.wh.Flush(), w.wh.Flush()
     AssertEq(w.fake.opened[2]["method"], "PATCH", "edited")
     AssertEq(SnJson(w.fake.bodies[2])["embeds"][1]["description"], d.desc, "the dead card")
+}
+
+; 2026-11-16, the user: "its still not @ing me". The boss card pings the
+; webhook's Mention when asked (opts.mention); the dead edit does not ping again
+Test_Sinister_CardPingsTheMention() {
+    logs := []
+    w := SnWh([{status: 200, sendError: "", pending: 0, body: '{"id":"9"}'}, {status: 200, sendError: "", pending: 0}], logs)
+    h := w.wh.PostText("sinister", SinisterReport.SpawnCard(SnLink(), "p", 1700000000), {mention: true})
+    w.wh.Flush(), w.wh.Flush()
+    AssertTrue(InStr(logs.Length ? logs[logs.Length] : "", 'Webhook "Boss": sinister message posted'), "the post is logged")
+    j := SnJson(w.fake.bodies[1])
+    AssertEq(j["content"], "<@555>", "the Boss hook's mention")
+    AssertEq(Json.Stringify(j["allowed_mentions"], 0), '{"users":["555"]}', "only that user can be pinged")
+    AssertTrue(InStr(j["embeds"][1]["description"], "Boss Spawned"), "the card is still there")
+    w.wh.EditText(h, SinisterReport.DeadCard(SnLink(), "p", 1700000060)), w.wh.Flush(), w.wh.Flush()
+    AssertEq(SnJson(w.fake.bodies[2]).Has("content"), false, "the edit keeps the text: no second ping")
+    ; plain text with a mention
+    w2 := SnWh([{status: 200, sendError: "", pending: 0, body: '{"id":"9"}'}])
+    w2.wh.PostText("sinister", "hi", {mention: true}), w2.wh.Flush(), w2.wh.Flush()
+    AssertEq(SnJson(w2.fake.bodies[1])["content"], "<@555> hi", "text after the mention")
+    ; the report asks for the ping, real or picked from Dev tools
+    r := SnRep()
+    r.rep.Spawn("chat:p:1", "p")
+    AssertEq(r.wh.posts[1].opts.mention, true, "a real spawn pings")
+    wh := SnFakeWh()
+    rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", SnLink())), ghost: () => false, test: true, log: (t) => 0
+        , hook: Map("name", "Dev", "url", "https://discord.com/api/webhooks/1/x", "mention", "555")})
+    rep.Spawn("TEST-1", "p")
+    AssertEq(wh.posts[1].opts.mention, true, "the Dev tools fake pings too")
+}
+
+; Dev tools: a fake spawn goes to the one webhook picked, marked as a test,
+; and can be edited to dead like a real one
+Test_Sinister_TestCardIsMarked() {
+    wh := SnFakeWh(), logs := []
+    hook := Map("name", "Dev", "url", "https://discord.com/api/webhooks/1/x")
+    rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", SnLink())), log: (t) => logs.Push(t)
+        , ghost: () => false, hook: hook, test: true})
+    AssertEq(rep.Spawn("TEST-1", "p"), true, "posted")
+    AssertTrue(wh.posts[1].opts.hook == hook, "only to the picked webhook")
+    AssertTrue(SnHas(wh.posts[1].content, "[TEST]") && SnHas(wh.posts[1].content, "Boss Spawned - Sinister P."), "marked as a test")
+    rep.Killed("test")
+    AssertTrue(SnHas(wh.edits[1].content, "[TEST]") && SnHas(wh.edits[1].content, "Boss Dead"), "the dead edit is marked too")
 }

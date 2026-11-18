@@ -121,6 +121,8 @@ class ObbyTask {
     static MenuMs := 500           ; after opening the storage / typing the search
     static SelectMs := 350         ; after clicking the tile / the button
     static ExpandMs := 300         ; after clicking buff_expand
+    static ButtonWaitMs := 8000    ; buff_expand hidden (respawn fade after a fall): waited for
+    static SettleMs := 1500        ; after the route, before the check: a fall off the top shows first
     static AuraWaitMs := 3000      ; the button flips after Equip / Unequip
     static ClickTries := 3         ; Equip / Unequip clicks while the button keeps its old word
     static HoverMs := 300          ; the mouse rests on Equip this long before the click
@@ -128,6 +130,7 @@ class ObbyTask {
     static LogPickMs := 6000       ; the log has this long to name the aura after Equip (~2 s live; a slow PC more)
     static LogLagMs := 150000      ; the log's "Equipped" line can lag an unequip this long
     static SearchTries := 4
+    static MissStreakOne := 2      ; obbies in a row with the blessing missed -> no retry until it shows
     ; Regular / Special tab buttons from aura_search (2560x1440, live
     ; 2026-10-31: search 1146,490; Regular 1248,445; Special 1693,445)
     static Tabs := [{dx: 102, dy: -45}, {dx: 547, dy: -45}]
@@ -189,13 +192,22 @@ class ObbyTask {
     __New(deps := "") {
         this._tileHint := Map()
         this._tabHint := Map()       ; aura -> the storage tab it was last found on (searched first)
+        this._logHint := Map()       ; "aura|tab" -> the tile the Roblox log found it on (an unreadable name)
         this._tabHint["eden"] := 2   ; Eden is on the Special tab (live): the first hunt after a start goes there at once
+        ; the hints kept across restarts (speed, 2026-11-17): deps hintPath, a
+        ; json next to the data files ("" = memory only, the tests)
+        this._hintPath := TaskEnv.Dep(deps, "hintPath", "")
+        ; respawn after the run (default yes); the App says no when the sell
+        ; trip that follows an obby respawns anyway (speed, 2026-11-17)
+        this._respawnAfter := TaskEnv.Dep(deps, "respawnAfter", true)
+        this._LoadHints()
         this._env := TaskEnv(deps)
         this._auraFn := TaskEnv.Dep(deps, "aura", "")
         if !IsObject(this._auraFn)
             this._auraFn := () => {known: false, name: ""}
         this._set := ""              ; {name, at}: the last aura change seen on the button
         this._owed := ""             ; {prev}: the aura still to put back after a halted run
+        this._missStreak := 0        ; obbies in a row where every run missed the blessing
         this._btn := ""              ; the button's last OCR read
         this._tab := 1               ; storage tab of the current search try (Tabs index)
         this._abort := false         ; a click was refused (no blind clicks): the swap stops
@@ -245,11 +257,24 @@ class ObbyTask {
         pt := env.cal.Point("obby_blessing")
         check := (expand != "" && pt != "")
         retries := check ? ObbyTask.Retries(env.cfg.Get("Obby.retries", 1)) : 0
+        ; the route itself misses (live 2026-11-17: every run since 12:50, the
+        ; retry walked it again for ~40 s each time): after MissStreakOne
+        ; obbies in a row with no blessing, one run until it shows again
+        if (retries > 0 && this._missStreak >= ObbyTask.MissStreakOne) {
+            retries := 0
+            if (this._missStreak = ObbyTask.MissStreakOne)
+                env.Log("obby: the blessing was missed " this._missStreak " obbies in a row: one run per obby until it shows (fix the route on Setup > Routes)")
+        }
         io := env.io
-        plays := 0, seen := false, stopped := false, unchecked := false
+        plays := 0, seen := false, stopped := false, unchecked := false, why := ""
         try {
             Loop retries + 1 {
                 if !Input.ResetToSpawn(ctx, io)
+                    break
+                ; the sell trip's zoom (wheel in, then out): a rejoin leaves
+                ; Roblox's own zoom and the first run after it went the wrong
+                ; way (live 2026-11-17 19:00); the zoom stays for the retry
+                if (A_Index = 1 && !this._Zoom(ctx, io))
                     break
                 if !Input.PlayRoute(steps, ctx, io)
                     break
@@ -259,6 +284,7 @@ class ObbyTask {
                 r := this._CheckBlessing(ctx, expand, pt)
                 unchecked := (r < 0)
                 seen := (r > 0)
+                why := this._why       ; PutBack below clears _why (the error said nothing, 2026-11-17)
                 if (seen || unchecked || ctx.ShouldStop())
                     break
             }
@@ -270,7 +296,9 @@ class ObbyTask {
             stopped := ctx.ShouldStop()
             if !CleanupCtx.Halted(ctx) {
                 cctx := CleanupCtx(ctx)
-                Input.ResetToSpawn(cctx, io)
+                ra := this._respawnAfter
+                if (IsObject(ra) ? ra.Call() : ra)
+                    Input.ResetToSpawn(cctx, io)
                 this.PutBack(cctx, sw)
             } else {
                 this.Owe(sw)
@@ -279,6 +307,10 @@ class ObbyTask {
         if stopped
             return seen ? 1 : 0
 
+        if seen
+            this._missStreak := 0
+        else if (check && plays > 0 && !unchecked)
+            this._missStreak++
         if seen {
             env.Log("obby: Basic Blessing claimed")
             env.Report("obby", "Obby", "Basic Blessing claimed")
@@ -292,7 +324,7 @@ class ObbyTask {
             return 0
         }
         if unchecked {
-            msg := "ran the obby, but the Basic Blessing was not checked: " this._why
+            msg := "ran the obby, but the Basic Blessing was not checked: " why
             env.Log("obby: " msg)
             env.Report("errors", "Obby not checked", msg, 0xE74C3C)
             return 0
@@ -497,6 +529,7 @@ class ObbyTask {
     static _NameParts(text) {
         s := ""
         for line in StrSplit(String(text), "`n", "`r") {
+            line := ObbyTask._NoBoard(line)
             ; the rarity on the name's line, misread without digits: 'Sailor
             ; npoo,ooo' / 'Sailor 12poopoo' for "1 in 100,000" (live 1600x900,
             ; 2560x1440): cut at the first word with a comma or a digit
@@ -507,6 +540,28 @@ class ObbyTask {
                 s .= line " "
         }
         return {f: GameLists.Fold(s), cont: RegExMatch(s, ":[^A-Za-z]*$") > 0}
+    }
+
+    ; The name panel is see-through: the spawn's world boards ("COLLECTED
+    ; STAT", "MOST ROLLED") behind it get into the read ('Sailor :TED STAT',
+    ; ':TED STAT Sailor', live 2026-11-17 PUMPKIN MOON: Sailor never read, the
+    ; obby skipped). Their all-caps pieces (3+ letters, with the junk before
+    ; them) go.
+    static Boards := ["COLLECTED", "STATS", "MOST", "ROLLED"]
+    static _NoBoard(line) {
+        ; a garbled board word right before a board piece ('XED STAT') goes too
+        out := RegExReplace(line, "[\s:;}|)\]({\[]*\b[A-Z]{2,}\b(?=\s+(STATS?|ROLLED)\b)", " "), pos := 1
+        while RegExMatch(out, "[\s:;}|)\]({\[]*\b([A-Z]{3,})\b", &m, pos) {
+            piece := false
+            for w in ObbyTask.Boards
+                piece := piece || InStr(w, m[1], true)
+            if piece {
+                out := SubStr(out, 1, m.Pos - 1) " " SubStr(out, m.Pos + m.Len)
+                pos := m.Pos + 1
+            } else
+                pos := m.Pos + m.Len
+        }
+        return Trim(out)
     }
 
     ; Letters of a not matched in b (in order: a - the longest common
@@ -600,6 +655,62 @@ class ObbyTask {
         return {v: ObbyTask.NameVerdict(texts, aura), text: texts[1], all: all}
     }
 
+    ; The tile / tab / log hints from the file (a missing or broken file: none).
+    _LoadHints() {
+        this._hintBase := ObbyTask._ReadHints(this._hintPath)
+        for name, m in this._HintMaps()
+            for k, n in this._hintBase[name]
+                m[k] := n
+    }
+
+    _HintMaps() => Map("tile", this._tileHint, "tab", this._tabHint, "log", this._logHint)
+
+    ; the hint file's three maps (whole numbers only; missing / broken: empty)
+    static _ReadHints(path) {
+        out := Map("tile", Map(), "tab", Map(), "log", Map())
+        if (path = "" || !FileExist(path))
+            return out
+        try {
+            v := Json.Parse(FileRead(path, "UTF-8"))
+            for name, m in out
+                if (v is Map && v.Has(name) && v[name] is Map)
+                    for k, n in v[name]
+                        if IsInteger(n)
+                            m[k] := n
+        }
+        return out
+    }
+
+    ; The obby and the minions' aura swap each keep the hints (one file):
+    ; the file is read again and only what THIS one changed since it last
+    ; read it is written over it (a whole-map save dropped the other's
+    ; entries, 2026-11-18 review); both then hold the merged hints.
+    _SaveHints() {
+        if (this._hintPath = "")
+            return
+        try {
+            f := ObbyTask._ReadHints(this._hintPath)
+            base := this.HasOwnProp("_hintBase") ? this._hintBase : Map("tile", Map(), "tab", Map(), "log", Map())
+            for name, m in this._HintMaps() {
+                for k, n in m
+                    if !(base[name].Has(k) && base[name][k] = n)
+                        f[name][k] := n
+                for k, n in base[name]
+                    if (!m.Has(k) && f[name].Has(k))
+                        f[name].Delete(k)
+            }
+            fh := FileOpen(this._hintPath, "w", "UTF-8")
+            fh.Write(Json.Stringify(f))
+            fh.Close()
+            for name, m in this._HintMaps() {
+                m.Clear()
+                for k, n in f[name]
+                    m[k] := n
+            }
+            this._hintBase := ObbyTask._ReadHints(this._hintPath)
+        }
+    }
+
     ; Speed (2026-11-13): the search starts on the tab the aura was found on
     ; last time (Eden: Special; the Regular pass before it cost ~4 s a swap).
     _TabOffset(aura) {
@@ -659,6 +770,7 @@ class ObbyTask {
                 env.Log("obby: " aura " is result " k " on the " tabName " tab (its name read)")
                 this._tileHint[hintKey] := k
                 this._tabHint[StrLower(aura)] := this._tab
+                this._SaveHints()
                 return k
             }
             ; the name in the first read but no match: every scale's read, to
@@ -1231,6 +1343,18 @@ class ObbyTask {
             Input.TypeText(ObbyTask.SearchText(aura), io)
             if !env.Wait(ObbyTask.MenuMs, ctx)
                 return -1
+            ; speed (2026-11-17): an aura whose name never reads (Eden, a
+            ; Flying Dutchman) was found by the log last time: that tile is
+            ; equipped first and the log asked, without reading every tile's
+            ; name first (~8 s of each put-back)
+            lk := StrLower(aura) "|" this._tab
+            if (equip && this._logHint.Has(lk)) {
+                picked := this._LogPick(c, aura, ctx, this._logHint[lk])
+                if (picked < 0)
+                    return -1
+                if picked
+                    break
+            }
             found := this._FindTile(c, aura, ctx, &text)
             if (found < 0)
                 return -1
@@ -1446,19 +1570,27 @@ class ObbyTask {
     ; and stop there. A result whose name read as another aura (_FindTile's
     ; this._tileReads "other") is never equipped; at most LogPickEquips are.
     ; -> 1 on | 0 not among them (or no log) | -1 stopped
-    _LogPick(c, aura, ctx) {
+    ; hint: the tile the log found `aura` on last time (> 0): only that tile
+    ; is tried (the names were not read yet).
+    _LogPick(c, aura, ctx, hint := 0) {
         env := this._env
         io := env.io
         if (this._LogAura() == "?" || this._logMute)
             return 0
-        reads := (this.HasOwnProp("_tileReads") && this._tileReads is Map) ? this._tileReads : Map()
+        reads := (!hint && this.HasOwnProp("_tileReads") && this._tileReads is Map) ? this._tileReads : Map()
         equips := 0
-        Loop ObbyTask.ScanTiles {
+        order := []
+        if hint
+            order.Push(hint)
+        else
+            Loop ObbyTask.ScanTiles
+                order.Push(A_Index)
+        for k in order {
             if (equips >= ObbyTask.LogPickEquips)
                 return 0
-            if (reads.Has(A_Index) && reads[A_Index] = "other")
+            if (reads.Has(k) && reads[k] = "other")
                 continue                                ; its name read: another aura
-            r := ObbyTask.TileRect(c.aura_tile_rect, A_Index)
+            r := ObbyTask.TileRect(c.aura_tile_rect, k)
             if !this._TileHere(r)
                 return 0                                ; an empty slot: past the last result (never clicked)
             if !this._Click({x: r.x + r.w // 2, y: r.y + r.h // 2}, ctx, c)
@@ -1469,8 +1601,11 @@ class ObbyTask {
                 return 0                                ; past the last result
             st := this._Button(c)
             if (st = "on") {
-                if ObbyTask.SameAura(this._LogAura(), aura)
+                if ObbyTask.SameAura(this._LogAura(), aura) {
+                    this._logHint[StrLower(aura) "|" this._tab] := k
+                    this._SaveHints()
                     return 1
+                }
                 continue
             }
             if (st != "off")
@@ -1495,16 +1630,22 @@ class ObbyTask {
             if (ObbyTask.SameAura(got, aura) || (got = "?" && ObbyTask.SameAura(before, aura))) {
                 this._set := {name: aura, at: env.Now()}
                 this._tabHint[StrLower(aura)] := this._tab
-                env.Log("obby: " aura " found by the log (its name did not read)")
+                this._logHint[StrLower(aura) "|" this._tab] := k
+                this._SaveHints()
+                env.Log("obby: " aura " found by the log (its name did not read" (hint ? ", tile " k " from last time" : "") ")")
                 return 1
             }
             if (got = "?") {
                 ; no line: which aura is on is unknown, so no more are tried
-                env.Log("obby: result " A_Index " equipped, but the Roblox log named no aura after it: no more results tried")
+                env.Log("obby: result " k " equipped, but the Roblox log named no aura after it: no more results tried")
                 this._logMute := true
                 return 0
             }
-            env.Log("obby: result " A_Index " is " got ", not " aura)
+            if hint {
+                this._logHint.Delete(StrLower(aura) "|" this._tab)     ; moved: the full search next
+                this._SaveHints()
+            }
+            env.Log("obby: result " k " is " got ", not " aura)
         }
         return 0
     }
@@ -1562,12 +1703,100 @@ class ObbyTask {
         return false
     }
 
+    ; The open buff list (live 2026-11-17, 61 of 61 checks failed): its
+    ; button moves from buff_expand ("+", right) to a "-" left of the list,
+    ; so the old collapse click found nothing and the list stayed open; and
+    ; the buffs reorder (newest left), so obby_blessing's one pixel showed
+    ; another buff. Both are looked for along the row, one grab each.
+    static BarX := 200, BarW := 2360             ; past the currency counters
+    _BarRow(y0, h) {
+        arr := ""
+        try arr := (this._env.rectFn)(ObbyTask.BarX, y0, ObbyTask.BarW, h)
+        return (arr is Array && arr.Length = ObbyTask.BarW * h) ? arr : ""
+    }
+
+    ; The "-" (a 12-20 px white bar, dark 4 px above and below; the
+    ; leftmost such) near buff_expand's row -> {x, y} design px, else "".
+    _BarMinus(expand) {
+        y0 := expand.y - 14, h := 24
+        arr := this._BarRow(y0, h)
+        return arr = "" ? "" : ObbyTask.FindMinus(arr, ObbyTask.BarW, h, ObbyTask.BarX, y0)
+    }
+
+    static FindMinus(arr, w, h, x0, y0) {
+        white := (c) => ((c >> 16) & 255) >= 235 && ((c >> 8) & 255) >= 235 && (c & 255) >= 235
+        dark := (c) => ((c >> 16) & 255) < 110 && ((c >> 8) & 255) < 110 && (c & 255) < 110
+        best := ""
+        Loop h - 8 {
+            r := A_Index + 3                        ; 0-based row, 4 from each edge
+            run := 0
+            Loop w + 1 {
+                x := A_Index - 1
+                if (x < w && white(arr[r * w + x + 1])) {
+                    run++
+                    continue
+                }
+                if (run >= 12 && run <= 20) {
+                    s := x - run, ok := true
+                    Loop run
+                        if !(dark(arr[(r - 4) * w + s + A_Index]) && dark(arr[(r + 4) * w + s + A_Index])) {
+                            ok := false
+                            break
+                        }
+                    if (ok && (best = "" || s < best.s))
+                        best := {s: s, x: x0 + s + run // 2, y: y0 + r}
+                }
+                run := 0
+            }
+        }
+        return best = "" ? "" : {x: best.x, y: best.y}
+    }
+
+    ; The blessing's star anywhere in the row: a 30-70 px run of its
+    ; calibrated colour (its arms; the next nearest buff, light chevrons,
+    ; runs 10) in the 9 rows above obby_blessing.
+    _BarStar(pt) {
+        y0 := pt.y - 8, h := 9
+        arr := this._BarRow(y0, h)
+        return arr != "" && ObbyTask.HasStar(arr, ObbyTask.BarW, h, pt.color, ObbyTask.StarTol)
+    }
+
+    static StarTol := 20
+    static HasStar(arr, w, h, color, tol) {
+        c := Pixel.ToRgb(color), cr := (c >> 16) & 255, cg := (c >> 8) & 255, cb := c & 255
+        Loop h {
+            r := A_Index - 1, run := 0
+            Loop w + 1 {
+                x := A_Index - 1
+                if (x < w && (p := arr[r * w + x + 1], Abs(((p >> 16) & 255) - cr) <= tol
+                    && Abs(((p >> 8) & 255) - cg) <= tol && Abs((p & 255) - cb) <= tol)) {
+                    run++
+                    continue
+                }
+                if (run >= 30 && run <= 70)
+                    return true
+                run := 0
+            }
+        }
+        return false
+    }
+
     ; Expand the buff list, poll the blessing pixel, collapse it again.
     ; buff_expand is clicked only while it shows its calibrated colour and
     ; no purchase prompt is up (a click on an empty spot can go through
     ; into the world, live 2026-11-02); the collapse click only when the
     ; blessing showed (the list is open) or the button still shows. The
     ; prompt guard runs after each click.
+    ; coords sell.camera (the zoom every sell trip sets) -> false only when
+    ; stopped; no camera data -> nothing sent
+    _Zoom(ctx, io) {
+        cam := ""
+        try cam := FishLogic._Dig(this._env.cfg.Data("coords"), "sell.camera")
+        if !(cam is Map && cam.Has("wheelUp"))
+            return true
+        return FishLogic.Zoom(io, ctx, cam)
+    }
+
     ; -> 1 seen | 0 not seen | -1 not checked (refused or a prompt: this._why)
     _CheckBlessing(ctx, expand, pt) {
         env := this._env
@@ -1575,21 +1804,53 @@ class ObbyTask {
             this._why := "a Roblox purchase prompt was on screen (closed with Esc)"
             return -1
         }
-        if !(env.pixelFn)(expand.x, expand.y, expand.color, ObbyTask.PixelTol) {
+        open := false
+        ; a fall off the top after the blessing (live 17:30 and 17:48): the
+        ; screen is black while the character respawns, the button shows
+        ; again within a few seconds (the blessing is kept)
+        ; (live 19:38: one read saw the button as the screen faded, the next
+        ; was black. A fall starts first (SettleMs), then the SAME reading
+        ; twice in a row decides.)
+        if !env.Wait(ObbyTask.SettleMs, ctx)
+            return -1
+        waited := 0, state := "", last := ""
+        Loop {
+            now := (env.pixelFn)(expand.x, expand.y, expand.color, ObbyTask.PixelTol) ? "button"
+                : IsObject(this._BarMinus(expand)) ? "open" : ""
+            if (now != "" && now = last) {
+                state := now
+                break
+            }
+            last := now
+            if (waited >= ObbyTask.ButtonWaitMs)
+                break
+            if !env.Wait(ObbyTask.PollMs * 2, ctx)
+                return -1
+            waited += ObbyTask.PollMs * 2
+        }
+        if (state = "open") {
+            open := true                           ; left open (by an earlier run): no click
+        } else if (state = "") {
             this._why := "the buff list button (buff_expand) does not show its calibrated colour: not clicked (recalibrate it if this repeats)"
             env.Log("obby: " this._why)
+            ; what was on screen, for the next look at why (61 of 61 failed, 2026-11-17)
+            shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
+            if (shot != "")
+                env.Log("obby: screen when buff_expand did not show saved to " shot)
             return -1
         }
-        env.Click(expand)
-        if env.BuyPrompt("obby") {
-            this._why := "a Roblox purchase prompt came up after the buff_expand click (closed with Esc)"
-            return -1
+        if !open {
+            env.Click(expand)
+            if env.BuyPrompt("obby") {
+                this._why := "a Roblox purchase prompt came up after the buff_expand click (closed with Esc)"
+                return -1
+            }
         }
         seen := false
         if env.Wait(ObbyTask.ExpandMs, ctx) {
             waited := 0
             Loop {
-                if (env.pixelFn)(pt.x, pt.y, pt.color, ObbyTask.PixelTol) {
+                if ((env.pixelFn)(pt.x, pt.y, pt.color, ObbyTask.PixelTol) || this._BarStar(pt)) {
                     seen := true
                     break
                 }
@@ -1598,7 +1859,17 @@ class ObbyTask {
                 waited += ObbyTask.PollMs
             }
         }
-        if (env.Unsafe("obby") = "" && (seen || (env.pixelFn)(expand.x, expand.y, expand.color, ObbyTask.PixelTol))) {
+        if !seen {                                 ; what the open list showed (2026-11-17)
+            shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
+            if (shot != "")
+                env.Log("obby: screen when the blessing did not show saved to " shot)
+        }
+        m := this._BarMinus(expand)
+        if (env.Unsafe("obby") = "" && IsObject(m)) {
+            env.Click(m)                           ; collapsed again by its "-" (moved left of the open list)
+            env.Wait(ObbyTask.ExpandMs, ctx)
+            env.BuyPrompt("obby")
+        } else if (env.Unsafe("obby") = "" && (seen || (env.pixelFn)(expand.x, expand.y, expand.color, ObbyTask.PixelTol))) {
             env.Click(expand)                      ; collapsed again
             env.Wait(ObbyTask.ExpandMs, ctx)
             env.BuyPrompt("obby")

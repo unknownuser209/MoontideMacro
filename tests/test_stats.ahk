@@ -93,6 +93,23 @@ Test_Stats_save_load_roundtrip() {
     AssertEq(t.Day()["runMs"], 7200000, "loaded runMs")
 }
 
+; a file Load could not read is kept as .bad before Save replaces it (the
+; all-time totals in it are rebuilt from nothing)
+Test_Stats_bad_file_kept_before_save() {
+    p := StatTmpPath()
+    c := StatClock("20261112100000")
+    FileAppend('{"days": {"20261112": {"fishCaught": 3}}, "allTime": {"fishCaught": 900}, "since": "2026', p, "UTF-8-RAW")
+    s := StatNew(c, p)
+    s.Load()
+    s.Add("fishCaught", 1)
+    AssertTrue(s.Save(), "saved")
+    AssertTrue(FileExist(p ".bad") != "", "the unreadable file kept")
+    AssertTrue(InStr(FileRead(p ".bad", "UTF-8"), '"fishCaught": 900'), "with its totals")
+    FileDelete(p ".bad")
+    s.Save()
+    AssertEq(FileExist(p ".bad"), "", "a good load / save keeps no .bad")
+}
+
 Test_Stats_load_bad_files() {
     p := StatTmpPath()
     c := StatClock("20261112100000")
@@ -128,6 +145,67 @@ Test_Stats_keeps_30_days() {
     AssertEq(t.Day("20261010").Count, 0, "10th dropped")
     AssertEq(t.Day("20261011")["loops"], 1, "30th newest kept")
     AssertEq(t.Day("20261109")["loops"], 1, "newest kept")
+}
+
+; all-time totals: every Add and the run time, kept past the 30 days
+Test_Stats_all_time_outlives_days() {
+    p := StatTmpPath()
+    c := StatClock("20261001100000")
+    s := StatNew(c, p)
+    AssertEq(s.Since(), "", "nothing counted yet")
+    loop 40 {
+        c.Set(SubStr(DateAdd("20261001100000", A_Index - 1, "Days"), 1, 14))
+        s.Add("fishCaught", 2)
+        s.Add("fishFailed")
+    }
+    s.StartSession()
+    c.Set("20261109110000")
+    AssertEq(s.AllTime()["runMs"], 3600000, "running session counts live")
+    s.StopSession()
+    s.Save()
+    t := StatNew(c, p)
+    t.Load()
+    a := t.AllTime()
+    AssertEq(a["fishCaught"], 80, "all 40 days of fish")
+    AssertEq(a["fishFailed"], 40, "all misses")
+    AssertEq(a["runMs"], 3600000, "run time")
+    AssertEq(t.Since(), "20261001", "since the first day")
+    AssertEq(t.Day("20261001").Count, 0, "the day itself was pruned")
+    d := DailyStats.Derived(a)
+    AssertEq(d["reelRate"], 67, "all-time reel rate")
+    AssertTrue(d["fishPerHour"] = 80, "all-time fish per hour")
+    AssertEq(d["uptimeText"], "1h 00m", "all-time uptime")
+    a["fishCaught"] := 0
+    AssertEq(t.AllTime()["fishCaught"], 80, "AllTime is a copy")
+}
+
+; an older stats.json (days only) seeds the totals once from its days
+Test_Stats_all_time_seeds_from_old_file() {
+    p := StatTmpPath()
+    FileAppend('{"days": {"20261105": {"fishCaught": 3, "runMs": 60000}, "20261107": {"fishCaught": 4, "sells": 1}}}', p, "UTF-8-RAW")
+    c := StatClock("20261110100000")
+    s := StatNew(c, p)
+    s.Load()
+    AssertEq(s.AllTime()["fishCaught"], 7, "seeded from the kept days")
+    AssertEq(s.AllTime()["runMs"], 60000, "run time seeded")
+    AssertEq(s.Since(), "20261105", "since the oldest day")
+    s.Add("fishCaught")
+    s.Save()
+    t := StatNew(c, p)
+    t.Load()
+    AssertEq(t.AllTime()["fishCaught"], 8, "not seeded twice")
+    AssertEq(t.Since(), "20261105", "since kept")
+    q := StatNew(c, StatTmpPath())
+    q.Load()
+    q.Add("loops")
+    AssertEq(q.Since(), "20261110", "a new file: since today")
+    p2 := StatTmpPath()
+    FileAppend('{"days": {}, "allTime": {"fishCaught": "x", "sells": 2}, "since": "bad"}', p2, "UTF-8-RAW")
+    r := StatNew(c, p2)
+    r.Load()
+    AssertEq(r.AllTime().Has("fishCaught"), false, "bad value dropped")
+    AssertEq(r.AllTime()["sells"], 2, "good value kept")
+    AssertEq(r.Since(), "", "bad since dropped")
 }
 
 Test_Stats_derived() {

@@ -165,6 +165,21 @@ class RecoveryTask {
         return (this._discSeen || this._unlock || this._Ghost(IsObject(state) ? state : this._state)) ? true : false
     }
 
+    ; Dev tools: act as if the disconnect screen were up, so the next tick
+    ; closes Roblox and rejoins (a real rejoin). -> false when it could not
+    ; rejoin anyway (off, or no usable private server link).
+    FakeDisconnect() {
+        env := this._env
+        if IsObject(env.cfg) && !env.cfg.Get("recovery.enabled", 1)
+            return false
+        if !RecoveryTask.LinkOk(this._Link())
+            return false
+        this._discSeen := true
+        this._holdUntil := 0
+        env.Log("recovery: TEST disconnect from Dev tools: closing Roblox and rejoining")
+        return true
+    }
+
     ; A LogWatch join kind ("private" | "other") -> "ghost" | "clear" | ""
     ; (no change). Off with Recovery.antiGhost=0; never while Limbo is on or
     ; the player is in THE LIMBO (the Portable Crack is a teleport too).

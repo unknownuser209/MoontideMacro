@@ -221,6 +221,9 @@ class FishingTask {
     ; the card's X takes a click only after the mouse has rested on it ~1 s
     ; (live 2026-11-13: closePreMs 450 -> card 3.9 s, 700 + quick retries ->
     ; 2.5 s; the measured 1100 stays: 2.1 s)
+    ; (2026-11-17: the mouse put on the X right after the reel, before the
+    ; card was up, made every first click miss: card 2.2 -> 4.1 s. The rest
+    ; counts only once the card is there.)
     static CloseTries := 3
     static CloseGoneMs := 1500
 

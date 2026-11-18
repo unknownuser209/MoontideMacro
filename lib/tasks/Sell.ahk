@@ -160,6 +160,7 @@ class SellTask {
             d.log.Call("sell: Captain Flarg's dialog did not open, the walk missed the shop (read: '" seen "')")
         }
         tW := A_TickCount
+        tF := {open: tW, sold: tW, closed: tW, bought: tW}   ; the fisher's parts (speed, 2026-11-17)
         ; nothing caught since the last sell (the walk back after a hunt, the
         ; obby or a lost fishing spot): his shop has nothing to sell, so it is
         ; skipped - live 2026-11-10: 77 of 132 trips sold 0 fish, ~8 s each in
@@ -175,7 +176,9 @@ class SellTask {
         } else {
             if !this._Dialog(ctx)
                 return this._Cleanup(ctx)
+            tF.open := A_TickCount
             r := this._SellRounds(ctx, opt)
+            tF.sold := A_TickCount
             if (r < 0)
                 return this._Cleanup(ctx)
             if (r = SellTask.ShopMissed) {
@@ -206,6 +209,7 @@ class SellTask {
                 return this._Cleanup(ctx)
             if (c = 0)
                 d.log.Call("sell: the Fishing Shop is still open after " SellTask.CloseTries " clicks on its X")
+            tF.closed := A_TickCount
         }
         ; still at the fisher: buy now if a buy is due (deps.afterSell, the
         ; App wires CraftTask.BuyHere) -> sell, buy, then back to fishing
@@ -217,6 +221,7 @@ class SellTask {
             if (r < 0 || ctx.ShouldStop())
                 return this._Cleanup(ctx)
         }
+        tF.bought := A_TickCount
         ; his Open Shop / Sell / Leave buttons stay up after the shop's X: a
         ; walk back with them open covers the fishing panel, fishing re-paths
         ; and Sell runs again until the stuck pause (2026-10-27 review)
@@ -227,6 +232,10 @@ class SellTask {
             d.log.Call("sell: Captain Flarg's dialog is still open"
                 . (IsObject(this._CalPoint("fisher_leave")) ? "" : " (record fisher_leave in Setup so it can be closed)"))
         tL := A_TickCount
+        if !empty
+            d.log.Call(Format("sell: at the fisher {:.1f} s (dialog {:.1f}, selling {:.1f}, shop close {:.1f}, buy {:.1f}, leave {:.1f})"
+                , (tL - tW) / 1000, (tF.open - tW) / 1000, (tF.sold - tF.open) / 1000, (Max(tF.closed, tF.sold) - tF.sold) / 1000
+                , (tF.bought - Max(tF.closed, tF.sold)) / 1000, (tL - tF.bought) / 1000))
         if !Input.PlayRoute(this._Walk(variant, "back"), ctx, io)
             return
         d.log.Call(Format("sell: trip {:.1f} s (respawn {:.1f}, camera {:.1f}, walk {:.1f}, fisher {:.1f}, back {:.1f})"
@@ -383,6 +392,7 @@ class SellTask {
         option := opt.sellAll ? lp["sellAll"] : lp["sellSelected"]
         more := lp["more"]
         moreXs := FishLogic.Xs(more["rect"][1], more["rect"][3], more["stride"])
+        tOpen := A_TickCount
         r := this._WaitText(ctx, sc.title, true, sc.openMs)
         if (r < 0)
             return -1
@@ -392,8 +402,12 @@ class SellTask {
         }
         if !io.Wait(sc.settleMs, ctx)
             return -1
+        tOpen := A_TickCount - tOpen
         sold := 0
+        ph := [0, 0, 0, 0, 0]          ; per fish type: grid, clicks, popup, close, after (ms)
+        p0 := A_TickCount              ; maxRounds 0: no round, the log line below still reads it
         Loop lp["maxRounds"] {
+            p0 := A_TickCount
             ; the list may still be drawing (after the shop opened or a
             ; sale): it counts as empty only after GridWaitMs of looking
             r := this._GridWait(ctx, moreXs, more)
@@ -401,10 +415,12 @@ class SellTask {
                 return -1
             if !r
                 break
+            p1 := A_TickCount
             if !FishLogic.ClickAt(io, ctx, lp["item"], lp["itemPreMs"], lp["itemPostMs"])
                 return -1
             if !FishLogic.ClickAt(io, ctx, option, lp["optionPreMs"], 0)
                 return -1
+            p2 := A_TickCount
             ; the Sell Confirm popup scales evenly and stays centred where the
             ; shop stretches (16:10, live 1440x900): its reads and clicks map
             ; in Screen mode "C" (the same pixels at 16:9)
@@ -421,6 +437,7 @@ class SellTask {
                 }
                 d.log.Call("sell: the Sell Confirm popup is up after all (second look) - pressing Sell")
             }
+            p3 := A_TickCount
             closed := false
             Loop sc.confirmTries {
                 if (A_Index > 1) {
@@ -449,11 +466,18 @@ class SellTask {
                     return -1
                 break
             }
+            p4 := A_TickCount
             if !io.Wait(sc.afterSellMs, ctx)
                 return -1
+            for i, v in [p1 - p0, p2 - p1, p3 - p2, p4 - p3, A_TickCount - p4]
+                ph[i] += v
             sold++
         }
-        d.log.Call("sell: sold " sold " fish type" (sold = 1 ? "" : "s"))
+        d.log.Call("sell: sold " sold " fish type" (sold = 1 ? "" : "s")
+            . Format(" (shop open {:.1f} s, last look {:.1f} s)", tOpen / 1000, (A_TickCount - p0) / 1000)
+            . (sold ? Format(" (each {:.1f} s: grid {:.1f}, clicks {:.1f}, popup {:.1f}, close {:.1f}, after {:.1f})"
+                , (ph[1] + ph[2] + ph[3] + ph[4] + ph[5]) / sold / 1000
+                , ph[1] / sold / 1000, ph[2] / sold / 1000, ph[3] / sold / 1000, ph[4] / sold / 1000, ph[5] / sold / 1000) : ""))
         FishLogic.Bump(this.state, "fishTypesSold", sold)
         return 1
     }

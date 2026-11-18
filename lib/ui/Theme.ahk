@@ -85,23 +85,273 @@ class Theme {
             , BgImage: "themes\contrast.png", Note: "High contrast: black, white and yellow, easy to read"})
     static ThemeKeys := ["Bg", "PanelC", "Text", "Accent", "SideBg", "CardBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Muted", "Ink", "AccentHi", "Pulse", "BgImage"]
 
-    ; Theme name as listed (any case), "Moontide" when unknown.
+    ; Theme name as listed (any case, "Custom" too), "Moontide" when unknown.
     static ThemeName(name) {
+        name := Trim(String(name))
+        if (name = Theme.CustomName)
+            return Theme.CustomName
         for n in Theme.Names
-            if (n = Trim(String(name)))
+            if (n = name)
                 return n
         return "Moontide"
     }
 
-    ; Every colour of theme `name` (unknown -> Moontide). Call before windows
-    ; are built: existing controls keep their colours. -> the name used.
+    ; Every colour of theme `name` (unknown -> Moontide; "Custom" -> the
+    ; colours SetCustom / CustomFromCfg made, Moontide's until then). Call
+    ; before windows are built: existing controls keep their colours.
+    ; -> the name used.
     static Use(name) {
         n := Theme.ThemeName(name)
-        p := Theme.Presets[n]
+        p := (n = Theme.CustomName) ? Theme.CustomPreset() : Theme.Presets[n]
         for k in Theme.ThemeKeys
             Theme.%k% := p.%k%
         Theme.Current := n
+        Theme.CurrentSig := (n = Theme.CustomName) ? p.Sig : ""
         return n
+    }
+
+    ; ---- custom theme (Settings > Look > Edit custom) ---------------------------
+    ; The user picks 4 base colours (Bg, PanelC, Text, Accent, as the spec
+    ; palette) and a background picture; Derive mixes the other keys the way
+    ; the presets relate to their own 4 (checked against Moontide / Galaxy).
+    ; settings.ini [UI]: customBg, customPanel, customText, customAccent
+    ; (RRGGBB, "#" allowed; bad -> Moontide's), customPicture ("none", a
+    ; preset name = its picture, "file" = customPictureFile, a picture of
+    ; your own, darkened and scaled when the dashboard is built).
+    static CustomName := "Custom"
+    static Custom := ""            ; the Derive object Use("Custom") applies
+    static CurrentSig := ""        ; Sig of the custom colours now shown
+    static BaseKeys := ["Bg", "PanelC", "Text", "Accent"]
+    static CustomCfgKeys := Map("Bg", "UI.customBg", "PanelC", "UI.customPanel", "Text", "UI.customText", "Accent", "UI.customAccent")
+
+    ; dropdown list: the presets, then "Custom"
+    static Choices() {
+        out := Theme.Names.Clone()
+        out.Push(Theme.CustomName)
+        return out
+    }
+
+    ; the short description of a theme
+    static NoteOf(name) {
+        n := Theme.ThemeName(name)
+        return (n = Theme.CustomName) ? "Your own colours" : Theme.Presets[n].Note
+    }
+
+    ; "RRGGBB" (upper case) from "rrggbb" / "#RRGGBB" with spaces; "" when not
+    ; exactly 6 hex digits. Never throws.
+    static HexOk(s) {
+        try {
+            s := Trim(String(s))
+            if (SubStr(s, 1, 1) = "#")
+                s := SubStr(s, 2)
+            return RegExMatch(s, "^[0-9A-Fa-f]{6}$") ? StrUpper(s) : ""
+        }
+        return ""
+    }
+
+    ; HexOk(s), or def when s is no colour ("000000" is a colour, so no ||)
+    static HexOr(s, def) {
+        h := Theme.HexOk(s)
+        return (h != "") ? h : def
+    }
+
+    ; a + (b - a) * t per channel (t 0..1) -> "RRGGBB"
+    static Mix(a, b, t) {
+        va := Integer("0x" a), vb := Integer("0x" b)
+        out := 0
+        for sh in [16, 8, 0] {
+            ca := (va >> sh) & 0xFF, cb := (vb >> sh) & 0xFF
+            out |= Max(0, Min(255, Round(ca + (cb - ca) * t))) << sh
+        }
+        return Format("{:06X}", out)
+    }
+
+    ; WCAG relative luminance 0..1 and contrast ratio 1..21
+    static Lum(hex) {
+        v := Integer("0x" hex), l := 0
+        wt := [0.2126, 0.7152, 0.0722]
+        for i, sh in [16, 8, 0] {
+            c := ((v >> sh) & 0xFF) / 255
+            c := (c <= 0.03928) ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+            l += wt[i] * c
+        }
+        return l
+    }
+
+    static Contrast(a, b) {
+        la := Theme.Lum(a), lb := Theme.Lum(b)
+        return (Max(la, lb) + 0.05) / (Min(la, lb) + 0.05)
+    }
+
+    ; of the candidates, the one that reads best on bg
+    static BestOn(bg, cands*) {
+        best := cands[1], bc := -1
+        for c in cands {
+            r := Theme.Contrast(c, bg)
+            if (r > bc)
+                best := c, bc := r
+        }
+        return best
+    }
+
+    ; Every theme key from the 4 base colours (bad hex -> Moontide's) and a
+    ; BgImage ("" = none, an assets-relative path or a file of your own).
+    ; Text too close to the panels for reading becomes white or black
+    ; (.TextFixed true); Ink (text on the accent) is the dark background
+    ; when it reads, else whichever of the text, black or white reads best.
+    static Derive(bg, panel, text, accent, bgImage := "") {
+        m := Theme.Presets["Moontide"]
+        bg := Theme.HexOr(bg, m.Bg)
+        panel := Theme.HexOr(panel, m.PanelC)
+        text := Theme.HexOr(text, m.Text)
+        accent := Theme.HexOr(accent, m.Accent)
+        card := Theme.Mix(bg, panel, 0.22)
+        fixed := false
+        if (Theme.Contrast(text, card) < 3) {
+            text := Theme.BestOn(card, "FFFFFF", "000000")
+            fixed := true
+        }
+        ink := (Theme.Contrast(bg, accent) >= 4.5) ? bg : Theme.BestOn(accent, text, "000000", "FFFFFF")
+        o := {Bg: bg, PanelC: panel, Text: text, Accent: accent
+            , SideBg: card, CardBg: card
+            , FieldBg: Theme.Mix(bg, panel, 0.42)
+            , FrameC: Theme.Mix(panel, text, 0.15)
+            , HoverBg: Theme.Mix(panel, text, 0.08)
+            , OffBg: Theme.Mix(Theme.Mix(panel, bg, 0.35), Theme.Mix(text, bg, 0.33), 0.1)
+            , Muted: Theme.Mix(text, card, 0.33)
+            , Ink: ink
+            , AccentHi: Theme.Mix(accent, Theme.Lum(accent) > 0.6 ? "000000" : "FFFFFF", 0.2)
+            , Pulse: Theme.Mix(accent, bg, 0.28)
+            , BgImage: String(bgImage), Note: "Your own colours", TextFixed: fixed}
+        o.Sig := bg panel text accent "|" o.BgImage
+        return o
+    }
+
+    ; BgImage of a customPicture choice: "none" -> "", a preset name -> its
+    ; picture, "file" -> the file when it exists (a folder or a missing file
+    ; -> "", no picture). Anything else -> Moontide's picture.
+    static CustomPicture(choice, file := "") {
+        choice := Trim(String(choice))
+        if (choice = "none")
+            return ""
+        if (choice = "file") {
+            file := Trim(String(file), " `t`"")
+            try {
+                a := FileExist(file)
+                return (Theme.IsOwnPicture(file) && a != "" && !InStr(a, "D")) ? file : ""
+            }
+            return ""
+        }
+        for n in Theme.Names
+            if (n = choice)
+                return Theme.Presets[n].BgImage
+        return Theme.Presets["Moontide"].BgImage
+    }
+
+    ; true when BgImage is a picture of the user's own (a full path)
+    static IsOwnPicture(p) => RegExMatch(String(p), "^([A-Za-z]:\\|\\\\)") ? true : false
+
+    static SetCustom(bg, panel, text, accent, bgImage := "") {
+        Theme.Custom := Theme.Derive(bg, panel, text, accent, bgImage)
+        return Theme.Custom
+    }
+
+    static CustomPreset() => IsObject(Theme.Custom) ? Theme.Custom : Theme.SetCustom("", "", "", "", Theme.Presets["Moontide"].BgImage)
+
+    ; the custom theme from settings, made the one Use("Custom") applies
+    static CustomFromCfg(cfg) {
+        Theme.Custom := Theme.CustomDerive(cfg)
+        return Theme.Custom
+    }
+
+    ; the custom theme from settings ([UI] custom*; cfg: anything with
+    ; Get(path, default)), not applied. Never throws. -> the Derive object
+    static CustomDerive(cfg) {
+        v := Map()
+        for k, key in Theme.CustomCfgKeys {
+            s := ""
+            try s := cfg.Get(key, "")
+            v[k] := s
+        }
+        pic := "Moontide", file := ""
+        try pic := cfg.Get("UI.customPicture", "Moontide")
+        try file := cfg.Get("UI.customPictureFile", "")
+        return Theme.Derive(v["Bg"], v["PanelC"], v["Text"], v["Accent"], Theme.CustomPicture(pic, file))
+    }
+
+    ; Win32 colour dialog (comdlg32 ChooseColorW) opened on hex. -> the
+    ; picked "RRGGBB", or "" when cancelled / on any failure.
+    static PickColor(ownerHwnd, hex) {
+        static cust := Buffer(64, 0xFF)
+        try {
+            hex := Theme.HexOr(hex, "000000")
+            ps := A_PtrSize
+            cc := Buffer(ps = 8 ? 72 : 36, 0)
+            NumPut("UInt", cc.Size, cc, 0)
+            NumPut("Ptr", ownerHwnd, cc, ps)
+            NumPut("UInt", Theme.BGR(hex), cc, ps * 3)
+            NumPut("Ptr", cust.Ptr, cc, ps * 4)
+            NumPut("UInt", 0x3, cc, ps * 5)            ; CC_RGBINIT | CC_FULLOPEN
+            if !DllCall("comdlg32\ChooseColorW", "Ptr", cc, "Int")
+                return ""
+            v := NumGet(cc, ps * 3, "UInt")
+            return Format("{:02X}{:02X}{:02X}", v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF)
+        }
+        return ""
+    }
+
+    ; A picture of the user's own for the dashboard background: scaled to
+    ; cover w x h (centred crop) and darkened with bg at `dim` (0..1) so
+    ; panels and text read on it. Only the w x h result stays in memory.
+    ; -> HBITMAP (the Picture control takes it) | 0 when the file is
+    ; missing, too big, not a picture or GDI+ fails.
+    static DimPicture(path, w, h, bg, dim := 0.6) {
+        tok := 0, src := 0, dst := 0, gr := 0, br := 0, hbm := 0
+        try {
+            a := FileExist(path)
+            if (a = "" || InStr(a, "D") || FileGetSize(path) > 40 * 1024 * 1024)
+                return 0
+            DllCall("LoadLibrary", "Str", "gdiplus", "Ptr")
+            si := Buffer(24, 0), NumPut("UInt", 1, si, 0)
+            if DllCall("gdiplus\GdiplusStartup", "Ptr*", &tok, "Ptr", si, "Ptr", 0)
+                return 0
+            if (DllCall("gdiplus\GdipCreateBitmapFromFile", "WStr", path, "Ptr*", &src) || !src)
+                return 0
+            iw := 0, ih := 0
+            DllCall("gdiplus\GdipGetImageWidth", "Ptr", src, "UInt*", &iw)
+            DllCall("gdiplus\GdipGetImageHeight", "Ptr", src, "UInt*", &ih)
+            if (iw < 1 || ih < 1 || iw * ih > 80000000)
+                return 0
+            if (DllCall("gdiplus\GdipCreateBitmapFromScan0", "Int", w, "Int", h, "Int", 0, "Int", 0x26200A, "Ptr", 0, "Ptr*", &dst) || !dst)
+                return 0
+            if DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", dst, "Ptr*", &gr)
+                return 0
+            DllCall("gdiplus\GdipSetInterpolationMode", "Ptr", gr, "Int", 7)
+            s := Max(w / iw, h / ih)
+            dw := Round(iw * s), dh := Round(ih * s)
+            DllCall("gdiplus\GdipDrawImageRectI", "Ptr", gr, "Ptr", src, "Int", (w - dw) // 2, "Int", (h - dh) // 2, "Int", dw, "Int", dh)
+            DllCall("gdiplus\GdipDisposeImage", "Ptr", src), src := 0
+            argb := (Round(Max(0, Min(1, dim)) * 255) << 24) | (Integer("0x" bg) & 0xFFFFFF)
+            DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &br)
+            if br
+                DllCall("gdiplus\GdipFillRectangleI", "Ptr", gr, "Ptr", br, "Int", 0, "Int", 0, "Int", w, "Int", h)
+            if DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", dst, "Ptr*", &hbm, "UInt", 0xFF000000 | (Integer("0x" bg) & 0xFFFFFF))
+                return 0
+            return hbm
+        } catch
+            return 0
+        finally {
+            if br
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", br)
+            if gr
+                DllCall("gdiplus\GdipDeleteGraphics", "Ptr", gr)
+            if src
+                DllCall("gdiplus\GdipDisposeImage", "Ptr", src)
+            if dst
+                DllCall("gdiplus\GdipDisposeImage", "Ptr", dst)
+            if tok
+                DllCall("gdiplus\GdiplusShutdown", "Ptr", tok)
+        }
     }
 
     static Sink := ""
@@ -170,7 +420,7 @@ class Theme {
     static DarkCaption(hwnd) {
         try {
             v := Buffer(4, 0)
-            NumPut("Int", 1, v)
+            NumPut("Int", Theme.IsLight() ? 0 : 1, v)          ; a light custom theme: the light caption
             DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "UInt", 20, "Ptr", v, "UInt", 4)
             for attr, col in Map(34, Theme.PanelC, 35, Theme.Bg, 36, Theme.Text) {
                 NumPut("UInt", Theme.BGR(col), v)
@@ -179,8 +429,19 @@ class Theme {
         }
     }
 
+    ; A light background (a light Custom theme): the system's light control
+    ; look (Explorer / CFD), so drop-downs, scrollbars and lists are not
+    ; drawn dark with light text on a light window
     static DarkTheme(hwnd, cls := "DarkMode_Explorer") {
+        if Theme.IsLight()
+            cls := RegExReplace(cls, "^DarkMode_")
         try DllCall("uxtheme\SetWindowTheme", "Ptr", hwnd, "Str", cls, "Ptr", 0)
+    }
+
+    ; the window background is light (luminance over 0.4: a light Custom theme)
+    static IsLight() {
+        try return Theme.Lum(Theme.HexOr(Theme.Bg, "000000")) > 0.4
+        return false
     }
 
     ; ---- static shapes / labels ----------------------------------------------

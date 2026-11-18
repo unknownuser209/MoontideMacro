@@ -1758,3 +1758,14 @@ Test_Potions_InventoryInCenteredMode() {
         rig.Done()
     }
 }
+
+; 2026-11-17: a link pasted without https:// (or http://, no www) still
+; gives the Join Server link; anything not roblox.com gives none
+Test_Pt_JoinUrlNormalised() {
+    AssertEq(BiomeEvents.JoinUrl("https://www.roblox.com/share?code=abc&type=Server"), "https://www.roblox.com/share?code=abc&type=Server", "full link kept")
+    AssertEq(BiomeEvents.JoinUrl("roblox.com/share?code=abc&type=Server"), "https://www.roblox.com/share?code=abc&type=Server", "no scheme")
+    AssertEq(BiomeEvents.JoinUrl(" www.roblox.com/games/15532962292?privateServerLinkCode=12 "), "https://www.roblox.com/games/15532962292?privateServerLinkCode=12", "www, spaces")
+    AssertEq(BiomeEvents.JoinUrl("http://roblox.com/share?code=x"), "https://www.roblox.com/share?code=x", "http")
+    AssertEq(BiomeEvents.JoinUrl("https://evil.example/roblox.com/x"), "", "other site")
+    AssertEq(BiomeEvents.JoinUrl(""), "", "empty")
+}

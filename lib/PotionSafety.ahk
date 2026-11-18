@@ -453,6 +453,15 @@ class PotionSafety {
         day := this._Today()
         if (day = "")
             return PotionSafety._R(0, "bad_clock")
+        if this._questCaps.Has(k) {         ; a quest event: its own cap, not the biome caps
+            left := Min(this._questCaps[k] - this._Count("biome", k, potion)
+                , PotionSafety.QuestMax - this._Count("day", day PotionSafety.QuestDay, potion))
+            if (left <= 0)
+                return PotionSafety._R(0, "cap_quest")
+            if (owned = 0)
+                return PotionSafety._R(0, "none_owned")
+            return PotionSafety._R(Min(want, left, owned), "ok")
+        }
         leftBiome := c.perBiome - this._Count("biome", k, potion)
         if (leftBiome <= 0)
             return PotionSafety._R(0, "cap_biome")
@@ -498,26 +507,55 @@ class PotionSafety {
             day := this._Today()
             if (day = "")
                 throw Error("PotionSafety: bad clock")
-            if (this._Count("biome", k, potion) >= c.perBiome)
-                throw Error("PotionSafety: cap_biome reached")
-            if (this._Count("day", day, potion) >= c.perDay)
-                throw Error("PotionSafety: cap_day reached")
-            if (this._RunCount(potion) >= c.perRun)
-                throw Error("PotionSafety: cap_run reached")
+            quest := this._questCaps.Has(k)
+            if quest {
+                if (this._Count("biome", k, potion) >= this._questCaps[k])
+                    throw Error("PotionSafety: cap_quest reached")
+                if (this._Count("day", day PotionSafety.QuestDay, potion) >= PotionSafety.QuestMax)
+                    throw Error("PotionSafety: cap_quest (day) reached")
+            } else {
+                if (this._Count("biome", k, potion) >= c.perBiome)
+                    throw Error("PotionSafety: cap_biome reached")
+                if (this._Count("day", day, potion) >= c.perDay)
+                    throw Error("PotionSafety: cap_day reached")
+                if (this._RunCount(potion) >= c.perRun)
+                    throw Error("PotionSafety: cap_run reached")
+            }
         } catch as err {
             if (this._halt = "")
                 this._halt := "record_failed"
             throw err
         }
         ; Count in memory first: a failed write keeps the over-count and halts.
-        this._runCounts[potion] := this._RunCount(potion) + 1
+        ; A quest's uses count only towards the quest caps (the biome day
+        ; and run caps stay for the rare biomes).
         this._Bump("biome", k, potion)
-        this._Bump("day", day, potion)
+        if quest {
+            this._Bump("day", day PotionSafety.QuestDay, potion)
+        } else {
+            this._runCounts[potion] := this._RunCount(potion) + 1
+            this._Bump("day", day, potion)
+        }
         try this._Save()
         catch as err {
             this._halt := "usage_write_failed"
             throw err
         }
+    }
+
+    ; A daily quest's "Use N <potion>" (2026-11-17): an event like a biome's
+    ; whose cap is the uses the quest still needs (at most QuestMax, and
+    ; QuestMax a day per potion over all quests). Every other rule (known,
+    ; unlocked, desc, never-use) is the same. -> false as BeginEvent.
+    static QuestMax := 25
+    static QuestDay := "-quest"       ; the day counter key suffix for quest uses
+    _questCaps := Map()
+    BeginQuest(eventKey, cap) {
+        n := PotionSafety._ParseCount(cap)
+        if (n < 1 || !this.BeginEvent(eventKey))
+            return false
+        this._questCaps[PotionSafety._NormEventKey(eventKey)] := Min(n, PotionSafety.QuestMax)
+        return true
     }
 
     ; Claims a biome event for this run and persists the claim before

@@ -50,7 +50,7 @@ class Updater {
         , "data\merchants.json", "data\potions.json", "data\biomes.json", "data\auras_had.txt"
         , "data\potion_usage.json", "data\last_biome.txt", "data\minions_routes.json", "data\auras_learnt.json"
         , "data\stats.json", "data\summary_last.txt", "data\schedule_state.txt", "data\whatsnew.json"
-        , "data\update_skip.txt"]
+        , "data\update_skip.txt", "data\aura_hints.json"]
     static WhatsNewFile := "data\whatsnew.json"
     static NotesMax := 8000
     static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\"]
@@ -110,6 +110,72 @@ class Updater {
                 return true
         }
         return RegExMatch(r, "^data\\[^\\]*state[^\\]*\.json$") ? true : false
+    }
+
+    ; ---- download counts (dev copy only, 2026-11-16) --------------------------
+    ; How many times each release's files were downloaded (GitHub's own public
+    ; counters: no data about anyone, nothing sent from users' macros). The
+    ; dashboard's updater downloads the zip too, so the newest release's count
+    ; is about "installed or updated".
+
+    ; the owner's dev copy: the macro folder holds DevMarker, a file that is
+    ; never committed or published (.git/info/exclude), so no released zip or
+    ; clone of the public repo has it (2026-11-16: Dev tools is the owner's only)
+    static DevMarker := ".moontide-dev"
+    static IsDevCopy(root) => FileExist(RTrim(String(root), "\/") "\" Updater.DevMarker) ? true : false
+
+    ; GitHub's /releases JSON -> {total, rows: [{tag, n}]} (its order: newest
+    ; first), or "" when it is not that
+    static DownloadCounts(body) {
+        rels := ""
+        try rels := Json.Parse(body)
+        if !(rels is Array)
+            return ""
+        out := {total: 0, rows: []}
+        for rel in rels {
+            if !(rel is Map && rel.Has("tag_name"))
+                continue
+            n := 0
+            if (rel.Has("assets") && rel["assets"] is Array)
+                for a in rel["assets"]
+                    if (a is Map && a.Has("download_count") && a["download_count"] is Integer)
+                        n += a["download_count"]
+            out.rows.Push({tag: String(rel["tag_name"]), n: n})
+            out.total += n
+        }
+        return out
+    }
+
+    ; "Total: N downloads", the 6 newest releases, then "older: N" for the
+    ; rest, so the line adds up to the total (it showed 14 of 26)
+    static DownloadText(r) {
+        s := "Total: " r.total " downloads"
+        line := "", older := 0, more := false
+        for i, row in r.rows {
+            if (i > 6) {
+                older += row.n, more := true
+                continue
+            }
+            line .= (line = "" ? "" : "   ") row.tag ": " row.n
+        }
+        if more
+            line .= "   older: " older
+        return line = "" ? s : s "`n" line
+    }
+
+    ; -> DownloadCounts of repo (owner/name), or throws
+    static FetchDownloads(repo, http := "") {
+        if !Updater.ValidRepo(repo)
+            throw ValueError("no GitHub repo set ([Update] repo)")
+        fn := IsObject(http) ? http : ((url) => Updater._Http(url))
+        r := Updater.DownloadCounts(fn.Call("https://api.github.com/repos/" repo "/releases?per_page=100"))
+        if !IsObject(r)
+            throw Error("unexpected reply from GitHub")
+        return r
+    }
+
+    static _Fail(msg) {           ; tests: an http that fails
+        throw Error(msg)
     }
 
     static ValidRepo(repo) => RegExMatch(repo, "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") ? true : false

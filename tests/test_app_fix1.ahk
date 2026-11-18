@@ -275,6 +275,8 @@ class AppFakeRejoinRecovery extends AppFakeTask {
         this.pend := false
     }
     Rejoining(state := "") => this.pend
+    fakes := 0
+    FakeDisconnect() => (this.fakes++, true)
 }
 
 ; live 2026-11-16: Roblox crashed (disconnect screen read, quests told to stop
@@ -347,4 +349,55 @@ Test_App_ManualPauseStaysWhenRobloxCloses() {
     rec.can := true, rec.pend := true
     t.app.Tick()
     AssertEq(t.app.ctx.IsPaused(), true, "a pause by hand stays")
+}
+
+; Dev tools fake alerts: the picked webhook only; refusals say why
+class AppFakeWhTo extends AppFakeWh {
+    tos := []
+    texts := []
+    SendTo(hook, title, desc, color, opts := "") => this.tos.Push({hook: hook, title: title})
+    PostText(ev, content, opts := "") {
+        this.texts.Push({ev: ev, content: content, opts: opts})
+        h := WebhookText(ev)
+        h.parts.Push({name: "Dev", url: "", id: "1", state: "ok", edit: "", edited: ""})
+        return h
+    }
+    EditText(h, content) => 1
+}
+
+Test_App_FakeAlertsGoToThePickedWebhook() {
+    dir := A_Temp "\vesper_fakealert_" A_TickCount
+    DirCreate(dir)
+    try {
+        cfg := Config.Load(dir)
+        cfg.Set("General.privateServer", "https://www.roblox.com/share?code=abc&type=Server")
+        cfg.SetData("auras", AcAuras())             ; test_aura_clip's small aura table
+        cfg.SetWebhooks([Map("name", "Public", "url", "https://discord.com/api/webhooks/1/a", "mention", "", "enabled", 1, "events", ["rare", "sinister"])
+            , Map("name", "Dev", "url", "https://discord.com/api/webhooks/2/b", "mention", "", "enabled", 1, "events", [])])
+        wh := AppFakeWhTo()
+        rec := AppFakeRejoinRecovery()
+        t := AppTestMake(Map("cfgObj", cfg, "whObj", wh, "tasks", Map("recovery", rec, "fishing", AppFakeTask("fishing", 99, false))))
+        msg := t.app.FakeAlert("sinister", "Dev")
+        AssertEq(wh.texts.Length, 1, "one boss card")
+        AssertEq(wh.texts[1].opts.hook["name"], "Dev", "to Dev only")
+        AssertTrue(InStr(msg, "Dev"), "says where: " msg)
+        AssertEq(t.timers.Length >= 1, true, "the dead edit is timed")
+        t.app.FakeAlert("aura", "Dev")
+        AssertEq(wh.tos.Length, 1, "one aura alert")
+        AssertEq(wh.tos[1].hook["name"], "Dev", "to Dev only")
+        AssertEq(wh.sent.Length, 0, "nothing on the routed webhooks")
+        AssertTrue(InStr(t.app.FakeAlert("aura", "Nope"), "refused"), "an unknown webhook is refused")
+        AssertTrue(InStr(t.app.FakeAlert("disconnect", ""), "not running"), "disconnect: the macro must run")
+        ; stopped, the run's tick is off: the service tick sends the queue
+        n := wh.flushes
+        t.app.ServiceTick()
+        AssertEq(wh.flushes, n + 1, "stopped: messages are still sent")
+        t.app.Start()
+        rec.fakes := 0
+        m := t.app.FakeAlert("disconnect", "")
+        AssertEq(rec.fakes, 1, "recovery told")
+        AssertTrue(InStr(m, "rejoin"), "says what happens: " m)
+    } finally {
+        try DirDelete(dir, true)
+    }
 }

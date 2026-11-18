@@ -114,3 +114,6 @@ Out(line) {
 #Include test_logbundle.ahk
 #Include test_fixit.ahk
 #Include test_profiles.ahk
+#Include test_prof.ahk
+#Include test_clockwatch.ahk
+#Include test_idle.ahk

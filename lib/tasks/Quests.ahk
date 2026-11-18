@@ -193,7 +193,7 @@ class QuestsTask {
             } finally
                 Screen.Mode := oldMode
         } finally {
-            if (away && !CleanupCtx.Halted(ctx))
+            if (away && !CleanupCtx.Halted(ctx) && env.RespawnAfter())
                 Input.ResetToSpawn(cc, io)
         }
         if (done.Length > 0) {

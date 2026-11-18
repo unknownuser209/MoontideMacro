@@ -2,6 +2,7 @@
 #Include %A_LineFile%\..\Theme.ahk
 #Include %A_LineFile%\..\Anim.ahk
 #Include %A_LineFile%\..\HelpTexts.ahk
+#Include %A_LineFile%\..\ThemeEditor.ahk
 #Include %A_LineFile%\..\..\Credits.ahk
 #Include %A_LineFile%\..\UiLogic.ahk
 #Include %A_LineFile%\..\..\Config.ahk
@@ -9,6 +10,7 @@
 #Include %A_LineFile%\..\..\Calibrate.ahk
 #Include %A_LineFile%\..\..\SetupCheck.ahk
 #Include %A_LineFile%\..\..\Clip.ahk
+#Include %A_LineFile%\..\..\Updater.ahk
 #Include %A_LineFile%\..\..\RouteRecorder.ahk
 #Include %A_LineFile%\..\..\tasks\BiomeItems.ahk
 #Include %A_LineFile%\..\..\tasks\MemoryMatch.ahk
@@ -176,7 +178,7 @@ class Dashboard {
         "Private server, routes, intervals, recovery, alerts and hotkeys.",
         "Record, test and reset the walking routes.",
         "Wait in THE LIMBO for Eden instead of fishing.",
-        "Medal clips of rare biomes and rare auras.",
+        "Clips of rare biomes and rare auras.",
         "Send fake events through the running macro (dry run only).",
         "Today, this run and the last 7 days.",
         "Limited-time game features. They leave the macro when the game removes them.",
@@ -306,6 +308,8 @@ class Dashboard {
         this._RefreshDry()
         this.SetStatus("Stopped", "", "", false, 0, 0)
         this.SelectPage(1)
+        if (this._bgNote != "")
+            this.Log(this._bgNote)
     }
 
     ; Anim gate: the window is visible, not minimized and the foreground window.
@@ -368,13 +372,17 @@ class Dashboard {
 
     ; ---- public ---------------------------------------------------------------
 
-    Show() {
+    ; activate false: shown without taking focus (tests: a live macro
+    ; pauses when Roblox loses the front)
+    Show(activate := true) {
+        na := activate ? "" : " NoActivate"
         if !this._shown {
-            this._gui.Show("w" Dashboard.W " h" Dashboard.H " Center")
+            this._gui.Show("w" Dashboard.W " h" Dashboard.H " Center" na)
             this._shown := true
         } else
-            this._gui.Show()
-        DllCall("SetFocus", "Ptr", this._gui.Hwnd)     ; no control starts focused
+            this._gui.Show(Trim(na))
+        if activate
+            DllCall("SetFocus", "Ptr", this._gui.Hwnd)     ; no control starts focused
         if this._active {
             for c in this._pages[this._active].ctrls
                 if (c.Type = "ListView" && c.Visible)
@@ -590,7 +598,14 @@ class Dashboard {
 
     ; ---- simple mode (idea 3) ----
 
-    PageShown(name) => !this._simple || Dashboard.SimplePages.Has(name)
+    ; Dev tools only in the owner's dev copy (Updater.IsDevCopy); simple mode
+    ; shows only SimplePages
+    PageShown(name) => (name != "Dev tools" || this._IsDev()) && (!this._simple || Dashboard.SimplePages.Has(name))
+    _IsDev() {
+        if !this.HasOwnProp("_dev")
+            this._dev := Updater.IsDevCopy(this.cfg.dir)
+        return this._dev
+    }
 
     ; hub h's pages that show now
     _ShownIn(h) {
@@ -689,13 +704,26 @@ class Dashboard {
         g := Theme.Window(Brand.Name " " Chr(0xB7) " " Credits.ByLine(), "-MaximizeBox")
         this._gui := g
         g.OnEvent("Close", (*) => this._OnClose())
-        bg := Theme.AssetPath(Theme.BgImage)             ; the theme's darkened art: panels and text read on it
-        if !FileExist(bg)
-            bg := Theme.AssetPath("moontide_bg_dim.png")
-        if !FileExist(bg)
-            bg := Theme.AssetPath("moontide_bg.png")
-        if FileExist(bg)
-            g.Add("Picture", "x176 y60 w864 h620", bg)      ; first = painted under everything
+        ; the theme's darkened art: panels and text read on it. Custom: none
+        ; (BgImage ""), a preset's art, or a picture of the user's own,
+        ; darkened and scaled to the art's size (Theme.DimPicture; the
+        ; control owns that HBITMAP); a picture that will not load = none
+        this._bgNote := ""
+        if Theme.IsOwnPicture(Theme.BgImage) {
+            hbm := Theme.DimPicture(Theme.BgImage, 864, 620, Theme.Bg)
+            if hbm
+                g.Add("Picture", "x176 y60 w864 h620", "HBITMAP:" hbm)
+            else
+                this._bgNote := "Theme: the custom background picture could not be loaded, so none is shown"
+        } else if (Theme.BgImage != "") {
+            bg := Theme.AssetPath(Theme.BgImage)
+            if !FileExist(bg)
+                bg := Theme.AssetPath("moontide_bg_dim.png")
+            if !FileExist(bg)
+                bg := Theme.AssetPath("moontide_bg.png")
+            if FileExist(bg)
+                g.Add("Picture", "x176 y60 w864 h620", bg)      ; first = painted under everything
+        }
 
         ; header: the moon logo cycles through assets\ui\moon_0..N.png (a
         ; whole cycle, new moon included), decoded once here and tinted to
@@ -1201,6 +1229,8 @@ class Dashboard {
             v := this.cfg.Get(b.key, b.def)
             if (b.kind = "bool")
                 b.ctrl.Value := v ? 1 : 0
+            else if (b.kind = "app")               ; clip app dropdown: by id
+                b.ctrl.Choose(Clip.AppIndex(v))
             else if (b.kind = "rarity")
                 b.ctrl.Value := Auras.Format(Auras.MinRarity(this.cfg))
             else
@@ -1222,6 +1252,8 @@ class Dashboard {
                     this.cfg.Set(b.key, v)
                 case "str":
                     this.cfg.Set(b.key, Trim(b.ctrl.Value))
+                case "app":
+                    this.cfg.Set(b.key, Clip.Apps[Max(1, b.ctrl.Value)].id)
                 case "rarity":             ; "100m" / "1b" / "1,000,000" -> integer
                     v := Auras.ParseRarity(b.ctrl.Value)
                     if (v = "")
@@ -1360,6 +1392,36 @@ class Dashboard {
             Theme.SetColors(this._chip, Theme.OffBg, Theme.Muted)
     }
 
+    ; ---- idle mode -------------------------------------------------------------
+
+    ; Home's "Idle mode" switch (General.idleMode): the _BoolField bind (it
+    ; loads with the page, has its "?"), saved at once like Dry run (the Run
+    ; page has no Save button). The App reads it at the next Start.
+    _IdleSwitch(x, y) {
+        key := "General.idleMode"
+        c := Theme.Check(this._gui, x, y, "Idle mode (watch only, no input)", 0, ObjBindMethod(this, "_IdleFlip"), "pill", -1)
+        this._Bind("bool", key, 0, c)
+        help := HelpTexts.For(key)
+        if (help != "")
+            this._HelpAfter(c, help)
+        return c
+    }
+
+    _IdleFlip(chk) {
+        v := chk.Value ? 1 : 0
+        this.cfg.Set("General.idleMode", v)
+        try this.cfg.Save()
+        catch Any as e {
+            this.Log("Settings: idle mode not saved: " e.Message)
+            return
+        }
+        for b in this._binds                    ; saved: not an unsaved edit
+            if (b.ctrl == chk)
+                b.loaded := String(chk.Value)
+        this.Log(v ? "Idle mode ON (from the next Start): only biomes, auras, chat and the biome clock are read; no clicks or keys"
+            : "Idle mode OFF (from the next Start): tasks run as usual")
+    }
+
     ; ---- page: Run --------------------------------------------------------------
 
     _PageRun(p) {
@@ -1387,6 +1449,7 @@ class Dashboard {
         this._DryCheck(220, 452)
         this._dryOn.Push(Theme.Label(g, "x220 y484 w364 h40", "On: every potion check runs and is logged, nothing is clicked.", "muted"))
         this._dryOff.Push(Theme.Label(g, "x220 y484 w364 h40", "Dry run is OFF: unlocked potions will really be used in rare biomes.", "body", "", Theme.Accent))
+        this._IdleSwitch(220, 538)
         Theme.Label(g, "x220 y576 w364 h20", "F3 stops everything, including potion use, at once.", "muted")
 
         ; this session's counters (SetStats); they count up when Home opens
@@ -2518,13 +2581,15 @@ class Dashboard {
                 return Theme.SetText(this._calStatus, "Select one or more steps first.")
         }
         n := 0
-        this._gui.Minimize()
+        if this._shown              ; never shown (tests): no window, no focus
+            this._gui.Minimize()
         try {
             n := this._cb.Has("calibrate") ? this._cb["calibrate"].Call(ids) : Calibrate.Run(ids)
         } catch Any as e {
             this.Log("Calibrate: " e.Message)
         }
-        this._gui.Restore()
+        if this._shown
+            this._gui.Restore()
         this._CalLoad()
         this.Log("Calibrate: " (IsInteger(n) ? n : 0) " step(s) recorded")
     }
@@ -2555,23 +2620,29 @@ class Dashboard {
         this._IntField(220, 574, "Load wait", "recovery.loadSec", 20, "s", 160)
         this._BoolField(220, 610, "Anti ghost server (rejoin if moved out of it)", "recovery.antiGhost", 1, 360)
 
-        this._Panel(616, 152, 396, 132, "Alerts")
+        this._Panel(616, 152, 396, 162, "Alerts")
         this._BoolField(632, 186, "Sound on rare biome", "General.sound", 1)
         this._BoolField(632, 214, "Ping @everyone on the biomes below", "General.everyonePing", 1)
         this._StrField(632, 244, "@everyone biomes", "General.everyoneBiomes", "DREAMSPACE,GLITCHED,CYBERSPACE", 234, 130)
+        this._BoolField(632, 278, "Join Server link in biome messages", "General.joinButton", 1, 360)
 
-        this._Panel(616, 300, 396, 96, "Hotkeys")
-        this._hkText := Theme.Label(g, "x632 y330 w364 h44", "", "body")
+        this._Panel(616, 322, 396, 80, "Hotkeys")
+        this._hkText := Theme.Label(g, "x632 y348 w364 h44", "", "body")
 
         this._Panel(616, 412, 396, 192, "Look", "Theme: the colours and the background picture (Sol's RNG art). A new theme shows after Apply now or the next start. "
             . "Language: the language of this window, also shown after Apply now or the next start. "
             . "Animations: the tab underline, page fade, moon, stars, running pulse and Home count-up. "
-            . "They only move while this window is in front, never while Roblox is.")
+            . "They only move while this window is in front, never while Roblox is.`n`n"
+            . "Custom: your own colours and background picture. Edit custom makes them; Save there picks Custom here, then Apply now shows it.")
         this._BoolField(632, 446, "Animations", "UI.animations", 1)
         Theme.Label(g, "x632 y482 w90 h20", "Theme")
-        this._themeDdl := Theme.Dropdown(g, 722, 478, 150, Theme.Names)
+        this._themeDdl := Theme.Dropdown(g, 722, 478, 150, Theme.Choices())
         this._themeDdl.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+        this._themeDdl.OnEvent("Change", (*) => this._ThemeNote())
         this._ids["UI.theme"] := this._themeDdl
+        ; Custom theme window (lib\ui\ThemeEditor.ahk); tests replace the hook
+        this._openThemeEditor := () => ThemeEditor(this.cfg, this._gui).ShowModal()
+        this._ids["themeEdit"] := Theme.Button(g, "x880 y516 w116 h28", "Edit custom", (*) => this.EditCustomTheme(), "quiet")
         this._themeApply := Theme.Button(g, "x880 y478 w116 h28", "Apply now", (*) => this.ApplyTheme(), "quiet")
         this._ids["themeApply"] := this._themeApply
         ; language (UI.lang, lib\I18n.ahk): like the theme, shown after Apply now or the next start
@@ -2602,25 +2673,34 @@ class Dashboard {
 
     _PageClips(p) {
         g := this._gui
-        this._Panel(204, 152, 396, 330, "Medal clips")
-        this._BoolField(220, 186, "Clip with Medal", "Medal.enabled", 0)
-        this._StrField(220, 216, "Clip hotkey", "Medal.clipHotkey", "F8", 80, 130)
-        this._IntField(220, 252, "Delay (s)", "Medal.delaySec", 3, "", 90)
-        this._IntField(398, 252, "Cooldown (s)", "Medal.cooldownSec", 30, "", 110)
-        this._BoolField(220, 290, "Clip on rare biome", "Medal.onRareBiome", 1)
-        this._BoolField(220, 318, "Clip on rare aura", "Medal.onRareAura", 0)
+        this._Panel(204, 152, 396, 362, "Clips")
+        this._BoolField(220, 186, "Save clips", "Medal.enabled", 0)
+        ; the clip app (2026-11-16): made empty, then filled (a dropdown made
+        ; with its items is that many rows tall and stops the page painting)
+        this._FieldLabel(220, 214, "Clip app", "Medal.app", 130)
+        dd := Theme.Dropdown(g, 350, 214, 180)
+        dd.Add(Dashboard._ClipAppNames())
+        this._Bind("app", "Medal.app", "medal", dd)
+        dd.OnEvent("Change", ObjBindMethod(this, "_ClipAppChange"))
+        this._StrField(220, 250, "Clip hotkey", "Medal.clipHotkey", "F8", 120, 130)
+        this._IntField(220, 286, "Delay (s)", "Medal.delaySec", 3, "", 90)
+        this._IntField(398, 286, "Cooldown (s)", "Medal.cooldownSec", 30, "", 110)
+        this._BoolField(220, 324, "Clip on rare biome", "Medal.onRareBiome", 1)
+        this._BoolField(220, 352, "Clip on rare aura", "Medal.onRareAura", 0)
         ; aura rule (lib\Auras.ahk): listed OR class listed OR 1-in-N >= threshold
-        this._StrField(220, 348, "Clip auras rarer than 1 in", "Medal.auraMinRarity", "100000000", 150, 180)
+        this._StrField(220, 382, "Clip auras rarer than 1 in", "Medal.auraMinRarity", "100000000", 150, 180)
         this._binds[this._binds.Length].kind := "rarity"
-        this._StrField(220, 382, "Always clip classes", "Medal.auraAlwaysCategories", "Challenged,Challenged+", 224, 140)
-        this._StrField(220, 416, "Always clip auras", "Medal.auras", "", 224, 140)
-        this._BoolField(220, 450, "Clip every aura with a cutscene", "Medal.clipCutscenes", 0)
-        this._Panel(616, 152, 396, 84, "Medal", "Medal (medal.exe) must be running. The macro presses the clip hotkey, "
-            . "so set the same key in Medal. The hotkey is one of F4-F24, never a macro, capture or recorder key.`n`n"
+        this._StrField(220, 416, "Always clip classes", "Medal.auraAlwaysCategories", "Challenged,Challenged+", 224, 140)
+        this._StrField(220, 450, "Always clip auras", "Medal.auras", "", 224, 140)
+        this._BoolField(220, 484, "Clip every aura with a cutscene", "Medal.clipCutscenes", 0)
+        this._Panel(616, 152, 396, 108, "Clip app", "The macro presses your clip app's save-clip hotkey a few seconds after the moment, "
+            . "so set the same key in the app. Picking an app fills in its usual hotkey. The hotkey is F4-F24 or a combo like Alt+C, "
+            . "never a macro, capture or recorder key.`n`n"
             . "A rare aura is clipped when it is listed, its class is listed, or it is rarer than the threshold. "
             . "'Clip every aura with a cutscene' clips any new aura that plays a roll cutscene (1 in 1,000 and rarer, and new limited auras), whatever the threshold.")
-        Theme.Label(g, "x632 y184 w364 h20", "Medal (medal.exe) must be running.", "muted")
-        Theme.Label(g, "x632 y206 w364 h20", "Set the same hotkey in Medal (F8, Alt+9, Shift+F5+T).", "muted")
+        this._ids["clipAppRun"] := Theme.Label(g, "x632 y184 w364 h20", "", "muted")
+        this._ids["clipAppTip"] := Theme.Label(g, "x632 y206 w364 h44", "", "muted")
+        p.onShow := ObjBindMethod(this, "_ClipAppNote")
         p.validate := ObjBindMethod(this, "_ClipsCheck")
         this._SaveBar(p)
     }
@@ -2630,6 +2710,50 @@ class Dashboard {
     _CapKey() {
         k := Trim(this.cfg.Get("Calibrate.captureKey", Calibrate.DefaultCaptureKey))
         return (k = "" || StrUpper(k) = "F9") ? Calibrate.DefaultCaptureKey : k
+    }
+
+    ; the clip app dropdown's names, in Clip.Apps order
+    static _ClipAppNames() {
+        out := []
+        for a in Clip.Apps
+            out.Push(a.id = "other" ? "Other" : a.name)
+        return out
+    }
+
+    ; how to set each clip app up (the Clip app panel)
+    static ClipAppTips := Map(
+        "medal", "Set the same hotkey in Medal (Settings > Clips).",
+        "discord", "In Discord: User Settings > Clips, turn on clips and set the same keybind (Discord's default is Alt+C).",
+        "nvidia", "In the NVIDIA app: turn on Instant Replay. Its save hotkey is Alt+F10 unless you changed it.",
+        "amd", "In AMD Software: turn on Instant Replay. Its save hotkey is Ctrl+Shift+S unless you changed it.",
+        "obs", "In OBS: start the Replay Buffer and give 'Save Replay' the same hotkey (Settings > Hotkeys).",
+        "other", "Any app with a save-clip hotkey: type the same key above. Nothing checks that it is running.")
+
+    _ClipApp() {
+        dd := this.Ctrl("Medal.app")
+        return Clip.Apps[(IsObject(dd) && dd.Value >= 1) ? dd.Value : 1]
+    }
+
+    ; the Clip app panel's two lines for the picked app
+    _ClipAppNote(*) {
+        a := this._ClipApp()
+        if !IsObject(this.Ctrl("clipAppRun"))
+            return
+        Theme.SetText(this.Ctrl("clipAppRun"), a.exes.Length ? StrTitle(SubStr(a.name, 1, 1)) SubStr(a.name, 2) " (" a.exes[1] ") must be running." : "Any clip app (not checked).")
+        Theme.SetText(this.Ctrl("clipAppTip"), Dashboard.ClipAppTips[a.id])
+        this._clipAppShown := a.id
+    }
+
+    ; another app picked: its usual hotkey in the field when the field was
+    ; empty or held the last app's usual one (a key typed by hand is kept)
+    _ClipAppChange(ctrl, *) {
+        a := this._ClipApp()
+        prev := this.HasOwnProp("_clipAppShown") ? Clip.App(this._clipAppShown) : ""
+        hk := this.Ctrl("Medal.clipHotkey")
+        cur := Trim(hk.Value)
+        if (a.key != "" && (cur = "" || (IsObject(prev) && StrUpper(cur) = StrUpper(prev.key))))
+            hk.Value := a.key
+        this._ClipAppNote()
     }
 
     ; "" or why Clips cannot be saved (checked before cfg is touched).
@@ -2666,10 +2790,31 @@ class Dashboard {
     }
 
     ; "Now: X" or "X after Apply now" under the theme dropdown
+    ; (the theme picked in the dropdown; Custom also when its saved colours
+    ; differ from the ones on screen)
     _ThemeNote() {
-        saved := Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide"))
-        Theme.SetText(this._ids["themeNote"], saved = Theme.Current ? I18n.F("Now: {1} ({2})", Theme.Current, I18n.T(Theme.Presets[Theme.Current].Note))
-            : I18n.F("{1} shows after Apply now (saves and restarts the macro while it is stopped) or the next start.", saved))
+        picked := Theme.ThemeName(this._themeDdl.Text != "" ? this._themeDdl.Text : this.cfg.Get("UI.theme", "Moontide"))
+        same := (picked = Theme.Current)
+        if (same && picked = Theme.CustomName)
+            same := (Theme.CustomDerive(this.cfg).Sig == Theme.CurrentSig)
+        Theme.SetText(this._ids["themeNote"], same ? I18n.F("Now: {1} ({2})", I18n.T(Theme.Current), I18n.T(Theme.NoteOf(Theme.Current)))
+            : I18n.F("{1} shows after Apply now (saves and restarts the macro while it is stopped) or the next start.", I18n.T(picked)))
+    }
+
+    ; Settings > Look "Edit custom": the Custom theme window; once saved
+    ; there, Custom is picked here (Apply now or Save keeps it)
+    EditCustomTheme() {
+        ok := false
+        try ok := this._openThemeEditor.Call()
+        catch Any as e
+            this.Log("Theme: the custom theme window failed: " e.Message)
+        if !ok
+            return false
+        this._themeDdl.Choose(Theme.CustomName)
+        this._MarkDirty("Settings")
+        this._ThemeNote()
+        this.Log("Theme: custom colours saved; Apply now shows them")
+        return true
     }
 
     _PsClear() {
@@ -2764,7 +2909,7 @@ class Dashboard {
         this._Panel(616, 152, 396, 220, "Memory Match", "Plays the Memory Match board (20 tiles, 10 turns, every 12 hours) and keeps the best pairs. "
             . "Record the memory_match route (to the board) on Setup > Routes. It stays off until the board layout is added from a clip of one round.")
         this._memSwitch := this._BoolField(632, 186, "Play Memory Match", "MemoryMatch.enabled", 0)
-        this._WarnOn(this._memSwitch, "Memory Match is not perfect", "Memory Match works better at some screen sizes than others, and it can miss the board or skip a round. Keep an eye on it the first times.")
+        ; no warning any more (2026-11-16, the owner: Memory Match is not buggy now)
         if !MemoryMatchTask.LayoutKnown {
             ; no layout yet: the switch cannot be turned on
             this._memSwitch.DefineProp("Flip", {Call: (*) => 0})
@@ -2772,6 +2917,7 @@ class Dashboard {
         }
         this._ids["memoryLayoutNote"] := Theme.Label(g, "x632 y224 w364 h40", "", "muted")
         this._ids["memoryNote"] := Theme.Label(g, "x632 y272 w364 h20", "", "muted")
+        this._ids["memoryReset"] := Theme.Button(g, "x632 y300 w150 h28", "Reset timer", (*) => this.ResetMemoryTimer())
         ; every aura swap (the obby's Sailor, the combat aura, putting yours back)
         this._Panel(204, 388, 808, 100, "Aura swaps")
         this._BoolField(220, 422, "Equip the first search result", "Auras.equipFirst", 0, , "Equip the first search result (no name reading): use this if aura swaps fail at your resolution. "
@@ -2792,10 +2938,23 @@ class Dashboard {
             this._memSwitch.Value := 0
         Theme.SetText(this._ids["memoryLayoutNote"], known ? "" : "waiting for the board layout (send a clip of one round)")
         nt := ""
-        try nt := MemoryMatchTask({cfg: this.cfg}).NextTry()
+        try nt := MemoryMatchTask({cfg: this.cfg, statePath: Dashboard.MemoryStatePath}).NextTry()
         Theme.SetText(this._ids["memoryNote"], (nt = "")
-            ? "next try: when it is turned on"
+            ? "next try: now (when it is on)"
             : "next try: " FormatTime(nt, "HH:mm") " on " FormatTime(nt, "dd MMM"))
+    }
+
+    ; "Reset timer": Memory Match plays at its next chance instead of waiting
+    ; out the 12 hours. The running macro reads the same file, so it counts
+    ; at once. Tests point MemoryStatePath at a temp file ("" = the real one).
+    static MemoryStatePath := ""
+    ResetMemoryTimer() {
+        ok := false
+        try ok := MemoryMatchTask({cfg: this.cfg, statePath: Dashboard.MemoryStatePath}).ResetTimer()
+        this._ObbyMemoryLoad()
+        if ok
+            this.Log("Memory Match: timer reset, it plays at the next chance")
+        return ok
     }
 
     ; "" or why Obby & Memory cannot be saved (checked before cfg is touched).
@@ -2820,7 +2979,18 @@ class Dashboard {
     _PageStats(p) {
         g := this._gui
         for col in [["day", 204, "Today"], ["run", 616, "This run"]] {
-            this._Panel(col[2], 152, 396, 300, col[3])
+            parts := this._Panel(col[2], 152, 396, 300, col[3])
+            if (col[1] = "run") {
+                ; the second panel shows this run or the all-time totals
+                ; (DailyStats.AllTime); the title says which, the pick is kept
+                ; until the dashboard closes
+                parts[3].Move(, , 200)
+                this._ids["stats:runTitle"] := parts[3]
+                this._statsMode := "This run"
+                this._statsRunMap := Map(), this._statsAllMap := Map(), this._statsSince := ""
+                seg := Theme.Segmented(g, 836, 158, ["This run", "All time"], 1, (lb) => this._StatsView(lb), 80, 22)
+                this._ids["statsView"] := seg
+            }
             for i, r in Dashboard.StatRows {
                 y := 184 + (i - 1) * 26
                 Theme.Label(g, "x" col[2] + 16 " y" y " w200 h22", r[2], "body", Theme.CardBg)
@@ -2834,9 +3004,17 @@ class Dashboard {
         this._ids["stats:history"] := this._statsHist
     }
 
-    ; Stats page. day / run: Maps of counters plus DailyStats.Derived keys
-    ; (missing = 0); history: Array of {label, m} newest first, or "" to keep it.
-    SetStatsPage(day, run, history := "") {
+    ; Stats page. day / run / all: Maps of counters plus DailyStats.Derived
+    ; keys (missing = 0); history: Array of {label, m} newest first, or "" to
+    ; keep it. all / since (yyyyMMdd): the all-time totals and their first
+    ; day, shown in the second panel when "All time" is picked ("" = keep).
+    SetStatsPage(day, run, history := "", all := "", since := "") {
+        this._statsRunMap := (run is Map) ? run : Map()
+        if (all is Map)
+            this._statsAllMap := all, this._statsSince := String(since)
+        if (this._statsMode = "All time")
+            run := this._statsAllMap
+        this._StatsTitle()
         for col in [["day", day], ["run", run]] {
             for r in Dashboard.StatRows {
                 c := this._ids["stats:" col[1] ":" r[1]]
@@ -2854,6 +3032,28 @@ class Dashboard {
             lv.Add(, h.label, Dashboard.StatText(h.m, "fishCaught"), Dashboard.StatText(h.m, "fishFailed"), Dashboard.StatText(h.m, "reelRate")
                 , Dashboard.StatText(h.m, "biomes"), Dashboard.StatText(h.m, "rareBiomes"), Dashboard.StatText(h.m, "rejoins"), Dashboard.StatText(h.m, "uptimeText"))
         lv.Opt("+Redraw")
+    }
+
+    ; Stats > "This run" / "All time" picked: the second panel redrawn from
+    ; the numbers it was last given
+    _StatsView(label) {
+        this._statsMode := (label = "All time") ? "All time" : "This run"
+        m := (this._statsMode = "All time") ? this._statsAllMap : this._statsRunMap
+        this._StatsTitle()
+        for r in Dashboard.StatRows {
+            c := this._ids["stats:run:" r[1]]
+            v := Dashboard.StatText(m, r[1])
+            if (c.Text != v)
+                Theme.SetText(c, v)
+        }
+    }
+
+    ; "THIS RUN" or "ALL TIME, SINCE 2 NOV 2026"
+    _StatsTitle() {
+        t := I18n.T("This run")
+        if (this._statsMode = "All time")
+            t := RegExMatch(this._statsSince, "^\d{8}$") ? I18n.F("All time, since {1}", FormatTime(this._statsSince "000000", "d MMM yyyy")) : I18n.T("All time")
+        Theme.SetText(this._ids["stats:runTitle"], StrUpper(t))
     }
 
     ; one Stats cell: reelRate "87%" ("-" with no tries), uptimeText as given
@@ -3248,6 +3448,86 @@ class Dashboard {
         this._ids["testEvent:merchant"] := Theme.Button(g, "x220 y224 w220 h30", "Fake Mari arrival", (*) => this.TestEvent("merchant"))
         this._testStatus := Theme.Label(g, "x220 y268 w364 h80", "", "muted")
         this._ids["testStatus"] := this._testStatus
+        ; fake alerts (2026-11-16): to one picked webhook, never the routed ones
+        this._Panel(204, 380, 396, 236, "Fake alerts (dev)", "The boss card and the rare aura alert go ONLY to the webhook you pick here, "
+            . "marked [TEST], so your public channels never see them. They work with dry run on or off. "
+            . "Fake disconnect needs the macro running: it closes Roblox and rejoins your private server, like after a crash.")
+        Theme.Label(g, "x220 y414 w70 h20", "Send to", "body")
+        dd := Theme.Dropdown(g, 292, 410, 200)
+        this._ids["testHook"] := dd
+        this._ids["testAlert:sinister"] := Theme.Button(g, "x220 y450 w176 h30", "Fake Sinister spawn", (*) => this.TestAlert("sinister"))
+        this._ids["testAlert:aura"] := Theme.Button(g, "x404 y450 w176 h30", "Fake rare aura", (*) => this.TestAlert("aura"))
+        this._ids["testAlert:disconnect"] := Theme.Button(g, "x220 y488 w176 h30", "Fake disconnect", (*) => this.TestAlert("disconnect"))
+        this._ids["testAlertStatus"] := Theme.Label(g, "x220 y528 w364 h76", "", "muted")
+
+        ; download counts (2026-11-16): only in the dev copy (a git checkout)
+        if Updater.IsDevCopy(this.cfg.dir) {
+            this._Panel(616, 152, 396, 136, "Downloads (dev)", "How many times each release was downloaded, from GitHub's public counters. "
+                . "Nothing is sent from anyone's macro and no one is tracked. The dashboard's updater downloads the zip too, "
+                . "so the newest release's number is about how many people installed or updated it. One person downloading twice counts twice.")
+            this._ids["dlText"] := Theme.Label(g, "x632 y184 w364 h60", "Press Refresh.", "body")
+            this._ids["dlRefresh"] := Theme.Button(g, "x632 y248 w110 h28", "Refresh", (*) => this.RefreshDownloads(), "quiet")
+        }
+        p.onShow := ObjBindMethod(this, "_DevToolsShow")
+    }
+
+    ; the Downloads (dev) panel: GitHub's counts for [Update] repo
+    _dlShown := false
+    static DownloadsHttp := ""            ; tests: (url) -> body
+    RefreshDownloads() {
+        t := this.Ctrl("dlText")
+        if !IsObject(t)
+            return ""
+        Theme.SetText(t, "Asking GitHub...")
+        try {
+            ; the public repo (a dev copy's settings usually have no [Update] repo,
+            ; so it never updates itself)
+            repo := Trim(String(this.cfg.Get("Update.repo", "")))
+            r := Updater.FetchDownloads(Updater.ValidRepo(repo) ? repo : Brand.Repo, Dashboard.DownloadsHttp)
+            msg := Updater.DownloadText(r) "`n(" FormatTime(, "HH:mm") ")"
+        } catch Any as e
+            msg := "Could not read the counts: " (e is Error ? e.Message : String(e))
+        Theme.SetText(t, msg)
+        return msg
+    }
+
+    ; Dev tools shown: the webhook list again (it may have changed), the
+    ; download counts once per session (after the page painted)
+    _DevToolsShow(*) {
+        this._TestHooksLoad()
+        if (IsObject(this.Ctrl("dlText")) && !this._dlShown) {
+            this._dlShown := true
+            SetTimer(() => this.RefreshDownloads(), -50)
+        }
+    }
+
+    ; the "Send to" list: webhooks with a saved URL (names only)
+    _TestHooksLoad(*) {
+        dd := this.Ctrl("testHook")
+        if !IsObject(dd)
+            return
+        keep := dd.Text
+        dd.Delete()
+        names := []
+        for w in this.cfg.Webhooks()
+            if (w.Has("name") && Trim(w["name"]) != "" && w.Has("url") && Trim(w["url"]) != "")
+                names.Push(w["name"])
+        if names.Length {
+            dd.Add(names)
+            idx := 1
+            for i, n in names
+                if (n = keep)
+                    idx := i
+            dd.Choose(idx)
+        }
+    }
+
+    TestAlert(kind) {
+        dd := this.Ctrl("testHook")
+        hook := IsObject(dd) ? dd.Text : ""
+        msg := this._cb.Has("testAlert") ? this._Fire("testAlert", kind, hook) : "Fake alerts need the running " Brand.Name " app."
+        Theme.SetText(this.Ctrl("testAlertStatus"), String(msg))
+        return msg
     }
 
     TestEvent(kind) {

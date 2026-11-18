@@ -822,6 +822,16 @@ class CraftTask {
     }
 
     ; The purchase window is up: fisher_confirm pixel, or its title.
+    ; A Roblox Robux prompt reads in Input.PurchaseBox: its Robux-only lines
+    ; ("Buy Robux and item", "balance after this transaction", "be charged",
+    ; "payment method"), never the shop's own words
+    static RobuxRe := "i)r[o0]bux|balance\s*after|be\s*charged|payment\s*meth[o0]d"
+    _RobuxPrompt() {
+        b := Input.PurchaseBox, t := ""
+        try t := (this._env.ocrFn)(b.x, b.y, b.w, b.h)
+        return RegExMatch(t, CraftTask.RobuxRe) > 0
+    }
+
     _PurchaseUp(plan) => Screen.WithMode("C", () => this._PurchaseUpM(plan))
     _PurchaseUpM(plan) {
         env := this._env
@@ -1017,6 +1027,16 @@ class CraftTask {
             Input.TypeText(item.qty, io)
             if !env.Wait(CraftTask.TypeSettleMs, ctx)
                 return ""
+            ; the confirm is seen by one pixel colour or a title: a Roblox
+            ; purchase prompt (Robux) over that spot must never take the
+            ; click. Only its Robux lines count here (the shop's own window
+            ; is up and is no Roblox prompt). Closed with Esc, nothing bought.
+            if this._RobuxPrompt() {
+                env.BuyPrompt("craft")
+                msg := item.name ": not bought: a Roblox purchase prompt was up (closed with Esc, never clicked)"
+                env.Log("craft: " msg)
+                return {ok: false, line: msg}
+            }
             if this._PurchaseUp(plan) {
                 Screen.WithMode("C", () => env.Click(conf))
                 if !env.Wait(gap, ctx)

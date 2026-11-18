@@ -14,7 +14,9 @@
 ;                  it only reads the chat every merchant.chatPollSec seconds
 ;                  (cfg, default 5). After the hover it waits
 ;                  merchant.chatHoverMs (cfg, default 150) before the OCR so
-;                  a faded chat has its background back. Nothing happens, and
+;                  a faded chat has its background back (ChatWatch.NoHover,
+;                  idle mode: no hover and no wait, the chat is read as it
+;                  is). Nothing happens, and
 ;                  "" OCR is treated as
 ;                  unknown, if chat_rect is not calibrated (logged, errors
 ;                  webhook once).
@@ -38,6 +40,7 @@ class ChatWatch {
     static AbsentReads := 2
     static DefaultPollSec := 5
     static DefaultHoverMs := 150
+    static NoHover := false      ; idle mode (App): never move the mouse, read the chat as it is
 
     __New(deps := "") {
         this._env := TaskEnv(deps)
@@ -121,16 +124,20 @@ class ChatWatch {
         rect := env.Rect("chat_rect")
         if (rect == "")
             return []
-        c := TaskEnv.Center(rect)
-        env.io.MoveTo(c[1], c[2])               ; hover only: no click, no typing
-        ; Faded chat gets its dark background back < 150 ms after a hover
-        ; (recon 2026-10-25); OCR over the bright sky degrades without it.
-        hoverMs := ChatWatch.DefaultHoverMs
-        if IsObject(env.cfg)
-            hoverMs := env.cfg.Get("merchant.chatHoverMs", ChatWatch.DefaultHoverMs)
-        if (!IsInteger(hoverMs) || hoverMs < 0)
+        ; idle mode (NoHover): the mouse is never moved; a faded chat is
+        ; read as it is (its text stays, only its dark background fades)
+        if !ChatWatch.NoHover {
+            c := TaskEnv.Center(rect)
+            env.io.MoveTo(c[1], c[2])               ; hover only: no click, no typing
+            ; Faded chat gets its dark background back < 150 ms after a hover
+            ; (recon 2026-10-25); OCR over the bright sky degrades without it.
             hoverMs := ChatWatch.DefaultHoverMs
-        env.io.Wait(Integer(hoverMs))
+            if IsObject(env.cfg)
+                hoverMs := env.cfg.Get("merchant.chatHoverMs", ChatWatch.DefaultHoverMs)
+            if (!IsInteger(hoverMs) || hoverMs < 0)
+                hoverMs := ChatWatch.DefaultHoverMs
+            env.io.Wait(Integer(hoverMs))
+        }
         text := (env.ocrFn)(rect.x, rect.y, rect.w, rect.h)
         if (text == "")
             return []                           ; unknown: no action

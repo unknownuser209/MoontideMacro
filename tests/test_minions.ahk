@@ -71,7 +71,7 @@ MnTask(frames := "", gets := "", owned := "", io := "") {
     wh := QmWh()
     logs := []
     s := ObStore(io, "Glock", IsObject(owned) ? owned : ["Eden", "Glock"])
-    g := Map("Minions.enabled", 1, "Minions.patrol", 0, "Minions.spots", 0)
+    g := Map("Minions.enabled", 1, "Minions.patrol", 0, "Minions.spots", 0, "Minions.routes", 0)
     if (gets is Map)
         for k, v in gets
             g[k] := v
@@ -335,6 +335,24 @@ Test_Minions_PatrolWalksASpiralUntilTheHuntsTime() {
     AssertTrue(m.io.t - t0 >= 60000, "walked the hunt's time")
     AssertTrue(MnWalks(m.io) >= 12, "steps: " MnWalks(m.io))
     AssertTrue(QmObbyDowns(m.io, "Right") + QmObbyDowns(m.io, "Left") >= 2, "corners")
+}
+
+; HELL 03:50-03:52: 5 deaths, each after walking to a glow over the red sea.
+; There no glow is walked to and the map is not walked; nor anywhere after
+; FallStop falls in one hunt
+Test_Minions_NoBlindWalksInHell() {
+    m := MnTask([[]], Map("Minions.patrol", 1, "Minions.maxSec", 60))
+    m.state.biome := "HELL"
+    m.t.CanRun(m.state)
+    m.t._biome := "HELL"
+    m.t._beaconFn := () => [{x: 1280, y: 500, r: 30}]
+    m.t.Run(SchedCtx())
+    AssertTrue(!MnLogged(m, "orb glow at") && !MnLogged(m, "walking the map"), "no glow, no map walk")
+    AssertEq(MnCount(m, "no map walk in HELL"), 1, "logged once")
+    AssertEq(MnWalks(m.io), 0, "no step")
+    t := MnTask().t
+    t._biome := "RAINY"
+    AssertTrue(!t._NoBlind({fellN: MinionsTask.FallStop - 1}) && t._NoBlind({fellN: MinionsTask.FallStop}), "RAINY: blind walks till FallStop falls")
 }
 
 ; the game under the map walk: the camera goes round in 3000 ms of arrow key
@@ -1003,6 +1021,58 @@ Test_Obby_UnreadNameIsFoundThroughTheLog() {
     for l in o.logs
         found := found || InStr(l, "found by the log")
     AssertTrue(found, "logged how it was found")
+}
+
+; speed (2026-11-17): the second time, the tile the log found it on is
+; equipped first, without reading every tile's name
+Test_Obby_UnreadNameTriesLastTimesTileFirst() {
+    o := QmObbyTask("Glock", , , , ["Celestial", "Sailor", "Glock"])
+    o.s.owned := ["Sailor: Admiral", "Sailor", "Glock"]
+    o.s.logo := ["Sailor: Admiral", "Sailor"]
+    AssertEq(o.t.Run(SchedCtx()), 1, "first run: found through the log")
+    n := o.logs.Length
+    AssertEq(o.t.Run(SchedCtx()), 1, "second run too")
+    hint := false
+    Loop o.logs.Length - n
+        hint := hint || InStr(o.logs[n + A_Index], "from last time")
+    AssertTrue(hint, "the second run took last time's tile")
+    AssertEq(o.s.State().eq, "Glock", "Glock back after the run")
+    ; kept across restarts: a new task with the same hint file starts with them
+    p := A_Temp "\vesper_hints_" A_TickCount ".json"
+    try {
+        o.t._hintPath := p, o.t._SaveHints()
+        t2 := ObbyTask({hintPath: p})
+        AssertEq(t2._logHint.Count, o.t._logHint.Count, "the log hints loaded")
+        AssertEq(t2._tabHint["eden"], 2, "Eden's tab kept")
+        t3 := ObbyTask({hintPath: p "_missing"})
+        AssertEq(t3._logHint.Count, 0, "no file: none")
+    } finally {
+        try FileDelete(p)
+    }
+}
+
+; the obby and the minions' swap share data\aura_hints.json: each save keeps
+; what the other learned (a whole-map save dropped it), a delete still goes
+Test_Obby_HintsMergedBetweenTwoSwaps() {
+    p := A_Temp "\vesper_hints_merge_" A_TickCount ".json"
+    try {
+        a := ObbyTask({hintPath: p})
+        b := ObbyTask({hintPath: p})                ; both made before either saved
+        a._tileHint["sailor|1"] := 3, a._SaveHints()
+        b._logHint["flying dutchman|2"] := 5, b._SaveHints()
+        f := ObbyTask._ReadHints(p)
+        AssertEq(f["tile"].Has("sailor|1") ? f["tile"]["sailor|1"] : 0, 3, "the obby's tile kept")
+        AssertEq(f["log"].Has("flying dutchman|2") ? f["log"]["flying dutchman|2"] : 0, 5, "the swap's log hint written")
+        AssertEq(f["tab"].Has("eden") ? f["tab"]["eden"] : 0, 2, "Eden's tab kept")
+        AssertEq(b._tileHint.Has("sailor|1") ? b._tileHint["sailor|1"] : 0, 3, "the swap now knows the obby's tile")
+        b._logHint.Delete("flying dutchman|2"), b._SaveHints()
+        a._tabHint["sailor"] := 1, a._SaveHints()
+        f := ObbyTask._ReadHints(p)
+        AssertTrue(!f["log"].Has("flying dutchman|2"), "a deleted hint stays deleted")
+        AssertEq(f["tile"]["sailor|1"], 3, "the rest kept")
+    } finally {
+        try FileDelete(p)
+    }
 }
 
 ; bars as on screen: moved by every Left turn (only ScanTurnMs ones here),
@@ -2793,6 +2863,28 @@ MnHpLog(a) {
     return out
 }
 
+; night 11-18 04:20 / 04:35: deaths in a fight with the HP never low, each a
+; strafe off the island at night. The way the player moved last is kept as a
+; fall, so the next life's dodges keep off it
+Test_Minions_FightFallWay() {
+    past := [{x: 0, y: 0, at: 0}, {x: 0, y: 100, at: 800}, {x: 0, y: 300, at: 1500}]
+    w := MinionsTask.FightFall(past, {x: 400, y: 300}, 2000)
+    AssertTrue(IsObject(w) && w.x = 400 && w.y = 300 && w.b = 750, "from the latest tick 0.5 s back: right, bearing " (IsObject(w) ? w.b : "-"))
+    AssertEq(MinionsTask.FightFall(past, {x: 50, y: 300}, 2000), "", "hardly moved: none")
+    AssertEq(MinionsTask.FightFall(past, {x: 400, y: 300}, 400), "", "no tick that far back: none")
+}
+
+Test_Minions_DeathNeverHurtInAFightKeepsAFall() {
+    m := MnTask(, , , MnTurnIO())
+    near := [{x: 1200, y: 680, w: 200}, {x: 1400, y: 700, w: 130}, {x: 1000, y: 700, w: 125}]
+    dead := false
+    m.t._scanFn := () => (dead ? [] : QmObbyDowns(m.io, "Left") >= 2 ? near : [])
+    m.t._deathFn := () => (!dead && MnSkills(m.io) >= 3 && m.io.HeldMs("a") + m.io.HeldMs("d") >= 1500) ? (dead := true) : false
+    m.t.Run(SchedCtx())
+    AssertTrue(MnLogged(m, "died in the fight, never hurt - off the edge?"), "logged")
+    AssertTrue(m.t._falls.Length >= 1, "kept as a fall")
+}
+
 ; the death screen mid-fight: logged, re-aimed, back the way the fight was
 Test_Minions_DeathScreenTurnsBackToTheFight() {
     m := MnTask(, , , MnTurnIO())
@@ -3535,6 +3627,36 @@ Test_Minions_PatrolGoesWhereItHasNotSearched() {
     AssertTrue(MinionsTask.PatrolHeading(at, Map(), fall, 0) != 0, "not at a remembered fall")
 }
 
+; night 11-18: four falls on the map walk from spawn at bearings 0..375 (the
+; respawn way, the first heading tried). From spawn none of the headings
+; within 60 degrees of them; once they are left behind, any way
+Test_Minions_PatrolAvoidsTheKnownSea() {
+    first := MinionsTask.PatrolHeading({x: 0, y: 0}, Map(), [], 0)
+    for b in [0, 375, 2625]
+        AssertTrue(first != b, "from spawn not " b ": " first)
+    AssertEq(MinionsTask.SeaFalls().Length, MinionsTask.SeaFallsAt.Length, "one fall each")
+    AssertTrue(MinionsTask.FallAhead(MinionsTask.SeaFalls(), {x: 0, y: 0}, 0, 4200, 0), "4.2 s at bearing 0 from spawn: the sea")
+    AssertTrue(!MinionsTask.FallAhead(MinionsTask.SeaFalls(), {x: 0, y: 0}, 1500, 4200, 0), "the other way: none")
+}
+
+; the spot fought at in this biome: its route replayed blind once a hunt, as
+; the map walk would start; another biome (or none fought): no
+Test_Minions_DueRouteOfThisBiomesFight() {
+    m := MnLearnTask(), t := m.t
+    t._routes["1012"] := MnRoute(2, 1012)
+    t._aimed := true, t._trail := [], t._biomeAt := 5000
+    AssertTrue(!t._RouteDue(MnRouteFight("")), "no fight in this biome: no blind route")
+    t._fightSpot := {spot: "1012", biomeAt: 4000}
+    AssertTrue(!t._RouteDue(MnRouteFight("")), "fought in an earlier biome: no")
+    t._fightSpot := {spot: "1012", biomeAt: 5000}
+    f := MnRouteFight("")
+    AssertTrue(t._RouteDue(f), "this biome's fight: replayed")
+    AssertEq(f.spot " " f.rWhy " " f.rTried, "1012 due 1", "blind, once a hunt")
+    AssertTrue(!t._RouteDue(f), "not twice")
+    t._fightSpot := {spot: "1937", biomeAt: 5000}
+    AssertTrue(!t._RouteDue(MnRouteFight("")), "its route gone: no")
+}
+
 ; L47 16:50:30: the orb at 0.05, its bar too short to read, a look round lost the kill
 Test_Minions_OrbNearlyDeadIsStayedOn() {
     f := {casts: 3, orbFill: 0.05, orbAt: 1000, down: 3, boss: false}
@@ -4123,6 +4245,26 @@ Test_Minions_FlashMeansNothing() {
     AssertEq(QmObbyDowns(m.io, "w"), QmObbyDowns(m.io, "f") + QmObbyDowns(m.io, "e") + QmObbyDowns(m.io, "t"), "no walk (a w tap per skill only)")
     AssertTrue(MnSkills(m.io) >= 3, "skills went on through it")
     AssertTrue(InStr(MnStatsOf(m), "orb_down=1 ") && InStr(MnStatsOf(m), "how=toast"), "the kill by its toast")
+    AssertTrue(InStr(MnStatsOf(m), " orb_fill=0 "), "a kill logs fill 0, not the last read (1): " MnStatsOf(m))
+}
+
+; night 11-18: after an orb kill the re-hunts of that biome found nothing
+; (STARFALL 06:15, 06:18; SAND STORM 06:35, 06:38). The biome is not hunted
+; again; the next biome is
+Test_Minions_NoRehuntAfterAKill() {
+    beside := [{x: 1280, y: 400, w: 200}], n := 0
+    m := MnTask()
+    AssertTrue(m.t.CanRun(m.state), "a new biome: on")
+    m.t._scanFn := () => (++n, beside)
+    m.t._toastFn := () => (n >= 6 ? "orb" : "")
+    m.t._fightSpot := {spot: "1012", biomeAt: m.t._biomeAt}
+    m.t.Run(SchedCtx())
+    AssertTrue(InStr(MnStatsOf(m), "orb_down=1 "), "killed")
+    m.io.t += MinionsTask.RehuntMs + 1000
+    AssertTrue(!m.t.CanRun(m.state), "the same biome after RehuntMs: no hunt")
+    AssertEq(m.t._fightSpot, "", "its spot's blind replay gone")
+    m.state.biome := "WINDY"
+    AssertTrue(m.t.CanRun(m.state), "the next biome: on")
 }
 
 ; L72 05:04:04: the plate gone at fill 0.06 after the blind casts was taken
@@ -5325,6 +5467,72 @@ MnLogCount(m, text) {
 
 ; MnTask with the spots on (MnHeldIO: the holds kept)
 MnSpotTask() => MnTask(, Map("Minions.spots", 1), , MnHeldIO())
+
+; routes on, Spots off: the spots are learned (_SpotFor)
+MnLearnTask() => MnTask(, Map("Minions.routes", 1), , MnHeldIO())
+
+; no Minions.routes key (the user's install): on; Spots stay off
+Test_Minions_LearnedRoutesOnByDefault() {
+    m := MnTask(), t := m.t
+    t._env.cfg.g.Delete("Minions.routes")
+    AssertTrue(t._RoutesOn() && !t._SpotsOn(), "no key: routes on, spots off")
+    t._env.cfg.g["Minions.routes"] := 0
+    AssertTrue(!t._RoutesOn(), "0: off")
+}
+
+; a learned spot: the nearest stored bearing within RouteTol, else a new one
+; when asked to add; none from Spots' list
+Test_Minions_LearnedSpotFor() {
+    m := MnLearnTask(), t := m.t
+    AssertEq(t._SpotFor(850), "", "no routes: no spot (850 is a Spots b)")
+    AssertEq(t._SpotFor(1400, 0, true).b, 1400, "added at the bearing")
+    t._routes["1398"] := MnRoute(2, 1398)
+    t._routes["2979"] := MnRoute(2, 2979)
+    AssertEq(t._SpotFor(1500).b, 1398, "102 ms off: that spot")
+    AssertEq(t._SpotFor(60).b, 2979, "across 0: that spot")
+    AssertEq(t._SpotFor(1700), "", "302 ms off: none")
+    AssertEq(t._SpotFor(1700, 0, true).b, 1700, "a new one")
+}
+
+; the first hunt walks from spawn to a bar first seen at bearing 1400 and
+; learns the way under that bearing; the next hunt sees it there and replays it
+Test_Minions_LearnedRouteReplayedNextHunt() {
+    m := MnLearnTask(), t := m.t, st := {n: 0}
+    t._scanFn := () => MnOrbBar(t, 1400)
+    t._toastFn := () => MnLogCount(m, "beside it") > st.n ? "orb" : ""
+    t.Run(SchedCtx())
+    AssertTrue(MnLogged(m, "route to spot "), "learned")
+    AssertEq(t._routes.Count, 1, "one spot")
+    AssertEq(t._fightSpot, "", "the orb killed: no fight spot to go back to")
+    for key in t._routes
+        AssertTrue(Abs(MinionsTask.Wrap(Integer(key) - 1400)) <= 5, "at the bearing it was first seen at: " key)
+    st.n := MnLogCount(m, "beside it"), t._biomeAt := m.io.t
+    t.Run(SchedCtx())
+    AssertEq(MnLogCount(m, "(bar) - replaying the stored route"), 1, "the second replays it")
+    AssertTrue(!MnLogged(m, "(due)"), "never blind")
+}
+
+; beside a learned spot's fight, the orb not killed: the spot is kept for
+; this biome (_RouteDue's blind replay)
+Test_Minions_FightSpotKeptWithoutAKill() {
+    m := MnTask(, Map("Minions.routes", 1, "Minions.maxSec", 20), , MnHeldIO()), t := m.t
+    t._scanFn := () => MnOrbBar(t, 1400)
+    t.Run(SchedCtx())
+    AssertTrue(MnLogged(m, "beside it") && !InStr(MnStatsOf(m), "orb_down=1 "), "beside, no kill")
+    AssertTrue(IsObject(t._fightSpot) && t._routes.Has(t._fightSpot.spot) && t._fightSpot.biomeAt = t._biomeAt, "this biome's fight spot kept")
+}
+
+; a bar elsewhere: no route of another spot, a new spot learned
+Test_Minions_LearnedRouteOnlyForItsSpot() {
+    m := MnLearnTask(), t := m.t
+    t._routes["1400"] := MnRoute(2, 1400)
+    t._biomeAt := m.io.t
+    t._scanFn := () => MnOrbBar(t, 2200)
+    t._toastFn := () => MnLogged(m, "beside it") ? "orb" : ""
+    t.Run(SchedCtx())
+    AssertTrue(!MnLogged(m, "replaying the stored route"), "not the other spot's route")
+    AssertEq(t._routes.Count, 2, "this one learned too")
+}
 
 ; the orb's bar at bearing b as t sees it: in the scan area, wider the
 ; further the player has come along that way
@@ -6971,16 +7179,160 @@ Test_Minions_NoGainLeavesAFarBar() {
     f := {}
     b := {x: 1200, y: 400, w: 40}
     AssertEq(MinionsTask.NoGain(f, b, 0), false, "first sight starts the clock")
-    AssertEq(MinionsTask.NoGain(f, {x: 1210, y: 404, w: 44}, 10000), false, "jitter, 10 s")
-    AssertEq(MinionsTask.NoGain(f, {x: 1190, y: 402, w: 38}, 19000), false, "jitter, 19 s")
+    AssertEq(MnGain(f, {x: 1210, y: 404, w: 44}, 1000, 10000), false, "jitter, 10 s")
+    AssertEq(MnGain(f, {x: 1190, y: 402, w: 38}, 11000, 19000), false, "jitter, 19 s")
     AssertEq(MinionsTask.NoGain(f, {x: 1200, y: 405, w: 45}, MinionsTask.NoGainMs), true, "20 s without a real gain: leave it")
     g := {}
     MinionsTask.NoGain(g, b, 0)
+    MnGain(g, b, 1000, 14000)
     AssertEq(MinionsTask.NoGain(g, {x: 1200, y: 400, w: 50}, 15000), false, "25% wider: a gain")
-    AssertEq(MinionsTask.NoGain(g, {x: 1200, y: 400, w: 52}, 30000), false, "the clock restarted at 15 s")
+    AssertEq(MnGain(g, {x: 1200, y: 400, w: 52}, 16000, 34000), false, "the clock restarted at 15 s")
     AssertEq(MinionsTask.NoGain(g, {x: 1200, y: 400, w: 52}, 35100), true, "20 s after the last gain")
     h := {}
     MinionsTask.NoGain(h, b, 0)
-    AssertEq(MinionsTask.NoGain(h, {x: 1200, y: 425, w: 40}, 19000), false, "25 px lower on screen: a gain")
+    AssertEq(MinionsTask.NoGain(h, {x: 1200, y: 425, w: 40}, 1000), false, "25 px lower on screen: a gain")
     AssertEq(MinionsTask.NoGain(h, {x: 900, y: 300, w: 20}, 30000), false, "a much narrower bar: another target, clock restarts")
+}
+
+; CORRUPTION 03:03:32-03:06:26: the orb open (3 toasts), at 0.13-0.17 for
+; 160 s of casts. OrbStallMs of casts with no OrbStallDrop of its HP: stalled
+Test_Minions_OrbStalledClock() {
+    mk := (down := 3) => ({boss: false, down: down, foes: [], casts: 0, orbReads: [0.15], orbFill: 0.15, stallAt: "", stallHp: 1, stallCasts: 0})
+    f := mk()
+    AssertEq(MinionsTask.OrbStalled(f, 0), false, "the clock starts")
+    f.casts := 10, f.orbReads := [0.17, 0.13, 0.15]
+    AssertEq(MinionsTask.OrbStalled(f, 19000), false, "19 s, jitter")
+    AssertEq(MinionsTask.OrbStalled(f, 20000), true, "20 s of casts, no drop: stalled")
+    g := mk()
+    MinionsTask.OrbStalled(g, 0), g.casts := 2
+    AssertEq(MinionsTask.OrbStalled(g, 20000), false, "too few casts")
+    h := mk()
+    MinionsTask.OrbStalled(h, 0), h.casts := 10, h.orbReads := [0.09]
+    AssertEq(MinionsTask.OrbStalled(h, 10000), false, "a drop: the clock again")
+    AssertEq(MinionsTask.OrbStalled(h, 25000), false, "15 s after it")
+    h.casts := 20
+    AssertEq(MinionsTask.OrbStalled(h, 30000), true, "20 s after it")
+    l := mk(2)
+    MinionsTask.OrbStalled(l, 0), l.casts := 10
+    AssertEq(MinionsTask.OrbStalled(l, 30000), false, "not open (2 toasts): its fill means nothing")
+}
+
+; the look for that minion: ScanTurnMs turns till a minion bar, then the
+; fight goes after it; none: a full circle, back on the orb
+Test_Minions_MinionLookStopsAtAMinion() {
+    m := MnTask(), t := m.t
+    f := {last: [], shift: 9, stepped: false, standing: true, casts: 9, stallAt: m.io.t - 20000, stallCasts: 2, orbReads: [0.15], orbFill: 0.15}
+    t._scanFn := () => t._bearing = -2 * MinionsTask.ScanTurnMs ? [{x: 1500, y: 600, w: 70}] : []
+    AssertTrue(t._MinionLook(SchedCtx(), f), "on")
+    AssertEq(t._bearing, -2 * MinionsTask.ScanTurnMs, "stopped at the minion")
+    AssertTrue(MnLogged(m, "HP stuck at 0.15 for 20 s, 7 casts - a minion") && MnLogged(m, "a minion found"), "logged")
+    AssertEq(f.last.Length " " f.shift " " f.stallCasts " " f.standing, "1 0 9 0", "the scan kept, the clock again, no stand")
+    n := MnTask(), u := n.t
+    g := {last: [], shift: 0, stepped: false, standing: true, casts: 9, stallAt: n.io.t - 20000, stallCasts: 2, orbReads: [0.15], orbFill: 0.15}
+    u._scanFn := () => []
+    u._MinionLook(SchedCtx(), g)
+    AssertEq(u._bearing, -MinionsTask.SweepTurns * MinionsTask.ScanTurnMs, "a whole circle")
+    AssertTrue(MnLogged(n, "no minion in a circle"), "logged")
+}
+
+; CORRUPTION 03:06:55: the obby took over at the orb's 0.15. A fight on (the
+; orb open, or a bar hurt lately) holds off tasks of HoldPriority or more,
+; logged once a task; recovery, potions, merchants still preempt
+Test_Minions_FightHoldsOffLesserTasks() {
+    m := MnTask(), t := m.t
+    obby := {name: "obby", priority: 5}
+    AssertTrue(!t.Holds(obby), "no fight: no hold")
+    t._fightNow := {down: 3, foes: [], hurtAt: ""}
+    AssertTrue(t.Holds(obby) && t.Holds(obby), "the orb open: held")
+    AssertEq(MnCount(m, "obby waits - the orb fight is on"), 1, "logged once")
+    AssertTrue(!t.Holds({name: "recovery", priority: 2}) && !t.Holds({name: "merchant", priority: 3}), "recovery, merchants: not held")
+    t._fightNow := {down: 1, foes: [], hurtAt: m.io.t - 5000}
+    AssertTrue(t.Holds({name: "quests", priority: 5}), "a bar hurt 5 s ago: held")
+    t._fightNow := {down: 1, foes: [], hurtAt: m.io.t - MinionsTask.HurtKeepMs - 1}
+    AssertTrue(!t.Holds(obby), "nothing hurt lately, locked: not held")
+}
+
+; NoGain fed the bar b every second from ms a to z: its last answer
+MnGain(f, b, a, z) {
+    r := false, t := a
+    while (t <= z)
+        r := MinionsTask.NoGain(f, b, t), t += 1000
+    return r
+}
+
+; night 11-18 WINDY 23:58:31-56: a 30 px bar seen 2 s, then 23 s of looks
+; for it; found again it was left at once. The clock stands while it is out
+; of sight: 20 s of it in sight first
+Test_Minions_NoGainClockStopsOutOfSight() {
+    f := {}
+    b := {x: 1058, y: 408, w: 30}
+    MnGain(f, b, 0, 2000)
+    AssertEq(MinionsTask.NoGain(f, {x: 1098, y: 394, w: 31}, 25000), false, "found again after 23 s of looks: not left")
+    AssertEq(MnGain(f, b, 26000, 41000), false, "under 20 s in sight in all")
+    AssertEq(MnGain(f, b, 42000, 44000), true, "past 20 s in sight: left")
+    AssertTrue(MinionsTask.Gained({w: 40, y: 400}, {w: 30, y: 400}) && MinionsTask.Gained({w: 30, y: 420}, {w: 30, y: 400}), "wider or lower: gained")
+    AssertTrue(!MinionsTask.Gained({w: 33, y: 413}, {w: 30, y: 400}) && MinionsTask.Gained({w: 30, y: 400}, ""), "jitter: no; no start: yes")
+}
+
+; night 11-18 WINDY 23:59:05-10: the bar read "nearer" now and then (a hop's
+; camera, the anchor hopping between minions), the player not moved, and the
+; Escapes began again at (1/3). They go on unless clearly nearer than where
+; they began, then the target is left
+Test_Minions_EscapesNotRestartedByJitter() {
+    m := MnTask()
+    n := 0
+    m.t._scanFn := () => MnTurning(m, [{x: 1280, y: 640 + (Mod(++n, 5) = 0 ? 14 : 0), w: 60}])
+    m.t.Run(SchedCtx())
+    for step in ["jump forward (1/3)", "strafe left (2/3)", "strafe right (3/3)", "still stuck at"]
+        AssertTrue(MnLogged(m, step), "logged: " step)
+    AssertEq(MnCount(m, "jump forward (1/3)"), 1, "the Escapes once through")
+}
+
+; RAINY 02:03-02:04: the anchor hopped to a lower minion now and then and
+; the Escapes began again 7 times. Only the widest bar growing clearly counts
+Test_Minions_EscapesNotRestartedByAnchorHops() {
+    m := MnTask()
+    n := 0
+    m.t._scanFn := () => (n++, MnTurning(m, [{x: 1280, y: Mod(n, 5) = 0 ? 700 : 640, w: 60}, {x: 1240, y: 650, w: 58}]))
+    m.t.Run(SchedCtx())
+    for step in ["jump forward (1/3)", "strafe left (2/3)", "strafe right (3/3)"]
+        AssertTrue(MnLogged(m, step), "logged: " step)
+    j := [], r := 0
+    for i, e in m.logs
+        if InStr(e, "jump forward (1/3)")
+            j.Push(i)
+        else if (!r && InStr(e, "strafe right (3/3)"))
+            r := i
+    AssertTrue(j.Length = 1 || r < j[2], "the Escapes once through before any new start")
+    AssertTrue(MinionsTask.Grew({orb: "", minions: [{w: 70}, {w: 50}]}, 60) && !MinionsTask.Grew({orb: {w: 64}, minions: [{w: 50}]}, 60), "the widest bar's growth")
+    AssertTrue(MinionsTask.Grew({orb: "", minions: []}, ""), "no start: grew")
+}
+
+; night 11-18 WINDY 23:59:14-28: 14 s sliding left in a corner, the view
+; never changed; the first step right climbed the ledge. WallDeadSteps steps
+; with the view the same: the other way
+Test_Minions_WallBlockedSideTurnsBack() {
+    MinionsTask.WallSides := Map()
+    m := MnTask()
+    m.t.CanRun(m.state)
+    m.t._scanFn := () => MnTurning(m, [{x: 1280, y: 520, w: 60}])
+    m.t._viewFn := () => {edge: false, sig: [1, 2, 3, 4]}
+    m.t.Run(SchedCtx())
+    AssertTrue(MnLogged(m, "wall - no headway this way (" MinionsTask.WallDeadSteps " steps"), "logged")
+    AssertTrue(MnLogged(m, "wall - sliding right"), "the other way")
+    iD := MnNth(m.io, "down d", 2)                  ; after the Escape's strafe right
+    n := 0
+    for i, e in m.io.log
+        if (i < iD && e == "down a")
+            n++
+    AssertEq(n, 1 + MinionsTask.WallDeadSteps, "the Escape's strafe, then WallDeadSteps steps left")
+}
+
+; the overlay note while it fishes with orb mode on (2026-11-17)
+Test_Minions_WaitNoteSaysWhyNoHunt() {
+    m := MnTask().t
+    AssertEq(m.WaitNote("NORMAL"), "no orbs in NORMAL", "NORMAL")
+    AssertEq(m.WaitNote("GLITCHED"), "no orbs in GLITCHED", "a rare biome")
+    AssertEq(m.WaitNote("RAINY"), "", "an orb biome")
+    AssertEq(m.WaitNote(""), "", "no biome yet")
 }

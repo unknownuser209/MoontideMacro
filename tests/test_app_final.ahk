@@ -550,6 +550,29 @@ Test_App_V16_RemoteCommands() {
         AssertTrue(h.Has(k), "handler " k)
 }
 
+; "!log": a backtick in a log line no longer ends the reply's code block
+Test_App_RemoteLogKeepsTheCodeBlock() {
+    t := AppTestMake()
+    t.app.dash := {LogText: (s) => "12:00 one`r`n12:01 read: '``````x``'`r`n"}
+    r := t.app._RemoteHandlers()["log"].Call("", "")
+    AssertEq(SubStr(r, 1, 3), "``````", "opens a block")
+    AssertEq(SubStr(r, -3), "``````", "closes it")
+    AssertTrue(!InStr(SubStr(r, 4, StrLen(r) - 6), "``"), "no backtick inside (" r ")")
+    AssertTrue(InStr(r, "12:00 one"), "the lines kept")
+}
+
+; "!stats all": the all-time totals with their first day
+Test_App_RemoteStatsAllTime() {
+    t := AppTestMake()
+    t.app.daily := DailyStats(A_Temp "\vesper_allstats_" A_TickCount ".json")
+    t.app.daily.Add("fishCaught", 3)
+    h := t.app._RemoteHandlers()
+    r := h["stats"].Call("all", "")
+    AssertTrue(InStr(r, "**All time** (since "), "all-time title with since (" r ")")
+    AssertTrue(InStr(r, "Fish caught: 3"), "all-time fish")
+    AssertTrue(InStr(h["stats"].Call("", ""), "**Today**"), "plain !stats is today")
+}
+
 Test_App_V16_FocusPauseNamesTheApp() {
     AssertEq(App.FrontNote(() => "MSPCManager.exe"), " In front: MSPCManager.exe. Microsoft PC Manager's toolbar takes focus: close PC Manager or turn its toolbar off.", "PC Manager named with a hint")
     AssertEq(App.FrontNote(() => "notepad.exe"), " In front: notepad.exe.", "other apps: the name only")

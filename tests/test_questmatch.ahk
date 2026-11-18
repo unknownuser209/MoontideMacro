@@ -14,6 +14,7 @@ class QmIO {
     __New() {
         this.log := []
     }
+    Wheel(dir, n := 1, gapMs := 25) => this.log.Push("wheel " dir " " n)
     Down(k) => this.log.Push("down " k)
     Up(k) => this.log.Push("up " k)
     MoveTo(x, y) => this.log.Push("move " x "," y)
@@ -1177,6 +1178,13 @@ Test_Merchant_EPressedAgainUntilHerDialogShows() {
     t2 := MerchantTask({cfg: QmCfg(), io: io2, webhook: QmWh(), cal: QmMerchCal(), ocr: (x, y, w, h, scale := 1) => "", pixel: (*) => true})
     AssertEq(t2._OpenDialog("Mari", SchedCtx()), 0, "not seen")
     AssertEq(QmCountMoves(io2, "down e"), MerchantTask.DialogTries, "E pressed DialogTries times")
+    ; her name never reads but her Leave button does (GRAVEYARD, live
+    ; 2026-11-15): the dialog is open
+    io3 := QmIO(), lv := MerchantTask.Layout.leave, bb := MerchantTask.ButtonBox
+    t3 := MerchantTask({cfg: QmCfg(), io: io3, webhook: QmWh(), cal: QmMerchCal(), pixel: (*) => true
+        , ocr: (x, y, w, h, scale := 1) => (x = lv.x + bb.dx && y = lv.y + bb.dy) ? "Leave" : ""})
+    AssertEq(t3._OpenDialog("Jester", SchedCtx()), 1, "open by her Leave button")
+    AssertEq(QmCountMoves(io3, "down e"), 1, "no more E presses")
 }
 
 Test_Merchant_WaitsForHerButtonsAndLeavesBeforeTheReset() {
@@ -1328,6 +1336,25 @@ Test_Merchant_PurchasePromptStopsTheTeleport() {
     AssertTrue(io2.Index("down Esc") > io2.Index("move 130,130"), "closed with Esc after Use")
     AssertEq(io2.Index("down e"), 0, "no merchant talk after a prompt")
     AssertTrue(QmPromptReported(wh2), "reported")
+}
+
+; a purchase prompt up when Purchase is due (it lies inside the prompt's
+; area): Esc, never the Purchase click (it could press Buy and spend Robux)
+Test_Merchant_NoPurchaseClickUnderAPrompt() {
+    L := MerchantTask.Layout
+    wants := Map("Mari", [Map("name", "Lucky Potion", "qty", 1)], "Jester", [])
+    io := QmIO()
+    wh := QmWh()
+    shop := QmShop(io, ["Lucky Potion", "", "", "", ""])
+    shop.promptAfter := "move " L.qty.x "," L.qty.y
+    t := QmMerchTask(wants, shop, io, wh)
+    t.Notify("Mari")
+    t.Run(SchedCtx())
+    AssertTrue(io.Index("move " L.qty.x "," L.qty.y) > 0, "got to the amount box")
+    AssertEq(io.Index("move " L.buy.x "," L.buy.y), 0, "Purchase never clicked")
+    AssertTrue(io.Index("down Esc") > io.Index("move " L.qty.x "," L.qty.y), "the prompt closed with Esc")
+    AssertTrue(QmPromptReported(wh), "reported")
+    AssertTrue(InStr(wh.sent[wh.sent.Length].desc, "not bought (a Roblox purchase prompt was up"), "the summary says why")
 }
 
 Test_Merchant_ShopClosedOnlyWhileItsTitleReads() {

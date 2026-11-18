@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Screen.ahk
+#Include %A_LineFile%\..\Prof.ahk
 ; ---------------------------------------------------------------------------
 ; Pixel: single-point color checks with per-channel tolerance.
 ; DESIGN coordinates (2560x1440): Get / Is / WaitFor / Signature / Grab map
@@ -44,6 +45,10 @@ class Pixel {
     ; came back empty below 1440p, so no aura result tile ever "showed" at
     ; 1920x1080 (live 2026-11-10)
     static _grabber := (x, y, w, h, dw := "", dh := "") => Pixel._ScreenGrab(x, y, w, h, dw, dh)
+    ; the real screen getters as shipped: AnyIn grabs one rect only while
+    ; both are still these (tests that fake _getter keep their per-pixel reads)
+    static _getter0 := Pixel._getter
+    static _grabber0 := Pixel._grabber
 
     ; ---- rect signature ------------------------------------------------------
 
@@ -232,8 +237,42 @@ class Pixel {
         return Pixel.ToRgb((Pixel._getter)(p.x, p.y))
     }
 
+    ; True when any sample (xs x rows, design px) is within tol of color. On
+    ; the real screen ONE grab of their bounding rect (speed, 2026-11-17: 160
+    ; single reads took ~3.5 s for the sell's empty-shop check, every round).
+    static AnyIn(xs, rows, color, tol := 10) {
+        if (xs.Length && rows.Length && Pixel._getter == Pixel._getter0 && Pixel._grabber == Pixel._grabber0) {
+            x1 := xs[1], x2 := xs[1], y1 := rows[1], y2 := rows[1]
+            for x in xs
+                x1 := Min(x1, x), x2 := Max(x2, x)
+            for y in rows
+                y1 := Min(y1, y), y2 := Max(y2, y)
+            w := x2 - x1 + 1, h := y2 - y1 + 1
+            arr := ""
+            Prof.Begin("pixel")
+            try arr := Pixel.Grab(x1, y1, w, h)
+            Prof.End()
+            if (arr is Array && arr.Length = w * h) {
+                for y in rows
+                    for x in xs
+                        if Pixel.Match(arr[(y - y1) * w + (x - x1) + 1], color, tol)
+                            return true
+                return false
+            }
+        }
+        for y in rows
+            for x in xs
+                if Pixel.Is(x, y, color, tol)
+                    return true
+        return false
+    }
+
     static Is(x, y, color, tol := 10) {
-        return Pixel.Match(Pixel.Get(x, y), color, tol)
+        Prof.Begin("pixel")
+        try
+            return Pixel.Match(Pixel.Get(x, y), color, tol)
+        finally
+            Prof.End()
     }
 
     ; Polls every pollMs until x,y matches. -> false on timeout or when

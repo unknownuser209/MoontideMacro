@@ -63,6 +63,7 @@ class SinisterReport {
         this._logFn := SinisterReport._Dep(deps, "log")
         this._nowFn := SinisterReport._Dep(deps, "now")
         this._hook := SinisterReport._Dep(deps, "hook")
+        this._test := SinisterReport._Dep(deps, "test") ? true : false   ; Dev tools: cards marked [TEST]
         this._key := "", this._has := false, this._postedAt := Map()   ; boss -> ms of its last message
         this._Reset()
     }
@@ -78,15 +79,16 @@ class SinisterReport {
     static SpawnCard(link, boss := "s", unix := "") {
         u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
         b := (StrLower(String(boss)) = "p") ? "p" : "s"
-        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Spawned - " SinisterReport.BossName(b) "`n> **[Join Server](" link ")**"
-            , color: SinisterReport.Color[b], buttons: [{label: "Join Server", url: link}]}
+        ; link "": General.joinButton is off, the card names no server
+        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Spawned - " SinisterReport.BossName(b) (link != "" ? "`n> **[Join Server](" link ")**" : "")
+            , color: SinisterReport.Color[b], buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
     }
 
     static DeadCard(link, boss := "s", unix := "") {
         u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
         b := (StrLower(String(boss)) = "p") ? "p" : "s"
         return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Dead - " SinisterReport.BossName(b)
-            , color: SinisterReport.Color[b], buttons: [{label: "Join Server", url: link}]}
+            , color: SinisterReport.Color[b], buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
     }
 
     _Reset() {
@@ -117,7 +119,13 @@ class SinisterReport {
         this._boss := b
         this._open := true
         link := this._LinkNow()
-        if (link = "") {
+        ; General.joinButton off (Alerts): the card goes out without the
+        ; private server link, as the biome cards (BiomeEvents._JoinLink)
+        off := false
+        try off := !this._cfg.Get("General.joinButton", 1)
+        if off
+            link := ""
+        else if (link = "") {
             this._Log("sinister: no usable private server link - no Discord message")
             return false
         }
@@ -128,8 +136,9 @@ class SinisterReport {
         if !IsObject(this._wh)
             return false
         h := ""
-        try h := this._wh.PostText(SinisterReport.Event, SinisterReport.SpawnCard(link, b)
-            , IsObject(this._hook) ? {hook: this._hook} : "")
+        ; pings each webhook's Mention (2026-11-16, the user: it never @'d me)
+        try h := this._wh.PostText(SinisterReport.Event, this._Mark(SinisterReport.SpawnCard(link, b))
+            , IsObject(this._hook) ? {hook: this._hook, mention: true} : {mention: true})
         catch Any as e {
             this._Log("sinister: the Discord message failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
             return false
@@ -141,6 +150,13 @@ class SinisterReport {
         this.msg := h, this._link := link, this._postedAt[b] := now
         this._Log("sinister: boss spawn message queued (" h.parts.Length " webhook(s))")
         return true
+    }
+
+    ; a test report's cards say so on their first line
+    _Mark(card) {
+        if this._test
+            card.desc := "**[TEST]** from Dev tools, no boss spawned`n" card.desc
+        return card
     }
 
     Note(fill, seen, now := "") {
@@ -177,7 +193,7 @@ class SinisterReport {
         this._Log("sinister: boss down (" why ")")
         if !IsObject(this.msg)
             return false
-        try this._wh.EditText(this.msg, SinisterReport.DeadCard(this._link, this._boss))
+        try this._wh.EditText(this.msg, this._Mark(SinisterReport.DeadCard(this._link, this._boss)))
         catch Any as e {
             this._Log("sinister: the edit failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
             return false

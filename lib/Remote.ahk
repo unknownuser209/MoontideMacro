@@ -82,7 +82,7 @@ class DiscordRemote {
     static InviteUrl(appId) => "https://discord.com/oauth2/authorize?client_id=" appId "&scope=bot&permissions=" DiscordRemote.InvitePerms
     static UserAgent := "DiscordBot (MoontideMacro, 1.0)"
     static Commands := ["help", "status", "stats", "start", "stop", "pause", "resume", "screenshot", "log"]
-    static Describe := Map("help", "this list", "status", "what the macro is doing", "stats", "session stats"
+    static Describe := Map("help", "this list", "status", "what the macro is doing", "stats", "today's stats (stats all: all time)"
         , "start", "start the macro", "stop", "stop the macro", "pause", "pause the macro"
         , "resume", "resume after a pause", "screenshot", "a picture of the game", "log", "the last log lines")
     static TimeoutMs := 8000

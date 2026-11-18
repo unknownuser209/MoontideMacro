@@ -32,6 +32,7 @@ class ClEnv {
     __New() {
         this.now := 100000
         this.medal := 4242          ; pid; 0 = not running
+        this.procs := Map()         ; other clip apps: exe name -> pid
         this.timers := []           ; {fn, ms}
         this.logs := []
         this.io := ClIO()
@@ -39,7 +40,7 @@ class ClEnv {
         this.stopped := false
     }
     Opts() => Map(
-        "procFn", (name) => (name = "medal.exe") ? this.medal : 0,
+        "procFn", (name) => (name = "medal.exe") ? this.medal : this.procs.Get(name, 0),
         "clockFn", () => this.now,
         "timerFn", (fn, ms) => this.timers.Push({fn: fn, ms: ms}),
         "io", this.io,
@@ -112,8 +113,8 @@ Test_Clip_SkipsWhenMedalMissing() {
     env.medal := 0
     ClSetup(env, &dir)
     try {
-        AssertEq(Clip.Trigger("rare"), "no_medal", "skipped without Medal")
-        AssertEq(Clip.Trigger("rare"), "no_medal", "skipped again")
+        AssertEq(Clip.Trigger("rare"), "no_app", "skipped without Medal")
+        AssertEq(Clip.Trigger("rare"), "no_app", "skipped again")
         AssertEq(env.timers.Length, 0, "no timer")
         AssertEq(env.io.log.Length, 0, "no key")
         AssertEq(ClCount(env.logs, "Medal"), 1, "warning logged once")
@@ -142,7 +143,9 @@ Test_Clip_DisabledAndUnsafeHotkeys() {
         Clip.Reset()
     }
     ; mouse buttons, macro hotkeys and letters are never sent
-    for hk in ["LButton", "RButton", "F1", "F2", "F3", "e", "5", "^F8", "", "Numpad5", "PrintScreen", "Insert", "Space"] {
+    ; ("" is no longer refused: an empty hotkey uses the clip app's default,
+    ; Test_Clip_OtherAppAndDefaultKey)
+    for hk in ["LButton", "RButton", "F1", "F2", "F3", "e", "5", "^F8", "Numpad5", "PrintScreen", "Insert", "Space"] {
         env := ClEnv()
         ClSetup(env, &dir, 1, hk)
         try {
@@ -332,5 +335,67 @@ Test_Clip_ComboMustNotHoldMacroKeys() {
     } finally {
         UiDashClose(d)
         try DirDelete(dir, true)
+    }
+}
+
+
+; ---- clip apps (2026-11-16, the user: more clipping providers, e.g. Discord)
+
+Test_Clip_AppsHaveDefaults() {
+    AssertEq(Clip.App("medal").key, "F8", "Medal F8")
+    AssertEq(Clip.App("discord").key, "Alt+C", "Discord clips: Alt+C")
+    AssertEq(Clip.App("nvidia").key, "Alt+F10", "NVIDIA Instant Replay: Alt+F10")
+    AssertEq(Clip.App("amd").key, "Ctrl+Shift+S", "AMD Instant Replay: Ctrl+Shift+S")
+    AssertEq(Clip.App("nope").id, "medal", "unknown: Medal")
+    for a in Clip.Apps
+        AssertTrue(a.key = "" || Clip.HotkeyAllowed(a.key), a.name " default key allowed: " a.key)
+    AssertEq(Clip.AppIndex("discord"), 2, "dropdown position")
+    AssertEq(Clip.Apps[Clip.AppIndex("x")].id, "medal", "unknown index: Medal")
+}
+
+Test_Clip_DiscordClipsWithItsKey() {
+    env := ClEnv()
+    env.medal := 0
+    cfg := ClSetup(env, &dir, 1, "Alt+C")
+    try {
+        cfg.Set("Medal.app", "discord")
+        AssertEq(Clip.Trigger("rare"), "no_app", "Discord not running: skipped")
+        AssertEq(ClCount(env.logs, "Discord"), 1, "the log names Discord")
+        AssertEq(ClCount(env.logs, "Medal"), 0, "not Medal")
+        env.procs["Discord.exe"] := 77
+        AssertEq(Clip.Trigger("rare"), "scheduled", "Discord running: scheduled")
+        env.RunTimers()
+        AssertEq(ClCount(env.io.log, "down Alt"), 1, "Alt held")
+        AssertEq(ClCount(env.io.log, "down c"), 1, "C tapped")
+        AssertTrue(InStr(env.wh.sent[1].desc, "Discord"), "the webhook names Discord: " env.wh.sent[1].desc)
+        AssertEq(ClCount(env.logs, "Discord clip hotkey sent"), 1, "logged")
+    } finally {
+        try DirDelete(dir, true)
+        Clip.Reset()
+    }
+}
+
+; Other app: no process to check; an empty hotkey uses the app's default
+Test_Clip_OtherAppAndDefaultKey() {
+    env := ClEnv()
+    env.medal := 0
+    cfg := ClSetup(env, &dir, 1, "F9")
+    try {
+        cfg.Set("Medal.app", "other")
+        AssertEq(Clip.Trigger("rare"), "scheduled", "Other: no process check")
+        env.RunTimers()
+        AssertEq(env.io.log[1], "down F9", "its hotkey")
+        Clip.Reset()
+        Clip.Setup(cfg, env.wh, (t) => env.logs.Push(t), env.Opts())
+        cfg.Set("Medal.app", "nvidia")
+        cfg.Set("Medal.clipHotkey", "")
+        env.procs["NVIDIA Overlay.exe"] := 5
+        AssertEq(Clip.Trigger("rare"), "scheduled", "NVIDIA running")
+        env.io.log := []
+        env.RunTimers()
+        AssertEq(ClCount(env.io.log, "down F10"), 1, "no hotkey typed: the app's default Alt+F10")
+    } finally {
+        try DirDelete(dir, true)
+        Clip.Reset()
     }
 }

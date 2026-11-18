@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Screen.ahk
+#Include %A_LineFile%\..\Prof.ahk
 ; ---------------------------------------------------------------------------
 ; RECTS ARE DESIGN PX (2560x1440). Off that size Screen maps each rect to the
 ; Roblox client and the crop is stretched to the size the design read had
@@ -83,6 +84,16 @@ class Ocr {
     )
 
     static _srcFile := ""        ; ReadFile: blit from this image instead of the screen
+    ; Idle mode (General.idleMode): the hwnd of the Roblox window, 0 = off.
+    ; Set, every read copies the window's own client image (PrintWindow
+    ; PW_CLIENTONLY | PW_RENDERFULLCONTENT) instead of the screen, so Roblox
+    ; may sit behind other windows (not minimized: the read fails, ""). The
+    ; rects stay the same: screen coords are moved by the client's origin.
+    static Win := 0
+
+    ; Pure: a screen point -> the same point in a client whose top-left is
+    ; at screen ox, oy (the window source's offset).
+    static WinPoint(x, y, ox, oy) => {x: x - ox, y: y - oy}
 
     static ReadFile(path, x, y, w, h, scale := 1, ink := 0) {
         if !FileExist(path)
@@ -96,18 +107,24 @@ class Ocr {
     }
 
     static Read(x, y, w, h, scale := 1) {
+        Prof.Begin("ocr")
         try {
             return Ocr._Read(x, y, w, h, scale)
         } catch Any {
             return ""
+        } finally {
+            Prof.End()
         }
     }
 
     static ReadInk(x, y, w, h, scale, ink) {
+        Prof.Begin("ocr")
         try {
             return ((IsNumber(ink) && ink > 0) || ink == "g") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
         } catch Any {
             return ""
+        } finally {
+            Prof.End()
         }
     }
 
@@ -417,6 +434,10 @@ class Ocr {
             if (Ocr._srcFile != "") {
                 Ocr._LoadFile(g, Ocr._srcFile)
                 src := g.hdcSrc
+            } else if Ocr.Win {
+                o := Ocr._LoadWin(g, Ocr.Win)
+                src := g.hdcSrc
+                p := Ocr.WinPoint(x, y, o.x, o.y), x := p.x, y := p.y
             }
             g.hdcMem := DllCall("CreateCompatibleDC", "Ptr", g.hdcScreen, "Ptr")
             bi := Buffer(40, 0)                         ; BITMAPINFOHEADER
@@ -569,6 +590,32 @@ class Ocr {
         g.hbmSrc := hbm
         g.hdcSrc := DllCall("CreateCompatibleDC", "Ptr", g.hdcScreen, "Ptr")
         g.oldSrc := DllCall("SelectObject", "Ptr", g.hdcSrc, "Ptr", hbm, "Ptr")
+    }
+
+    ; Idle mode: the window's client image (PrintWindow, flags 3) as a GDI
+    ; bitmap in its own memory DC (g.hdcSrc, freed by _FreeCapture).
+    ; -> {x, y} the client's top-left in screen coords. Throws when the
+    ; window is gone, minimized or PrintWindow fails.
+    static _LoadWin(g, hwnd) {
+        if (!DllCall("IsWindow", "Ptr", hwnd, "Int") || DllCall("IsIconic", "Ptr", hwnd, "Int"))
+            throw Error("Ocr: the window is gone or minimized")
+        rc := Buffer(16, 0)
+        if !DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc, "Int")
+            throw Error("Ocr: GetClientRect failed")
+        cw := NumGet(rc, 8, "Int"), ch := NumGet(rc, 12, "Int")
+        if (cw < 1 || ch < 1)
+            throw Error("Ocr: empty client")
+        pt := Buffer(8, 0)
+        if !DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", pt, "Int")
+            throw Error("Ocr: ClientToScreen failed")
+        g.hbmSrc := DllCall("CreateCompatibleBitmap", "Ptr", g.hdcScreen, "Int", cw, "Int", ch, "Ptr")
+        if !g.hbmSrc
+            throw Error("Ocr: CreateCompatibleBitmap failed")
+        g.hdcSrc := DllCall("CreateCompatibleDC", "Ptr", g.hdcScreen, "Ptr")
+        g.oldSrc := DllCall("SelectObject", "Ptr", g.hdcSrc, "Ptr", g.hbmSrc, "Ptr")
+        if !DllCall("PrintWindow", "Ptr", hwnd, "Ptr", g.hdcSrc, "UInt", 3, "Int")
+            throw Error("Ocr: PrintWindow failed")
+        return {x: NumGet(pt, 0, "Int"), y: NumGet(pt, 4, "Int")}
     }
 
     static _FreeCapture(g) {

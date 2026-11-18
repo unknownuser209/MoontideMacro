@@ -58,6 +58,7 @@ class Config {
         this.dstat := Map()
         if FileExist(this.iniPath) {
             this._ReadIni()
+            this._JoinOnce()
         } else {
             this._ApplyIniDefaults()
             this.Save()
@@ -75,6 +76,7 @@ class Config {
         g := Config._CIMap()
         g["privateServer"] := ""
         g["windowed"] := "0"          ; 1 = Roblox may be in a window (used as the player sized it); 0 = fullscreen only
+        g["idleMode"] := "0"          ; 1 = Start only reads (biomes, auras, chat, biome clock): no clicks, no keys, Roblox may stay behind other windows
         g["vip"] := "1"
         g["fishing"] := "1"           ; 0 = never fish (only quests, craft, merchants, potions...)
         g["sellEvery"] := "15"
@@ -89,7 +91,8 @@ class Config {
         g["dryRun"] := "1"
         g["sound"] := "1"
         g["alertSound"] := "*48"      ; SoundPlay arg: *48 = Windows exclamation, or a .wav path
-        g["joinButton"] := "0"        ; 1 = biome / rare webhooks carry the private-server link (Join Server button). Off by default: anyone who can read the channel gets the link
+        g["joinButton"] := "1"        ; 1 = biome / rare webhooks carry the private-server link (Join Server button); 0 = no link (anyone who can read the channel can join)
+        g["joinDefaultOn"] := "1"     ; set once the v1.5 "Join Server link on by default" change was applied (see _JoinOnce)
         g["everyonePing"] := "1"      ; 1 = live rare webhook for the biomes below also pings @everyone
         g["everyoneBiomes"] := "DREAMSPACE,GLITCHED,CYBERSPACE"
         d["General"] := g
@@ -166,6 +169,7 @@ class Config {
         dq["enabled"] := "0"
         dq["intervalMin"] := "30"     ; minutes between visits (5..720)
         dq["reroll"] := ""            ; comma list: quests holding one of these words are rerolled
+        dq["usePotions"] := "0"       ; "Use N <potion>" quests: the potion task uses what is left
         d["DailyQuests"] := dq
         mm := Config._CIMap()
         mm["enabled"] := "0"
@@ -188,6 +192,7 @@ class Config {
         d["Auras"] := au
         m := Config._CIMap()
         m["enabled"] := "0"
+        m["app"] := "medal"           ; clip app (Clip.Apps): medal, discord, nvidia, amd, obs, other
         m["clipHotkey"] := "F8"
         m["delaySec"] := "3"
         m["cooldownSec"] := "30"
@@ -208,9 +213,16 @@ class Config {
         u := Config._CIMap()
         u["animations"] := "1"        ; 0 = no UI animations
         u["setupDone"] := "0"         ; 1 = the first-run setup wizard was finished or skipped
-        u["theme"] := "Moontide"      ; colour theme (Theme.Names): Moontide, Overdrive, Galaxy, Boss, Equinox, Matrix, Radiant, Illusionary
+        u["theme"] := "Moontide"      ; colour theme (Theme.Choices): Moontide, Overdrive, Galaxy, Boss, Equinox, Matrix, Radiant, Illusionary, Contrast, Custom
         u["simple"] := "0"            ; 1 = simple mode: only the main dashboard pages (new installs start with it on)
         u["lang"] := "en"             ; window language (lib/I18n.ahk, lang\<code>.json): en, es, pt, fil, fr, de
+        ; theme = Custom (Settings > Look > Edit custom, Theme.Derive): 4 base colours RRGGBB, the rest is mixed from them
+        u["customBg"] := "0D1117"     ; window background
+        u["customPanel"] := "0B2A5B"  ; panels and borders
+        u["customText"] := "F7F1E8"   ; text
+        u["customAccent"] := "F2A93B" ; accent: titles, buttons, the active tab
+        u["customPicture"] := "Moontide"   ; background picture: none, a theme name (its picture) or file (customPictureFile)
+        u["customPictureFile"] := ""  ; a picture of your own (png / jpg / bmp), darkened to fit
         d["UI"] := u
         ; Run schedule (lib/Schedule.ahk): start / stop by the clock, stop after N hours.
         sc := Config._CIMap()
@@ -240,6 +252,22 @@ class Config {
         up["auto"] := "0"             ; 0 = ask in the dashboard, 1 = install without asking
         d["Update"] := up
         return d
+    }
+
+    ; v1.5: the Join Server link is on by default. Before v1.5 there was no
+    ; switch for it, so every older settings.ini holds the old default
+    ; joinButton=0: turn it on once (in memory, saved with the next Save).
+    ; A later "off" is kept: the marker joinDefaultOn is saved with it.
+    _JoinOnce() {
+        if this.readFail
+            return
+        if !this.sections.Has("General")
+            this.sections["General"] := Config._CIMap()
+        g := this.sections["General"]
+        if g.Has("joinDefaultOn")
+            return
+        g["joinButton"] := "1"
+        g["joinDefaultOn"] := "1"
     }
 
     _ApplyIniDefaults() {

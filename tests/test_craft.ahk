@@ -1361,6 +1361,20 @@ Test_Craft_TileOnlyWhileTheShopIsOpen() {
     AssertTrue(CrPromptReported(m2.wh), "reported")
 }
 
+; a Roblox Robux prompt over the purchase window's confirm (seen by one pixel
+; colour): Esc, never the confirm click
+Test_Craft_NoConfirmClickUnderARobuxPrompt() {
+    m := CrMake(Map("pots", ["Lucky Potion"], "promptAfter", "move 300,100"))
+    m.t.Run(SchedCtx())
+    io := m.io
+    iType := io.Idx("move 300,100")
+    AssertTrue(iType > 0, "the amount box clicked")
+    AssertEq(io.Idx("move 400,100", iType), 0, "confirm never clicked")
+    AssertTrue(io.Idx("down Esc", iType) > 0, "the prompt closed with Esc")
+    AssertTrue(CrPromptReported(m.wh), "reported")
+    AssertTrue(InStr(m.wh.Desc("craft"), "not bought: a Roblox purchase prompt was up"), "the summary says why")
+}
+
 Test_Craft_CauldronClicksOnlyWithTheWorkshopOpen() {
     ; the workshop is gone after the card click: Open Recipe, Add All and the
     ; close click are never made

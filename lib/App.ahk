@@ -31,6 +31,7 @@
 #Include %A_LineFile%\..\Schedule.ahk
 #Include %A_LineFile%\..\DailySummary.ahk
 #Include %A_LineFile%\..\Remote.ahk
+#Include %A_LineFile%\..\ClockWatch.ahk
 #Include %A_LineFile%\..\SetupCheck.ahk
 #Include %A_LineFile%\..\LogBundle.ahk
 #Include %A_LineFile%\..\ui\Dashboard.ahk
@@ -267,6 +268,7 @@ class App {
 
         ; run state
         this._started := false
+        this._idle := false          ; this run is idle mode (General.idleMode at Start): reads only
         this._running := ""
         this._startedAt := 0
         this._uptime := 0
@@ -302,6 +304,8 @@ class App {
         ; message for one spawn); made before the tasks (MinionsTask takes it)
         this.sinister := d.Has("sinister") ? d["sinister"]
             : SinisterReport({webhook: this.wh, cfg: this.cfg, log: this._logFn, ghost: () => this._GhostNow()})
+        ; the boss without the chat: the biome clock stops while it lives
+        this.clock := d.Has("clock") ? d["clock"] : ClockWatch({report: this.sinister, log: this._logFn})
         ; tasks
         this._taskMap := Map()
         if d.Has("tasks") {
@@ -363,20 +367,27 @@ class App {
 
     _DefaultTask(name) {
         cfg := this.cfg
+        ; tasks that walk away skip their last respawn when the sell trip back
+        ; to the fishing spot comes next and respawns anyway (speed, 2026-11-17)
+        ra := () => !(this.cfg.Get("General.fishing", 1) && this._taskMap.Has("sell"))
         try {
             switch name {
                 case "fishing": return FishingTask(cfg, this.state, {log: this._logFn})
                 case "sell": return SellTask(cfg, this.state, {log: this._logFn, afterSell: (ctx) => this._AfterSell(ctx)
                     , stuck: (msg) => this._Error("Stuck: " msg), cal: Calibrate})
                 case "craft": return CraftTask({cfg: cfg, webhook: this.wh, log: this._logFn})
-                case "quests": return QuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn, cards: (c) => this._ClearCards(c)})
-                case "dailyquests": return DailyQuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
+                case "quests": return QuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn, cards: (c) => this._ClearCards(c), respawnAfter: ra})
+                case "dailyquests": return DailyQuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn
+                    , potionQuest: (p, n) => this._PotionQuest(p, n)})
                 case "biomeitems": return BiomeItemsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
-                case "obby": return ObbyTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()})
+                case "obby": return ObbyTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()
+                    , hintPath: App.DefaultRoot() "\data\aura_hints.json"
+                    , respawnAfter: ra})
                 case "minions": return MinionsTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()
+                    , hintPath: App.DefaultRoot() "\data\aura_hints.json"
                     , biome: () => this._BiomeNow(), ghost: () => this._GhostNow(), sinister: this.sinister})
-                case "memorymatch": return MemoryMatchTask({cfg: cfg, webhook: this.wh, log: this._logFn})
-                case "merchant": return MerchantTask({cfg: cfg, webhook: this.wh, log: this._logFn})
+                case "memorymatch": return MemoryMatchTask({cfg: cfg, webhook: this.wh, log: this._logFn, respawnAfter: ra})
+                case "merchant": return MerchantTask({cfg: cfg, webhook: this.wh, log: this._logFn, respawnAfter: ra})
                 case "recovery": return RecoveryTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "limbo": return LimboTask({cfg: cfg, webhook: this.wh, log: this._logFn
                     , toIsland: (ctx) => this._ToIsland(ctx)})
@@ -524,8 +535,9 @@ class App {
         }
         this._everStarted := true
         this.ctx.Reset()
+        this._idle := this._IdleOn()            ; idle mode: reads only, no input (see _IdleTick)
         try this.fixit.Reset()                  ; a new run: cards may show again
-        if this._fixOn                          ; windowed: the overlay off the game
+        if (this._fixOn && !this._idle)         ; windowed: the overlay off the game
             try this._WindowedStart()
         if this._fixOn                          ; the real app: the preset that fits Roblox's screen now
             try this._UseCalibration()
@@ -559,7 +571,9 @@ class App {
         if (this._taskMap.Has("merchant") && HasMethod(this._taskMap["merchant"], "Reset"))
             this._taskMap["merchant"].Reset()   ; a merchant announced before Stop is long gone
         this.state.limboMode := this._LimboMode()
-        if this.state.limboMode {
+        if this._idle {
+            this.Log(App.IdleStartMsg)
+        } else if this.state.limboMode {
             this.Log("Limbo is on: using the Portable Crack and waiting for Eden (fishing, selling, crafting, quests and merchants are off)")
         } else if (this.cfg.Get("General.repathOnStart", 1) && FishLogic.TripWanted(this.cfg) && this._taskMap.Has("sell")) {
             ; (fishing and crafting off: no trip; it walked there and idled, 2026-10-31)
@@ -580,8 +594,10 @@ class App {
         ; message, so a webhook never gets two. Stop still routes `startstop`.
         this._Broadcast(Emoji.Moon " " Brand.Name, "## Macro started`nMade by " Credits.Name() "`n" App.DiscordLine, 0xF2A93B, App.StartFields(this.cfg))
         this.CheckCredits()
-        win := this._Window()
-        if (win = "missing" && this._RejoinReady())
+        win := this._idle ? "idle" : this._Window()
+        if (win = "idle")
+            this._IdleStart()                   ; no focus, no pause for the window, no input
+        else if (win = "missing" && this._RejoinReady())
             this.Log("Roblox is not open: auto-rejoin opens your private server")
         else if (win != "ok")
             this._PauseFor(win)
@@ -616,7 +632,7 @@ class App {
     Resume() {
         if !this._started
             return false
-        win := this._Window()
+        win := this._idle ? "ok" : this._Window()          ; idle mode needs no usable window
         if (win != "ok" && !(win = "missing" && this._RejoinReady())) {
             this._PauseFor(win)
             this._Status()
@@ -638,7 +654,9 @@ class App {
             this._testCtx.Stop()
         try this.clip.CancelAll()
         try this.input.ReleaseAll()
-        this._ShiftOff()          ; a halted hunt can leave it on: other clicks would miss
+        if !this._idle            ; idle mode never touches the mouse or keys
+            this._ShiftOff()      ; a halted hunt can leave it on: other clicks would miss
+        this._IdleOff()
         was := this._started
         this._started := false
         if (was && this._hiResOn)
@@ -710,6 +728,77 @@ class App {
         return " In front: " exe "." (App.FocusThieves.Has(k) ? " " App.FocusThieves[k] "." : "")
     }
 
+    ; ---- idle mode ----------------------------------------------------------------
+    ; General.idleMode=1 (the owner, 2026-11-17): Start only WATCHES. Biomes
+    ; and auras come from the Roblox log (no focus needed); the chat and the
+    ; biome clock are read from Roblox's own window image (Ocr.Win:
+    ; PrintWindow, so Roblox may sit behind other windows, not minimized);
+    ; rare biome / aura screenshots likewise (Screenshot.FromWindow). No task
+    ; runs and nothing is sent: no clicks, no mouse moves (ChatWatch.NoHover),
+    ; no keys (Clip idle: no clip hotkey), no focus taking, no pause for the
+    ; window. No anti-AFK either: Roblox's own 20 minute idle kick can still
+    ; disconnect an untouched client.
+
+    static IdleStartMsg := "Idle mode: reading biomes, auras, chat and the biome clock only; no clicks or keys, Roblox can stay behind other windows"
+    static IdleNote := "Idle (watching)"
+
+    _IdleOn() {
+        try return (this.cfg.Get("General.idleMode", 0) = 1) ? true : false
+        return false
+    }
+
+    _IdleStart() {
+        Screenshot.FromWindow := true
+        ChatWatch.NoHover := true
+        if HasMethod(this.clip, "SetIdle")
+            try this.clip.SetIdle(true)
+        this._IdleWin()
+    }
+
+    ; back to normal (every Stop; harmless when idle mode was not on)
+    _IdleOff() {
+        this._idle := false
+        Ocr.Win := 0
+        Screenshot.FromWindow := false
+        ChatWatch.NoHover := false
+        if HasMethod(this.clip, "SetIdle")
+            try this.clip.SetIdle(false)
+    }
+
+    ; Ocr.Win := the Roblox window (0 when it is missing or minimized: no
+    ; read then) and Screen mapped to its client, which may be covered or
+    ; partly off the screen (PrintWindow reads it anyway). Sets the status.
+    _IdleWin() {
+        h := 0
+        try h := this.roblox.Hwnd()
+        mini := false
+        if h {
+            try mini := DllCall("IsIconic", "Ptr", h, "Int") ? true : false
+            if !mini {
+                ; the usual check maps Screen; a window it refuses (Windowed
+                ; No, partly off the screen) is mapped as it is
+                if (this._Window() != "ok" && this.roblox == Roblox)
+                    try Screen.Refresh(h)
+            }
+        }
+        Ocr.Win := (h && !mini) ? h : 0
+        this._note := !h ? "Idle: Roblox not open" : mini ? "Idle: Roblox minimized" : App.IdleNote
+    }
+
+    ; One idle tick (the log poll and the webhooks ran already): the window
+    ; source refreshed, then the chat read (ChatWatch throttles itself to
+    ; merchant.chatPollSec) without a hover. Paused (F2): nothing is read.
+    _IdleTick(now) {
+        this._IdleWin()
+        if (this.ctx.IsPaused() || !Ocr.Win || !IsObject(this.chat) || !this._ChatOn())
+            return
+        try {
+            this.chat.Check()
+        } catch Any as e {
+            this._Problem("chat", "ChatWatch: " App._ErrText(e))
+        }
+    }
+
     ; ---- tick -------------------------------------------------------------------
 
     ; Timer callback. Nothing may escape it: an uncaught error would show an
@@ -740,13 +829,27 @@ class App {
             this._lastPoll := now
             this.PollLogs()
         }
-        if !walking
+        if !walking {
+            ; an error here stops every Discord message without a word: say it
+            ; (once a minute) - 2026-11-16, the boss card that never came
             try this.wh.Flush()
+            catch Any as e {
+                if (!this.HasOwnProp("_flushErrAt") || now - this._flushErrAt > 60000) {
+                    this._flushErrAt := now
+                    this.Log("Webhook: sending failed: " Webhook.ScrubText(e is Error ? e.Message " (" e.What ", line " e.Line ")" : String(e)))
+                }
+            }
+        }
         this._TrackLoops()
         this._MaybeRestoreFake()
         if (!this._started || this.ctx.IsStopped()) {
             if !IsObject(this._running)
                 this._Finish()
+            this._Status()
+            return
+        }
+        if this._idle {
+            this._IdleTick(now)
             this._Status()
             return
         }
@@ -819,7 +922,7 @@ class App {
         if this.ctx.IsPreempted()
             return
         nxt := this._Pick(now, win)
-        if (IsObject(nxt) && nxt !== cur && nxt.priority < cur.priority) {
+        if (IsObject(nxt) && nxt !== cur && nxt.priority < cur.priority && !(HasMethod(cur, "Holds") && cur.Holds(nxt))) {
             this.ctx.RequestPreempt()
             this.Log(StrTitle(cur.name) ": interrupted for " StrTitle(nxt.name))
         }
@@ -958,6 +1061,16 @@ class App {
             }
             if !unlocking                           ; the rejoin skipped the check: not proof the lock is gone
                 this._skipStreak := 0
+            Prof.on := this.cfg.Get("General.timing", 0) = 1     ; where the time goes (speed work)
+            if (Prof.on && this.HasOwnProp("_endedAt")) {          ; the gap since the last task ended
+                this._gapMs := (this.HasOwnProp("_gapMs") ? this._gapMs : 0) + Prof.Now() - this._endedAt
+                this._gapN := (this.HasOwnProp("_gapN") ? this._gapN : 0) + 1
+                if (this._gapN >= 50) {
+                    this.Log(Format("time: between tasks {:.2f} s on average (50 tasks)", this._gapMs / this._gapN / 1000))
+                    this._gapMs := 0, this._gapN := 0
+                }
+            }
+            Prof.Start(task.name)
             task.Run(this.ctx)
         } catch Any as e {
             failed := true
@@ -965,6 +1078,10 @@ class App {
             this._Error(StrTitle(task.name) ": error: " App._ErrText(e) App._ErrWhere(e))
         } finally {
             how := this._EndHow(failed)
+            pt := Prof.Text(), Prof.Stop()
+            if (pt != "")
+                this.Log(pt)
+            this._endedAt := Prof.Now()
             this.Log("task: " task.name " end" (how != "" ? " (" how ")" : ""))
             if !skipped
                 try this._Tidy(task)
@@ -1254,6 +1371,28 @@ class App {
     ; with a usable link). Before, Start paused ("Roblox not found") and F2
     ; was refused until Roblox was opened by hand (live 2026-11-11: Roblox
     ; had closed after a rejoin).
+    ; A daily quest's "Use N <potion>": the name as read -> the potions.json
+    ; id with the same canonical name, queued on the potion task (only when
+    ; potion use is set up). -> true when queued.
+    _PotionQuest(potion, n) {
+        if !IsObject(this.potions) {
+            this.Log("Potions: '" potion "' for a daily quest not used: potion use is not set up (Potions page)")
+            return false
+        }
+        want := PotionSafety.Canon(potion), id := ""
+        try for e in this.cfg.Data("potions")["potions"] {
+            if (e is Map && e.Has("name") && PotionSafety.Canon(e["name"]) == want) {
+                id := (e.Has("id") && Trim(e["id"]) != "") ? Trim(e["id"]) : Trim(e["name"])
+                break
+            }
+        }
+        if (id = "") {
+            this.Log("Potions: '" potion "' (a daily quest) is not in the potion list: not used")
+            return false
+        }
+        return this.potions.QueueQuest(id, n)
+    }
+
     _RejoinReady() => this._RecoveryOn() && RecoveryTask.LinkOk(Trim(String(this.cfg.Get("General.privateServer", ""))))
 
     ; Windowed Roblox (General.windowed=1, 2026-11-14): the window is used as
@@ -1392,7 +1531,7 @@ class App {
     ; Home's NEXT UP (idea 8, 2026-11-13): the soonest timed task while
     ; running -> "Quests in 12 min" / "Obby now" / "" (stopped, none on)
     NextUp() {
-        if !this._started
+        if (!this._started || this._idle)       ; idle mode runs no timed task
             return ""
         now := this.Now()
         best := "", bestMs := -1
@@ -1423,6 +1562,14 @@ class App {
         return best " in " (m < 60 ? m " min" : (m // 60) "h " Mod(m, 60) "m")
     }
 
+    ; Orb mode on and not hunting now: why (MinionsTask.WaitNote), else "".
+    _OrbNote() {
+        if (!this._taskMap.Has("minions") || !this.cfg.Get("Minions.enabled", 0))
+            return ""
+        try return this._taskMap["minions"].WaitNote(this.state.biome)
+        return ""
+    }
+
     _Status() {
         st := !this._started ? "Stopped" : this.ctx.IsPaused() ? "Paused" : "Running"
         if (this._pauseReason != "")
@@ -1433,6 +1580,8 @@ class App {
             task := this._started ? this._note : ""
         if (this._display != "" && (task = "" || task = "Idle"))
             task := (task = "" ? "" : task ". ") this._display
+        if (task = "Fishing" && (n := this._OrbNote()) != "")
+            task .= ", " n
         up :=this._started ? this.Now() - this._startedAt : this._uptime
         biome := this.state.biome
         rare := this.state.rareActive ? true : false
@@ -1620,7 +1769,7 @@ class App {
         F := []
         n := cfg.Get("General.sellEvery", 15)
         F.Push(Webhook.Field(Emoji.Fish " Fishing", ok(cfg.Get("General.fishing", 1), "sells every " n " catches"
-            (cfg.Get("General.sellAll", 0) ? " (all fish)" : ""))))
+            (cfg.Get("General.sellAll", 1) ? " (all fish)" : ""))))     ; the sell's own default (FishLogic.Settings)
         craft := cfg.Get("Craft.enabled", 1)
         pots := ""
         if craft {
@@ -1640,7 +1789,7 @@ class App {
         }
         F.Push(Webhook.Field(Emoji.Megaphone " @everyone", ok(evOn, biomes)))
         medal := cfg.Get("Medal.enabled", 0)
-        F.Push(Webhook.Field(Emoji.Clapper " Medal clips", ok(medal, medal ? App._MedalDetail(cfg) : "")))
+        F.Push(Webhook.Field(Emoji.Clapper " Clips", ok(medal, medal ? App._MedalDetail(cfg) : "")))
         F.Push(Webhook.Field(Emoji.Repeat " Auto-rejoin", ok(cfg.Get("recovery.enabled", 1))))
         F.Push(Webhook.Field(Emoji.Compass " Route", cfg.Get("General.vip", 1) ? "VIP" : "Standard"))
         return F
@@ -1654,6 +1803,10 @@ class App {
     static _MedalDetail(cfg) {
         key := Trim(cfg.Get("Medal.clipHotkey", "") != "" ? cfg.Get("Medal.clipHotkey", "") : cfg.Get("Medal.hotkey", ""))
         L := []
+        a := Clip.App(cfg.Get("Medal.app", "medal"))
+        L.Push(a.id = "other" ? "Other app" : a.name)       ; the clip app (2026-11-16)
+        if (key = "")
+            key := a.key
         if (key != "")
             L.Push("Key " key)
         if cfg.Get("Medal.onRareBiome", 1)
@@ -1820,6 +1973,46 @@ class App {
         if (kind = "biome")
             this._fakeRestore := {biome: prev, ts: ts}
         return "Sent " what ". Webhooks are marked [TEST]."
+    }
+
+    ; Dev tools (2026-11-16): kind "sinister" | "aura" -> that alert sent to
+    ; the webhook named hookName only, marked [TEST]; "disconnect" -> the
+    ; running macro closes Roblox and rejoins (a real rejoin). -> message.
+    FakeAlert(kind, hookName := "") {
+        if (kind = "disconnect") {
+            if !this._started
+                return this._TestRefused("the macro is not running. Start it (F1) first.")
+            if !(this._RecoveryOn() && HasMethod(this.recovery, "FakeDisconnect"))
+                return this._TestRefused("auto-rejoin is off (Settings > Recovery).")
+            if !this.recovery.FakeDisconnect()
+                return this._TestRefused("auto-rejoin needs your private server link (Settings).")
+            this.Log("Test event: fake disconnect (Dev tools)")
+            return "Fake disconnect: the macro closes Roblox and rejoins your private server now. Watch the log."
+        }
+        hook := ""
+        for w in this.cfg.Webhooks()
+            if (w.Has("name") && w["name"] = hookName && w.Has("url") && Trim(w["url"]) != "")
+                hook := w
+        if !IsObject(hook)
+            return this._TestRefused("pick a webhook with a saved URL first.")
+        switch kind {
+            case "sinister":
+                rep := SinisterReport({webhook: this.wh, cfg: this.cfg, ghost: () => false, hook: hook, test: true
+                    , log: (t) => this.Log(t)})
+                if !rep.Spawn("TEST-" this.Now(), "p")
+                    return this._TestRefused("the boss card was not sent (the log says why; a private server link is needed).")
+                ; the dead edit 15 s later, as when the hunt sees it die
+                this.timerFn.Call(() => rep.Killed("test"), -15000)
+                this.Log("Test event: fake Sinister P. spawn to webhook " hookName)
+                return "Sent a fake Sinister P. card to " hookName ". It changes to Boss Dead in 15 s."
+            case "aura":
+                name := ""
+                try name := this.be.AuraAlertTo(hook)
+                if (name = "")
+                    return this._TestRefused("no aura in data\auras.json is as rare as the alert's threshold.")
+                return "Sent a fake rare aura alert (" name ") to " hookName "."
+        }
+        return this._TestRefused("unknown test event '" kind "'.")
     }
 
     _TestRefused(why) {
@@ -2089,6 +2282,7 @@ class App {
 
     Boot(mode := "normal") {
         if (mode = "normal") {
+            Theme.CustomFromCfg(this.cfg)                       ; [UI] custom* colours, for theme = Custom
             Theme.Use(this.cfg.Get("UI.theme", "Moontide"))     ; before any window
             I18n.Use(this.cfg.Get("UI.lang", "en"))             ; texts are translated when made
         }
@@ -2181,6 +2375,18 @@ class App {
         now := A_TickCount
         if (IsObject(this.remote) && !Input.InRoute)
             this._ServiceStep("remote", () => this.remote.Tick())
+        ; PUMPKIN MOON / GRAVEYARD: a stopped clock = a Sinister boss (no
+        ; chat needed); never mid-walk (a read there stretches a key hold).
+        ; Only while started: stopped, the log is not polled, so the biome is
+        ; the last run's and a frozen clock (a disconnect, the title screen)
+        ; would ping a boss that is not there
+        if (IsObject(this.clock) && this._started && !Input.InRoute && this.cfg.Get("Limited.bossAlert", 1) && (this._Active() || (this._idle && Ocr.Win)))
+            this._ServiceStep("clock", () => this.clock.Tick(this.state.biome))
+        ; the run's tick sends Discord messages, but it only runs while the
+        ; macro is started: stopped, Dev tools' fake alerts (and the dashboard's
+        ; messages) sat in the queue (2026-11-16, "theres nothing in discord")
+        if (!this._timerOn && !Input.InRoute && IsObject(this.wh))
+            this._ServiceStep("webhooks", () => this.wh.Flush())
         if (now - this._svc["sched"] >= 15000) {
             this._svc["sched"] := now
             this._ServiceStep("schedule", () => this._ScheduleTick())
@@ -2242,6 +2448,8 @@ class App {
     ; Roblox to the front before a start that no key press made (schedule,
     ; Discord): Start pauses at once while another window is in front.
     _FrontRoblox() {
+        if this._IdleOn()                       ; idle mode: Roblox may stay behind
+            return
         try this.roblox.Focus(3)
     }
 
@@ -2308,7 +2516,10 @@ class App {
                 hist.Push({label: A_Index = 1 ? "Today" : FormatTime(ts, "ddd d MMM"), m: App.WithDerived(this.daily.Day(FormatTime(ts, "yyyyMMdd")))})
             }
         }
-        this.dash.SetStatsPage(App.WithDerived(this.daily.Day()), App.WithDerived(this.daily.Session()), hist)
+        all := "", since := ""
+        if HasMethod(this.daily, "AllTime")
+            all := App.WithDerived(this.daily.AllTime()), since := this.daily.Since()
+        this.dash.SetStatsPage(App.WithDerived(this.daily.Day()), App.WithDerived(this.daily.Session()), hist, all, since)
     }
 
     ; ---- Discord remote ----
@@ -2336,7 +2547,7 @@ class App {
     _RemoteHandlers() {
         return Map(
             "status", (args, msg) => this._RemoteStatus(),
-            "stats", (args, msg) => this._RemoteStats(),
+            "stats", (args, msg) => this._RemoteStats(args),
             "start", (args, msg) => (this._FrontRoblox(), paused := this._started && this.ctx.IsPaused()
                 , this.Start() ? (paused ? "Resumed." : "Started.") : this._started ? "Already running." : "Not started: see the log."),
             "stop", (args, msg) => (this.Stop("Discord") ? "Stopped." : "It was not running."),
@@ -2358,9 +2569,18 @@ class App {
         return t
     }
 
-    _RemoteStats() {
+    ; "!stats" today's numbers, "!stats all" the all-time totals
+    _RemoteStats(args := "") {
         if !IsObject(this.daily)
             return "No stats yet."
+        if (StrLower(Trim(String(args))) = "all" && HasMethod(this.daily, "AllTime")) {
+            since := this.daily.Since()
+            b := DailySummary.Build(this.daily.AllTime(), "")
+            t := "**All time**" (RegExMatch(since, "^\d{8}$") ? " (since " FormatTime(since "000000", "d MMM yyyy") ")" : "")
+            for f in b.fields
+                t .= "`n" f["name"] ": " f["value"]
+            return t
+        }
         b := DailySummary.Build(this.daily.Day(), FormatTime(A_Now, "yyyyMMdd"))
         t := "**Today**"
         for f in b.fields
@@ -2385,6 +2605,7 @@ class App {
         while (i <= lines.Length)
             t .= RTrim(lines[i], "`r") "`n", i++
         t := UiLogic.Scrub(t, this._Secrets(), true)
+        t := StrReplace(t, "``", "'")            ; a backtick in a line would end the code block
         return (t = "") ? "The log is empty." : "``````" SubStr(t, -1800) "``````"
     }
 
@@ -2601,6 +2822,7 @@ class App {
             "recordRoute", (name) => this.OnRecordRoute(name),
             "testRoute", (name) => this.OnTestRoute(name),
             "testEvent", (kind) => this.FakeEvent(kind),
+            "testAlert", (kind, hook) => this.FakeAlert(kind, hook),
             "testWebhook", (i) => this.OnTestWebhook(i),
             "checkUpdate", () => this.OnCheckUpdate(true),
             "installUpdate", () => this.OnInstallUpdate(),

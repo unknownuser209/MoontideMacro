@@ -379,13 +379,7 @@ class FishLogic {
     ; ---- screen sampling (Pixel.Is) ------------------------------------------
 
     ; True when any grid sample (xs x rows) is within tol of color.
-    static GridHas(xs, rows, color, tol) {
-        for y in rows
-            for x in xs
-                if Pixel.Is(x, y, color, tol)
-                    return true
-        return false
-    }
+    static GridHas(xs, rows, color, tol) => Pixel.AnyIn(xs, rows, color, tol)
 
     ; Camera zoom (FishSol wheel sequence): wheel up, pause, wheel down, settle.
     ; `cam` = coords sell.camera {wheelUp, wheelDown, wheelGapMs, pauseMs,

@@ -6,6 +6,7 @@
 #Include %A_LineFile%\..\..\Calibrate.ahk
 #Include %A_LineFile%\..\..\Biomes.ahk
 #Include %A_LineFile%\..\..\Scheduler.ahk
+#Include %A_LineFile%\..\..\Webhook.ahk
 ; ---------------------------------------------------------------------------
 ; PotionsTask: uses the rare biome's potion list (spec 4.6 / 4.6a).
 ; THIS CLICKS "Use" ON REAL POTIONS. Every doubt resolves to NOT clicking.
@@ -291,6 +292,20 @@ class PotionsTask {
         this._pending := {biome: String(biome), ts: String(ts)}
     }
 
+    ; A daily quest "Use N <potion>" (DailyQuestsTask): one event of n uses
+    ; of that potion id, through every check a biome's potions get. Never
+    ; replaces a waiting rare biome event. -> true when queued.
+    QueueQuest(potion, n) {
+        if IsObject(this._pending) {
+            this._Log("Potions: " potion " for a daily quest not queued: another potion event is waiting")
+            return false
+        }
+        if !(IsInteger(n) && n >= 1)
+            return false
+        this._pending := {biome: "QUEST", ts: "Q" A_Now A_MSec, quest: {name: String(potion), qty: Integer(n)}}
+        return true
+    }
+
     CanRun(state) => IsObject(this._pending)
     HasPending() => IsObject(this._pending)
 
@@ -334,7 +349,8 @@ class PotionsTask {
 
     _RunEvent(ev, ctx) {
         biome := ev.biome
-        list := Biomes.Find(this._cfg, biome)["potions"]
+        quest := ev.HasOwnProp("quest")
+        list := quest ? [Map("name", ev.quest.name, "qty", ev.quest.qty)] : Biomes.Find(this._cfg, biome)["potions"]
         dry := this._IsDry()
         if (list.Length = 0) {
             this._Log("Potions: no potion list for " biome "; nothing to use")
@@ -376,7 +392,7 @@ class PotionsTask {
         ; showed it as a quiet "event_claimed", even in dry run).
         if this._HaltedAll(biome, list, dry)
             return
-        if (!resumed && !this._safety.BeginEvent(key)) {
+        if (!resumed && !(quest ? this._safety.BeginQuest(key, ev.quest.qty) : this._safety.BeginEvent(key))) {
             if !this._HaltedAll(biome, list, dry)      ; the claim's save failed
                 this._SkipAll(biome, list, "event_claimed", dry)
             return
@@ -455,6 +471,8 @@ class PotionsTask {
             return true
         }
         this._pending := {biome: ev.biome, ts: ev.ts, resumes: n + 1}
+        if ev.HasOwnProp("quest")
+            this._pending.quest := ev.quest
         return true
     }
 
@@ -1195,6 +1213,8 @@ class PotionsTask {
     ; same biome ends the old one). A failing poll or unreadable state counts
     ; as "ended".
     _BiomeActive(ev) {
+        if ev.HasOwnProp("quest")           ; a daily quest's uses: no biome to end
+            return true
         biome := ev.biome
         if IsObject(this.pollFn) {
             try {

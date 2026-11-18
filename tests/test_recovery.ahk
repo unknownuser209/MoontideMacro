@@ -702,3 +702,16 @@ Test_Recovery_RejoiningTellsAWaitingRejoin() {
     rig2.state.ghost := true
     AssertEq(rig2.task.Rejoining(rig2.state), false, "no usable link: nothing it can do")
 }
+
+; Dev tools: a fake disconnect makes the next tick close Roblox and rejoin
+Test_Recovery_FakeDisconnect() {
+    rig := RcRig()
+    AssertEq(rig.task.CanRun(rig.state), false, "nothing to do")
+    AssertEq(rig.task.FakeDisconnect(), true, "taken")
+    AssertEq(rig.task.CanRun(rig.state), true, "a disconnect now")
+    AssertEq(rig.task.Run(rig.Ctx()), 1, "rejoined")
+    AssertEq(rig.closes, 1, "the client closed first")
+    AssertEq(rig.runs.Length, 1, "the link opened")
+    rig2 := RcRig("")
+    AssertEq(rig2.task.FakeDisconnect(), false, "no usable link: refused")
+}

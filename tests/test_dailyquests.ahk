@@ -190,6 +190,57 @@ Test_DailyQuests_NoClickUnderAPurchasePrompt() {
     AssertTrue(!win.rows[699].claimed, "nothing clicked while a Roblox prompt reads")
 }
 
+; A "Use N <potion>" row: the potion task gets it only after the window is
+; closed. Queued mid-visit, the waiting potion event preempted the visit, so
+; the rows after it (here a claim) were never done.
+Test_DailyQuests_PotionQuestQueuedAfterTheWindow() {
+    win := DqWin(DqRows(["Use 10 Lucky Potions", false], ["Roll 100 times", true], ["Play Sol's RNG for 30 minutes", false]))
+    io := DqIO(win), wh := QmWh(), logs := [], clock := QmClock(0), ctx := SchedCtx()
+    calls := []
+    pq := (p, n) => (calls.Push({p: p, n: n, open: win.open}), ctx.RequestPreempt(), true)   ; as the App's monitor would
+    w := DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
+    bar := []
+    Loop w
+        bar.Push(A_Index <= w * 3 // 10 ? 0xFFFFFF : 0x202020)              ; 3/10 done
+    t := DailyQuestsTask({cfg: QmCfg(Map("DailyQuests.enabled", 1, "DailyQuests.usePotions", 1)), io: io, webhook: wh
+        , cal: QmCal(), log: (s) => logs.Push(s), ocr: (x, y, wd, h, scale := 1) => win.Ocr(x, y, wd, h, scale)
+        , now: () => clock.t, rect: (x, y, wd, h) => bar, potionQuest: pq})
+    t.Run(ctx)
+    AssertEq(calls.Length, 1, "one potion request")
+    AssertEq(calls.Length ? calls[1].p "|" calls[1].n : "", "Lucky Potion|7", "the potion and the uses left")
+    AssertTrue(calls.Length && !calls[1].open, "asked once the window was closed")
+    AssertTrue(win.rows[797].claimed, "the row after it still claimed")
+    AssertEq(win.free, 3, "the potion quest never rerolled")
+}
+
+; The same uses are asked for once a day (dry run / none owned: the bar never
+; moves, and every visit opened the inventory again); a moved bar asks again.
+Test_DailyQuests_PotionQuestAskedOncePerBar() {
+    win := DqWin(DqRows(["Use 10 Lucky Potions", false], ["Roll 100 times", true, true], ["Play Sol's RNG for 30 minutes", false]))
+    io := DqIO(win), logs := [], clock := QmClock(0)
+    calls := []
+    w := DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
+    fill := w * 2 // 10
+    rect := (x, y, wd, h) => DqFill(w, fill)
+    t := DailyQuestsTask({cfg: QmCfg(Map("DailyQuests.enabled", 1, "DailyQuests.usePotions", 1)), io: io, webhook: QmWh()
+        , cal: QmCal(), log: (s) => logs.Push(s), ocr: (x, y, wd, h, scale := 1) => win.Ocr(x, y, wd, h, scale)
+        , now: () => clock.t, rect: rect, potionQuest: (p, n) => (calls.Push(n), true)})
+    t.Run(SchedCtx())
+    t.Run(SchedCtx())
+    AssertEq(calls.Length, 1, "the same 8 asked for once")
+    fill := w * 3 // 10                                                     ; 3/10 now
+    t.Run(SchedCtx())
+    AssertEq(calls.Length, 2, "the bar moved: the rest asked for")
+    AssertEq(calls.Length = 2 ? calls[2] : 0, 7, "7 left")
+}
+
+DqFill(w, fill) {
+    bar := []
+    Loop w
+        bar.Push(A_Index <= fill ? 0xFFFFFF : 0x202020)
+    return bar
+}
+
 Test_DailyQuests_CanRunAndInterval() {
     win := DqWin(DqRows(["Roll 100 times", true]))
     d := DqTask(win, Map("DailyQuests.intervalMin", 20))

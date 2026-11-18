@@ -52,9 +52,11 @@
 ;                            no webhook gets it. ONE message per routed
 ;                            webhook: content a String = plain text (no
 ;                            embed); an object {desc, color[, buttons]} = a
-;                            card (one embed, no title). NEVER a
-;                            ping: allowed_mentions {"parse": []} and the
-;                            hook's mention unused. Posted with ?wait=true:
+;                            card (one embed, no title). No ping, unless
+;                            opts.mention is true: then the post (not the
+;                            edits) carries each hook's own mention, with
+;                            allowed_mentions limited to that one id (the
+;                            boss card, 2026-11-16). Posted with ?wait=true:
 ;                            Discord answers with the message, whose id is
 ;                            kept per webhook entry in the handle (parts:
 ;                            {name, id, state "pending"/"ok"/"failed",
@@ -190,7 +192,8 @@ class Webhook {
             throw ValueError("Webhook: SendTo needs a webhook Map")
         ev := String(Webhook._Opt(opts, "event", "direct"))
         done := Webhook._Opt(opts, "done", "")
-        this._Enqueue(hook, ev, title, desc, color, "", false, String(Webhook._Opt(opts, "screenshot", "")), done
+        ; opts.ping: one user / role to ping (Dev tools' fake aura alert)
+        this._Enqueue(hook, ev, title, desc, color, Webhook.NormalizeMention(Webhook._Opt(opts, "ping", "")), false, String(Webhook._Opt(opts, "screenshot", "")), done
             , Webhook._Opt(opts, "fields", ""), Webhook._Opt(opts, "buttons", ""), String(Webhook._Opt(opts, "thumbnail", "")))
     }
 
@@ -241,11 +244,13 @@ class Webhook {
         if (hooks.Length = 0)
             return ""
         h := WebhookText(eventType)
+        wantMention := Webhook._Truthy(Webhook._Opt(opts, "mention", false))
         for w in hooks {
             part := {name: w.Has("name") ? String(w["name"]) : "", url: w.Has("url") ? String(w["url"]) : ""
                 , id: "", state: "pending", edit: "", edited: ""}
             h.parts.Push(part)
-            this._EnqueueText(part, eventType, content, "")
+            mention := wantMention ? Webhook.NormalizeMention(w.Has("mention") ? w["mention"] : "") : ""
+            this._EnqueueText(part, eventType, content, "", mention)
         }
         return h
     }
@@ -276,14 +281,21 @@ class Webhook {
     }
 
     ; msgId "" = the post (?wait=true, the id kept from Discord's answer),
-    ; else the PATCH of that message.
-    _EnqueueText(part, eventType, content, msgId) {
+    ; else the PATCH of that message. mention: the post pings it (an edit
+    ; leaves the message's text, and so the mention, as it was).
+    _EnqueueText(part, eventType, content, msgId, mention := "") {
+        payload := IsObject(content) ? Webhook._CardPayload(content)
+            : Map("content", SubStr(String(content), 1, 2000), "allowed_mentions", Map("parse", []))
+        if (mention != "" && msgId = "") {
+            payload["content"] := payload.Has("content") ? SubStr(mention " " payload["content"], 1, 2000) : mention
+            id := RegExReplace(mention, "\D")
+            payload["allowed_mentions"] := InStr(mention, "&") ? Map("roles", [id]) : Map("users", [id])
+        }
         this._queue.Push({
             name: part.name,
             url: part.url,
             event: eventType,
-            payload: IsObject(content) ? Webhook._CardPayload(content)
-                : Map("content", SubStr(String(content), 1, 2000), "allowed_mentions", Map("parse", [])),
+            payload: payload,
             screenshot: "", fileName: "", thumb: "", thumbName: "",
             done: ObjBindMethod(this, "_TextDone", part, msgId != ""),
             onOk: msgId = "" ? ObjBindMethod(this, "_TextPosted", part, eventType) : "",
@@ -306,6 +318,7 @@ class Webhook {
             return
         }
         part.id := id, part.state := "ok"
+        this._Log('Webhook "' part.name '": ' eventType ' message posted')
         if (IsObject(part.edit) || part.edit != "") {
             c := part.edit, part.edit := ""
             this._EnqueueText(part, eventType, c, id)

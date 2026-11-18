@@ -29,8 +29,8 @@ program; it reads no game memory and sends nothing anywhere you did not set up.)
   **Scale** (Setup > Calibrate, next to Windowed) is read from Windows when
   set to Auto; pick yours if it shows the wrong one. Only 100% has been
   tested in game so far.
-- **Be careful:** Memory Match works better at some screen sizes than others,
-  and minion hunting is still very buggy at every size. Keep an eye on both.
+- **Be careful:** minion hunting is still very buggy at every size. Keep an
+  eye on it.
 - Nothing to install: the release zip includes `MoontideMacro.exe`. If you
   already have [AutoHotkey v2](https://www.autohotkey.com/), you can run
   `Vesper.ahk` instead.
@@ -55,8 +55,8 @@ check=1
 auto=0
 ```
 
-- `repo` is the GitHub repository to follow. **Empty (the default) turns the
-  updater off completely.**
+- `repo` is the GitHub repository to follow. A new install follows the
+  Moontide releases; **empty turns the updater off completely.**
 - `check=1` looks for a newer release once per start; `auto=0` asks first
   (Home page: "Update available: vX.Y.Z", **Install** or **Later**), `auto=1`
   installs without asking. **Check for updates** on Home checks on demand.
@@ -78,16 +78,16 @@ The script publishes nothing.
 | **F1** | Start |
 | **F2** | Pause / resume |
 | **F3** | Stop. Also the potion kill switch: potion use stops before its next click. |
-| **F9** | Calibration: capture the point under the mouse (nothing is clicked) |
+| **F4** | Calibration: capture the point under the mouse (nothing is clicked; F9 would open Roblox's developer console) |
 | **F7** | Route recorder: start / stop recording |
 
 Start, pause and stop can be changed in `settings.ini` `[Hotkeys]` (F1-F24
-only). The Medal clip hotkey (Alerts > Clips) must be F4-F24 and must not be any
-of the keys above. **F6 is free for Medal.**
+only). The clip hotkey (Alerts > Clips) must be F4-F24 or a combo like Alt+C
+and must not be any of the keys above. **F6 is free for clips.**
 
 The capture key was F6 in older versions. If your `settings.ini` still has
 `captureKey=F6` under `[Calibrate]`, F6 stays the capture key and the Medal
-hotkey cannot be F6: close Vesper, change that line to `captureKey=F9` (or
+hotkey cannot be F6: close Vesper, change that line to `captureKey=F4` (or
 delete it), start Vesper again.
 
 ## The dashboard, credits and switches
@@ -245,7 +245,7 @@ calibrate every step as below.
 
 **Setup > Calibrate** page: pick steps and press **Record selected** (or **Run
 all**). For each step, stand where the prompt says, **hover** the target and
-press **F9**. Nothing is clicked. Esc cancels. Do the steps by location:
+press **F4**. Nothing is clicked. Esc cancels. Do the steps by location:
 
 1. **Notifications** (`notify_rect`): the area where in-game notification
    text shows. Easiest: press E at an empty quest board, or let auto craft
@@ -265,7 +265,7 @@ press **F9**. Nothing is clicked. Esc cancels. Do the steps by location:
    `inv_count_rect`, `inv_use` (hover only, never press it),
    `inv_desc_rect`, then **`inv_amount_empty` BEFORE `inv_amount_one`**
    (empty the amount box yourself and mark its inside; then type 1 into it
-   and just press F9: the same box is reused).
+   and just press F4: the same box is reused).
 4. **Stella's cauldron** (only if you use it): `cauldron_gui` (a box around
    the "Stella's Workshop" title), `cauldron_search`, `cauldron_result` (a
    box around the FIRST result card: its name must be your recipe before it
@@ -460,11 +460,25 @@ keeps the best pairs.
 4. Reports: the `memorymatch` event lists the pairs won, best first, or says
    no pairs matched. A board that will not open goes to the `errors` event.
 
-## Medal clips
+## Clips
 
-Alerts > Clips, **Medal clips** (needs Medal running). Vesper taps your Medal
-clip hotkey a few seconds after a rare biome or a rare aura. Set the same
-key in Medal; **F6** works (it is no longer the capture key).
+Alerts > Clips. Vesper presses your clip app's save-clip hotkey a few seconds
+after a rare biome or a rare aura, so the moment ends up in the clip. Pick
+the **Clip app**; picking one fills in its usual hotkey (change it if you set
+another one in the app):
+
+| Clip app | Hotkey it fills in | Set up in the app |
+| --- | --- | --- |
+| Medal | F8 | Settings > Clips: the same hotkey |
+| Discord | Alt+C | User Settings > Clips: turn clips on, same keybind |
+| NVIDIA Instant Replay | Alt+F10 | NVIDIA app: turn Instant Replay on |
+| AMD Instant Replay | Ctrl+Shift+S | AMD Software: turn Instant Replay on |
+| OBS Replay Buffer | (type yours) | start the Replay Buffer, give Save Replay a hotkey |
+| Other | (type yours) | any app with a save-clip hotkey |
+
+The app must be running (Other is not checked). The hotkey is F4-F24 or a
+combo like Alt+C, never a macro, capture or recorder key; **F6** works (it
+is no longer the capture key).
 
 With **Clip on rare aura** ticked, an aura you roll is clipped when any of
 these is true:
@@ -512,7 +526,7 @@ it was clipped.
 | Potions skipped: `uncalibrated` | Record the inventory calibration steps (all 10). |
 | Potions skipped: `no_desc` / `select_unverified` | Fill in / fix `desc` in `data\potions.json` (unique text). |
 | "route 'x' not found" | Record that route on the Setup > Routes page. |
-| Clip hotkey not saved | Pick an F4-F24 key that is not F1-F3, F7 or the capture key (F9). F6 refused? See "Keys": your `settings.ini` still has `captureKey=F6`. |
+| Clip hotkey not saved | Pick F5-F24 or a combo like Alt+C, not F1-F3, F7 or the capture key (F4). F6 refused? See "Keys": your `settings.ini` still has `captureKey=F6`. |
 | Log: `unknown aura <name>` | That aura is not in `data\auras.json`, so it is never clipped by rarity. Add it (name, rarity, category) or list it in **Always clip auras**. |
 
 The **Log** page shows the newest 200 lines; links and webhook URLs are

@@ -695,3 +695,15 @@ Test_Webhook_PingOverridesTheHookMention() {
     for rec in wh.sent
         AssertEq(Json.Parse(rec.json).Has("content"), false, "test: no ping " rec.name)
 }
+
+; SendTo (one webhook, Dev tools fake alerts) honours opts.ping too
+Test_Webhook_SendToPings() {
+    hook := WhMake("dev", WhFakeUrl("d"), "", 1, [])
+    wh := Webhook(WhStubCfg([hook]))
+    wh.dryRun := true
+    wh.SendTo(hook, "t", "d", 1, {ping: "555666777888"})
+    wh.SendTo(hook, "t", "d", 1)
+    wh.Flush()
+    AssertEq(Json.Parse(wh.sent[1].json)["content"], "<@555666777888>", "pinged")
+    AssertEq(Json.Parse(wh.sent[2].json).Has("content"), false, "no ping asked: none")
+}

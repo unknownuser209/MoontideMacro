@@ -1357,6 +1357,19 @@ Test_ObbyMemory_Page() {
         AssertEq(d.Ctrl("Obby.intervalMin").Value, "10", "interval default shown")
         AssertTrue(InStr(d.Ctrl("obbyBlessingNote").Text, "obby_blessing"), "blessing note names the calibration step")
         AssertTrue(InStr(d.Ctrl("memoryNote").Text, "next try: "), "next try note")
+        ; Reset timer (2026-11-16): on a temp state file, never the real one
+        mp := dir "\mm_state.json"
+        FileAppend('{"nextTry":"20991231235900","lastPlayed":"20261116120000"}', mp, "UTF-8")
+        Dashboard.MemoryStatePath := mp
+        try {
+            d._ObbyMemoryLoad()
+            AssertTrue(InStr(d.Ctrl("memoryNote").Text, "31 Dec"), "the saved next try: " d.Ctrl("memoryNote").Text)
+            AssertEq(d.ResetMemoryTimer(), true, "reset")
+            AssertTrue(InStr(d.Ctrl("memoryNote").Text, "now"), "next try now: " d.Ctrl("memoryNote").Text)
+            AssertTrue(!InStr(FileRead(mp, "UTF-8"), "nextTry") && InStr(FileRead(mp, "UTF-8"), "lastPlayed"), "nextTry gone, lastPlayed kept")
+        } finally {
+            Dashboard.MemoryStatePath := ""
+        }
         if !MemoryMatchTask.LayoutKnown {
             AssertTrue(InStr(d.Ctrl("memoryLayoutNote").Text, "waiting for the board layout"), "layout note while unknown")
             d.Ctrl("MemoryMatch.enabled").Flip()
@@ -1385,8 +1398,9 @@ Test_ObbyMemory_Page() {
     }
 }
 
-; 2026-11-11 (the owner's ask): Minion hunting and Memory Match are still
-; buggy; turning either on warns first, and "Keep off" leaves it off
+; 2026-11-11 (the owner's ask): Minion hunting is still buggy; turning it on
+; warns first, and "Keep off" leaves it off (Memory Match warned too until
+; 2026-11-16: the owner says it is not buggy any more)
 ; 2026-11-11: a friend's Equinox hunts failed. A big combat aura asks first
 ; (once per name); "Change it" puts the saved aura back
 Test_Dashboard_BigAuraWarns() {
@@ -1443,13 +1457,23 @@ Test_Dashboard_BuggyPartsWarnBeforeTheyGoOn() {
         sw.Flip()
         AssertEq(asked.Length, 2, "turning off never asks")
         AssertEq(sw.Value, 0, "off")
+        ; Memory Match turns on without asking
+        mem := ""
+        for b in d._binds
+            if (b.key = "MemoryMatch.enabled")
+                mem := b.ctrl
+        mem.Value := 0
+        mem.Flip()
+        AssertEq(asked.Length, 2, "Memory Match: no warning")
+        AssertEq(mem.Value, 1, "Memory Match: on")
     } finally {
         UiDashClose(d)
         try DirDelete(dir, true)
     }
 }
 
-; A switch with a warning (Minions, Memory Match) still shows the tab's unsaved dot.
+; A switch with a warning still shows the tab's unsaved dot (Memory Match,
+; given a warning here: its own was removed 2026-11-16).
 Test_Dashboard_WarnedSwitchUpdatesDot() {
     dir := UiDashTmp()
     d := ""
@@ -1460,6 +1484,7 @@ Test_Dashboard_WarnedSwitchUpdatesDot() {
             if (b.key = "MemoryMatch.enabled")
                 sw := b.ctrl, page := b.page
         AssertTrue(IsObject(sw), "the memory match switch")
+        d._WarnOn(sw, "Test warning", "test")
         d.SelectPage(page.idx)
         dot := d.Ctrl("tabDot:" page.name)
         d._confirmBuggy := (title, text) => true
@@ -1689,6 +1714,280 @@ Test_Theme_ApplyNowSavesFirst() {
     }
 }
 
+; ---- custom theme (Theme.Derive, lib\ui\ThemeEditor.ahk) ---------------------
+
+UiDashOverlap(a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y)
+
+; a file that is not a picture, with a picture's name
+UiDashBadPng(dir) {
+    p := dir "\not_a_picture.png"
+    FileAppend("this is text, not a png", p, "UTF-8-RAW")
+    return p
+}
+
+Test_Theme_CustomColours() {
+    root := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "")
+    dir := UiDashTmp()
+    try {
+        AssertEq(Theme.HexOk("#0d1117"), "0D1117", "hash and lower case")
+        AssertEq(Theme.HexOk(" F2A93B "), "F2A93B", "spaces")
+        AssertEq(Theme.HexOk("12345"), "", "5 digits")
+        AssertEq(Theme.HexOk("GGGGGG"), "", "not hex")
+        AssertEq(Theme.HexOk(""), "", "empty")
+        AssertEq(Theme.HexOr("000000", "FFFFFF"), "000000", "black is a colour")
+        AssertEq(Theme.Mix("000000", "FFFFFF", 0.5), "808080", "mix")
+        ; derived from Moontide's 4 colours: close to the hand-made preset
+        m := Theme.Presets["Moontide"]
+        o := Theme.Derive(m.Bg, m.PanelC, m.Text, m.Accent)
+        for k in Theme.ThemeKeys
+            AssertTrue(o.HasProp(k), "derive has " k)
+        for k in ["SideBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Muted", "AccentHi", "Pulse"] {
+            a := Integer("0x" o.%k%), b := Integer("0x" m.%k%)
+            loop 3 {
+                sh := (A_Index - 1) * 8
+                AssertTrue(Abs(((a >> sh) & 0xFF) - ((b >> sh) & 0xFF)) <= 48, k " near the preset (" o.%k% " vs " m.%k% ")")
+            }
+        }
+        AssertEq(o.Ink, m.Bg, "ink = the dark background on gold")
+        AssertEq(o.TextFixed, false, "text reads")
+        ; a light theme with a pale accent: ink still reads on the accent
+        l := Theme.Derive("F4F4F4", "D0D8E8", "1A1A1A", "FFE14D")
+        AssertTrue(Theme.Contrast(l.Ink, l.Accent) >= 4.5, "ink readable on a pale accent (" l.Ink ")")
+        d := Theme.Derive("0D1117", "0B2A5B", "1A1A1A", "1030A0")
+        AssertTrue(Theme.Contrast(d.Ink, d.Accent) >= 4.5, "ink readable on a dark accent (" d.Ink ")")
+        ; text the same as the panels is replaced
+        f := Theme.Derive("101010", "202020", "141414", "F2A93B")
+        AssertTrue(f.TextFixed, "unreadable text fixed")
+        AssertEq(f.Text, "FFFFFF", "white on dark panels")
+        ; bad values fall back, never throw
+        b := Theme.Derive("nope", "", "#12", "zzzzzz")
+        AssertEq(b.Bg b.PanelC b.Text b.Accent, m.Bg m.PanelC m.Text m.Accent, "bad hex -> Moontide's")
+        ; pictures
+        AssertEq(Theme.CustomPicture("none"), "", "none")
+        AssertEq(Theme.CustomPicture("galaxy"), "themes\galaxy.png", "a theme's picture")
+        AssertEq(Theme.CustomPicture("??"), m.BgImage, "unknown -> Moontide's")
+        AssertEq(Theme.CustomPicture("file", dir "\missing.png"), "", "missing file -> none")
+        AssertEq(Theme.CustomPicture("file", dir), "", "a folder -> none")
+        AssertEq(Theme.CustomPicture("file", "themes\galaxy.png"), "", "not a full path -> none")
+        png := root "\assets\themes\galaxy.png"
+        AssertEq(Theme.CustomPicture("file", png), png, "own file")
+        ; settings -> Use("Custom")
+        cfg := Config.Load(dir)
+        AssertEq(Theme.ThemeName("CUSTOM"), "Custom", "Custom is a theme name")
+        AssertEq(Theme.Choices()[Theme.Choices().Length], "Custom", "listed last")
+        cfg.Set("UI.customAccent", "#00ff88")
+        cfg.Set("UI.customBg", "not a colour")
+        cfg.Set("UI.customPicture", "none")
+        Theme.CustomFromCfg(cfg)
+        AssertEq(Theme.Use("custom"), "Custom", "use custom")
+        AssertEq(Theme.Accent, "00FF88", "custom accent")
+        AssertEq(Theme.Bg, m.Bg, "bad background -> Moontide's")
+        AssertEq(Theme.BgImage, "", "no picture")
+        AssertEq(Theme.CurrentSig, Theme.CustomDerive(cfg).Sig, "sig of what is shown")
+        ; own pictures: darkened and scaled, a bad one -> 0
+        h := Theme.DimPicture(png, 864, 620, "0D1117")
+        AssertTrue(h != 0, "picture loaded")
+        if h
+            DllCall("DeleteObject", "Ptr", h)
+        AssertEq(Theme.DimPicture(dir "\missing.png", 864, 620, "0D1117"), 0, "missing")
+        AssertEq(Theme.DimPicture(UiDashBadPng(dir), 864, 620, "0D1117"), 0, "not a picture")
+        ; profiles carry the colours, never the picture's path
+        AssertEq(Profiles.Shareable("UI", "customAccent", "00FF88"), "UI.customAccent", "colour shared")
+        AssertEq(Profiles.Shareable("UI", "customPicture", "Galaxy"), "UI.customPicture", "picture choice shared")
+        AssertEq(Profiles.Shareable("UI", "customPictureFile", "D:\art\x.png"), "", "picture path not shared")
+    } finally {
+        Theme.Use("Moontide")
+        try DirDelete(dir, true)
+    }
+}
+
+Test_Theme_CustomEditor() {
+    root := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "")
+    dir := UiDashTmp()
+    ed := ""
+    try {
+        cfg := Config.Load(dir)
+        ed := ThemeEditor(cfg)
+        AssertEq(ed.Value("Accent"), "F2A93B", "starts from the saved (default) colours")
+        AssertTrue(ed.SetHex("Accent", "#ff0055"), "hex taken")
+        AssertEq(ed.Value("Accent"), "FF0055", "normalised")
+        AssertEq(ed.SetHex("Bg", "xyz"), false, "bad hex refused")
+        ed._edits["Bg"].Value := "12zz"
+        ed._OnEdit("Bg", ed._edits["Bg"])
+        AssertEq(ed.Value("Bg"), "0D1117", "a bad field keeps the last good colour")
+        AssertTrue(InStr(ed._note.Text, "6 hex digits"), "the note says why")
+        AssertTrue(ed.CopyFrom("Galaxy"), "copied")
+        AssertEq(ed.Value("PanelC"), Theme.Presets["Galaxy"].PanelC, "galaxy panels")
+        AssertEq(ed.Picture(), "Galaxy", "galaxy picture")
+        ed._pickColor := (hex) => "123456"
+        ed._Pick("Text")
+        AssertEq(ed.Value("Text"), "123456", "picked colour")
+        ed._pickColor := (hex) => ""
+        ed._Pick("Text")
+        AssertEq(ed.Value("Text"), "123456", "cancelled pick changes nothing")
+        png := root "\assets\themes\boss.png"
+        ed._pickFile := () => png
+        AssertTrue(ed._Browse(), "picture accepted")
+        AssertEq(ed.Picture() "|" ed.File(), "file|" png, "own picture")
+        ed._pickFile := () => UiDashBadPng(dir)
+        AssertEq(ed._Browse(), false, "a file that is not a picture is refused")
+        AssertEq(ed.File(), png, "the good one kept")
+        AssertTrue(InStr(ed._fileNote.Text, "could not be read"), "says why")
+        ed._picDdl.Choose(1)
+        ed._OnPicPick(ed._picDdl)
+        AssertEq(ed.Picture(), "none", "none picked")
+        ed.SetPicture("file")
+        AssertTrue(ed.Save(), "saved")
+        c2 := Config.Load(dir)
+        AssertEq(c2.Get("UI.customAccent", ""), Theme.Presets["Galaxy"].Accent, "accent written")
+        AssertEq(c2.Get("UI.customText", ""), "123456", "text written")
+        AssertEq(c2.Get("UI.customPicture", ""), "file", "picture choice written")
+        AssertEq(c2.Get("UI.customPictureFile", ""), png, "picture file written")
+        ; layout: everything inside the window, buttons and fields apart
+        ctrls := []
+        dhw := A_DetectHiddenWindows
+        DetectHiddenWindows(true)        ; the editor is never shown here
+        hwnds := WinGetControlsHwnd("ahk_id " ed.Hwnd)
+        DetectHiddenWindows(dhw)
+        for hwnd in hwnds {
+            c := GuiCtrlFromHwnd(hwnd)
+            if (c.Type = "Edit" || c.Type = "DDL" || Theme.HelpText(c) != "" || Theme._hot.Has(hwnd))
+                ctrls.Push({c: c, p: UiDashPos(c)})
+        }
+        AssertTrue(ctrls.Length >= 14, "buttons, fields and lists found (" ctrls.Length ")")
+        for i, a in ctrls {
+            AssertTrue(a.p.x + a.p.w <= ThemeEditor.W, "'" a.c.Text "' inside the window")
+            loop ctrls.Length - i
+                AssertTrue(!UiDashOverlap(a.p, ctrls[i + A_Index].p), "'" a.c.Text "' clear of '" ctrls[i + A_Index].c.Text "'")
+        }
+    } finally {
+        if IsObject(ed)
+            ed.Close()
+        try DirDelete(dir, true)
+    }
+}
+
+; the editor's moon takes the accent being picked; the note names the real
+; flow (Save, then Apply now) and warns about a light background; a light
+; theme gets Windows' light control look (no light text drawn on light)
+Test_Theme_CustomEditorMoonNoteAndLight() {
+    dir := UiDashTmp()
+    ed := "", bg := Theme.Bg
+    try {
+        ed := ThemeEditor(Config.Load(dir))      ; never shown
+        if FileExist(Theme.AssetPath("ui\moon_0.png")) {
+            h1 := ed._moonHbm
+            AssertTrue(h1 != 0, "the moon tinted")
+            ed.SetHex("Accent", "33CC66")
+            AssertTrue(ed._moonHbm != 0 && ed._moonHbm != h1, "re-tinted for the new accent")
+        }
+        AssertTrue(InStr(ed._note.Text, "Save picks Custom") && InStr(ed._note.Text, "Apply now"), "the note: Save, then Apply now")
+        ed.SetHex("Bg", "F2F2F2"), ed.SetHex("Text", "111111")
+        AssertTrue(InStr(ed._note.Text, "light background"), "light theme warned (" ed._note.Text ")")
+        Theme.Bg := "F2F2F2"
+        AssertTrue(Theme.IsLight(), "F2F2F2 is light")
+        Theme.Bg := "0D1117"
+        AssertTrue(!Theme.IsLight(), "Moontide is dark")
+        for n in Theme.Names
+            AssertTrue(Theme.Lum(Theme.Presets[n].Bg) <= 0.4, n " stays dark")
+    } finally {
+        Theme.Bg := bg
+        if IsObject(ed)
+            ed.Close()
+        try DirDelete(dir, true)
+    }
+}
+
+Test_Theme_CustomInLookPanel() {
+    root := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "")
+    dir := UiDashTmp()
+    d := "", d2 := "", d3 := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        dd := d.Ctrl("UI.theme")
+        dd.Choose("Custom")
+        AssertEq(dd.Text, "Custom", "Custom in the theme list")
+        dd.Choose("Moontide")
+        e := UiDashPos(d.Ctrl("themeEdit"))
+        for id in ["UI.lang", "UI.theme", "themeApply", "themeNote"]
+            AssertTrue(!UiDashOverlap(e, UiDashPos(d.Ctrl(id))), "Edit custom clear of " id)
+        AssertTrue(e.x + e.w <= 1012 && e.y + e.h <= 604, "Edit custom inside the Look panel")
+        d._openThemeEditor := () => false
+        AssertEq(d.EditCustomTheme(), false, "cancelled: nothing changes")
+        AssertEq(dd.Text, "Moontide", "still Moontide")
+        d._openThemeEditor := () => true
+        AssertTrue(d.EditCustomTheme(), "saved in the editor")
+        AssertEq(dd.Text, "Custom", "Custom picked")
+        AssertTrue(InStr(d.Ctrl("themeNote").Text, "Custom shows after Apply now"), "says when it shows")
+        AssertTrue(d.SavePage("Settings"), "saved")
+        AssertEq(Config.Load(dir).Get("UI.theme", ""), "Custom", "theme written")
+        UiDashClose(d), d := ""
+        ; built with Custom and a picture of your own
+        cfg.Set("UI.customPicture", "file")
+        cfg.Set("UI.customPictureFile", root "\assets\themes\radiant.png")
+        cfg.Set("UI.customAccent", "33CCFF")
+        Theme.CustomFromCfg(cfg)
+        Theme.Use("Custom")
+        d2 := Dashboard(cfg)
+        AssertEq(Theme.Accent, "33CCFF", "custom colours used")
+        AssertTrue(!InStr(d2.LogText(), "could not be loaded"), "own picture loaded")
+        AssertTrue(InStr(d2.Ctrl("themeNote").Text, "Now: Custom"), "shown now")
+        UiDashClose(d2), d2 := ""
+        ; a picture that will not load: no picture, a log line, no crash
+        cfg.Set("UI.customPictureFile", UiDashBadPng(dir))
+        Theme.CustomFromCfg(cfg)
+        Theme.Use("Custom")
+        d3 := Dashboard(cfg)
+        AssertTrue(InStr(d3.LogText(), "could not be loaded"), "bad picture logged")
+        cfg.Set("UI.customAccent", "FF0000")
+        d3.Ctrl("UI.theme").Choose("Custom")
+        d3._ThemeNote()
+        AssertTrue(InStr(d3.Ctrl("themeNote").Text, "Custom shows after Apply now"), "changed colours show after Apply now")
+    } finally {
+        Theme.Use("Moontide")
+        Theme.Custom := ""
+        UiDashClose(d), UiDashClose(d2), UiDashClose(d3)
+        try DirDelete(dir, true)
+    }
+}
+
+; Home > Stats: the second panel switches between this run and all time
+Test_Dashboard_StatsAllTime() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        d := Dashboard(Config.Load(dir))
+        d.SelectPage(UiDashPageIdx("Stats"))
+        run := Map("fishCaught", 5, "uptimeText", "0h 10m")
+        all := Map("fishCaught", 1234, "fishFailed", 66, "reelRate", 95, "fishPerHour", 41.2, "uptimeText", "30h 00m")
+        d.SetStatsPage(Map(), run, "", all, "20261101")
+        AssertEq(d.Ctrl("stats:run:fishCaught").Text, "5", "this run first")
+        AssertEq(d.Ctrl("stats:runTitle").Text, "THIS RUN", "title")
+        d.Ctrl("statsView")["All time"].Flip()
+        AssertEq(d.Ctrl("stats:run:fishCaught").Text, "1234", "all-time fish")
+        AssertEq(d.Ctrl("stats:run:reelRate").Text, "95%", "all-time reel rate")
+        AssertEq(d.Ctrl("stats:run:uptimeText").Text, "30h 00m", "all-time uptime")
+        AssertTrue(InStr(d.Ctrl("stats:runTitle").Text, "ALL TIME, SINCE 1 "), "since date (" d.Ctrl("stats:runTitle").Text ")")
+        ; the timer keeps feeding: all time stays shown, a new run map is kept
+        d.SetStatsPage(Map(), Map("fishCaught", 6), "", Map("fishCaught", 1235), "20261101")
+        AssertEq(d.Ctrl("stats:run:fishCaught").Text, "1235", "updates while shown")
+        d.SetStatsPage(Map(), Map("fishCaught", 7))
+        AssertEq(d.Ctrl("stats:run:fishCaught").Text, "1235", "no all-time map given: kept")
+        d.Ctrl("statsView")["This run"].Flip()
+        AssertEq(d.Ctrl("stats:run:fishCaught").Text, "7", "back to this run")
+        ; layout: the title ends before the choice, the choice inside the panel
+        t := UiDashPos(d.Ctrl("stats:runTitle"))
+        a := UiDashPos(d.Ctrl("statsView")["This run"]._c)
+        b := UiDashPos(d.Ctrl("statsView")["All time"]._c)
+        AssertTrue(t.x + t.w <= a.x, "title clear of the choice")
+        AssertTrue(b.x + b.w <= 1012 - 8 && a.y >= 152 && a.y + a.h <= 184, "choice inside the panel header")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
 ; idea 4 (2026-11-13): every help text belongs to a real setting, and the
 ; settings with one show a "?" on their page
 Test_Help_TextsMatchSettings() {
@@ -1725,7 +2024,7 @@ Test_Dashboard_SimpleMode() {
         cfg := Config.Load(dir)
         cfg.Set("UI.simple", 1)
         d := Dashboard(cfg)
-        d.Show()
+        d.Show(false)   ; never takes focus from a live macro
         AssertTrue(d.Ctrl("hub:Limited").Visible, "the Limited hub (Hunting) shows in simple mode too")
         d.Ctrl("hub:Alerts").GetPos(, &ya)
         d.Ctrl("hub:Automate").GetPos(, &yb)
@@ -1748,6 +2047,67 @@ Test_Dashboard_SimpleMode() {
         AssertEq(Dashboard.Pages[d._active], "Run", "a hidden page open -> Home")
     } finally {
         UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; 2026-11-16, the user: more clip apps (Discord clipping): the Clip app
+; dropdown fills in the app's usual hotkey and is saved by id
+Test_Dashboard_ClipAppPicker() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        d.SelectPage(Dashboard.PageIndex("Clips"))
+        dd := d.Ctrl("Medal.app")
+        AssertEq(dd.Text, "Medal", "Medal by default")
+        AssertTrue(InStr(d.Ctrl("clipAppRun").Text, "medal.exe"), "Medal must run")
+        dd.Choose(Clip.AppIndex("discord"))
+        d._ClipAppChange(dd)
+        AssertEq(d.Ctrl("Medal.clipHotkey").Value, "Alt+C", "Medal's F8 became Discord's Alt+C")
+        AssertTrue(InStr(d.Ctrl("clipAppTip").Text, "Discord"), "the Discord tip")
+        AssertTrue(d.SavePage("Clips"), "saved")
+        AssertEq(cfg.Get("Medal.app", ""), "discord", "saved by id")
+        AssertEq(cfg.Get("Medal.clipHotkey", ""), "Alt+C", "with its hotkey")
+        ; a key typed by hand stays when another app is picked
+        d.Ctrl("Medal.clipHotkey").Value := "F6"
+        dd.Choose(Clip.AppIndex("nvidia"))
+        d._ClipAppChange(dd)
+        AssertEq(d.Ctrl("Medal.clipHotkey").Value, "F6", "own key kept")
+        d2 := Dashboard(Config.Load(dir))
+        AssertEq(d2.Ctrl("Medal.app").Text, "Discord", "reloaded: Discord")
+        UiDashClose(d2)
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; Downloads (dev): only in a git checkout; GitHub's counts, nobody tracked
+Test_Dashboard_DownloadsPanelDevOnly() {
+    dir := UiDashTmp()
+    d := "", d2 := ""
+    old := Dashboard.DownloadsHttp
+    try {
+        d := Dashboard(Config.Load(dir))
+        AssertEq(d.Ctrl("dlText"), "", "an unzipped release: no Downloads panel")
+        AssertEq(d.PageShown("Dev tools"), false, "and no Dev tools tab")
+        FileAppend("", dir "\" Updater.DevMarker)
+        ; no [Update] repo in the dev copy's settings: the public repo is asked
+        Dashboard.DownloadsHttp := (url) => (InStr(url, "/repos/" Brand.Repo "/releases") ? '[{"tag_name":"v1.4.5","assets":[{"download_count":7}]}]' : "")
+        cfg2 := Config.Load(dir)
+        cfg2.Set("Update.repo", "")
+        d2 := Dashboard(cfg2)
+        AssertTrue(IsObject(d2.Ctrl("dlText")), "the dev copy: the panel")
+        AssertEq(d2.PageShown("Dev tools"), true, "and the Dev tools tab")
+        msg := d2.RefreshDownloads()
+        AssertTrue(InStr(msg, "Total: 7 downloads") && InStr(msg, "v1.4.5: 7"), "counts shown: " msg)
+        Dashboard.DownloadsHttp := (url) => Updater._Fail("HTTP 403")
+        AssertTrue(InStr(d2.RefreshDownloads(), "Could not read the counts"), "an error is said, not thrown")
+    } finally {
+        Dashboard.DownloadsHttp := old
+        UiDashClose(d), UiDashClose(d2)
         try DirDelete(dir, true)
     }
 }

@@ -43,6 +43,7 @@ class TaskEnv {
         this.cfg := TaskEnv.Dep(deps, "cfg", "")
         this.wh := TaskEnv.Dep(deps, "webhook", "")
         this._logFn := TaskEnv.Dep(deps, "log", "")
+        this._respawnAfter := TaskEnv.Dep(deps, "respawnAfter", true)
         if IsObject(this._logFn)
             Input.LogFn := this._logFn          ; Input.ClickGuard's lines
         this.io := TaskEnv.Dep(deps, "io", "")
@@ -192,6 +193,14 @@ class TaskEnv {
     }
 
     Wait(ms, ctx := "") => this.io.Wait(ms, ctx)
+
+    ; deps "respawnAfter" (default yes): a task that walked away respawns at
+    ; its end unless the App says the next task (the sell trip back to the
+    ; fishing spot) respawns anyway (speed, 2026-11-17)
+    RespawnAfter() {
+        v := this._respawnAfter
+        return IsObject(v) ? (v.Call() ? true : false) : (v ? true : false)
+    }
 
     ; Rect center, for hover.
     static Center(r) => [r.x + r.w // 2, r.y + r.h // 2]

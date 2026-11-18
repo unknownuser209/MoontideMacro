@@ -36,7 +36,7 @@
   "Private server, routes, intervals, recovery, alerts and hotkeys.": "Privater Server, Routen, Intervalle, Wiederherstellung, Alarme und Tasten.",
   "Record, test and reset the walking routes.": "Laufrouten aufnehmen, testen und zurücksetzen.",
   "Wait in THE LIMBO for Eden instead of fishing.": "In THE LIMBO auf Eden warten statt zu angeln.",
-  "Medal clips of rare biomes and rare auras.": "Medal-Clips von seltenen Biomen und Auras.",
+  "Clips of rare biomes and rare auras.": "Clips von seltenen Biomen und Auras.",
   "Send fake events through the running macro (dry run only).": "Falsche Ereignisse durch das laufende Makro senden (nur Probelauf).",
   "Today, this run and the last 7 days.": "Heute, dieser Lauf und die letzten 7 Tage.",
   "Limited-time game features. They leave the macro when the game removes them.": "Zeitlich begrenzte Spielfunktionen. Sie verlassen das Makro, wenn das Spiel sie entfernt.",
@@ -284,5 +284,9 @@
   "That is not a Discord webhook URL (it starts with https://discord.com/api/webhooks/).": "Das ist keine Discord-Webhook-URL (sie beginnt mit https://discord.com/api/webhooks/).",
   "There are already 8 webhooks: add more under Alerts > Discord.": "Es gibt schon 8 Webhooks: weitere unter Alarme > Discord.",
   "The check is not available here.": "Die Prüfung ist hier nicht verfügbar.",
-  "Nothing to show.": "Nichts anzuzeigen."
+  "Nothing to show.": "Nichts anzuzeigen.",
+  "All time": "Gesamt",
+  "All time, since {1}": "Gesamt, seit {1}",
+  "Edit custom": "Eigenes",
+  "Your own colours": "Eigene Farben"
 }

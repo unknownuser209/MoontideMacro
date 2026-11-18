@@ -375,3 +375,17 @@ Test_Screen_MaximizedWindowPanels() {
         AssertEq(Screen.Y(720), 23 + 685, "stretched HUD centre by height")
     ))
 }
+
+; live 2026-11-17: the overlay over Mari's X took the macro's click and hung
+; the task; a window of this process at the click point is found (and
+; hidden for the click), any other spot gives 0
+Test_Input_OwnWindowAtFindsOurWindow() {
+    g := Gui("+AlwaysOnTop -Caption +ToolWindow")
+    g.Show("x40 y40 w60 h60 NoActivate")
+    try {
+        AssertEq(InputScreenIO.OwnWindowAt(70, 70), g.Hwnd, "our window at the point")
+        g.Hide()
+        AssertEq(InputScreenIO.OwnWindowAt(70, 70) = g.Hwnd, false, "hidden: not found")
+    } finally
+        g.Destroy()
+}

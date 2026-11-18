@@ -17,10 +17,18 @@
 ;   s.Day(ymd := "")       Map copy of a day (today by default); runMs
 ;                          includes the running session's time
 ;   s.Session()            Map copy of the session counters (incl runMs)
+;   s.AllTime()            Map copy of the all-time totals: every Add() and
+;                          the run time, never pruned (runMs includes the
+;                          running session's time)
+;   s.Since()              yyyyMMdd of the first day the totals hold ("" =
+;                          nothing counted yet)
 ;   s.Save()               write JSON (only the last 30 days), atomic. While
 ;                          a session runs it first books the time so far, so
 ;                          a crash loses at most one Save interval.
-;   s.Load()               read the file; missing / corrupt = empty, no throw
+;   s.Load()               read the file; missing / corrupt = empty, no throw.
+;                          A file from before the all-time totals seeds them
+;                          once from the days it still keeps (since = the
+;                          oldest of them).
 ;   DailyStats.Derived(m) -> Map(fishPerHour, reelRate, uptimeText)
 ;       fishPerHour  fishCaught per run hour (0 when runMs < 60000)
 ;       reelRate     percent, fishCaught / (fishCaught + fishFailed);
@@ -37,6 +45,8 @@ class DailyStats {
         this._nowFn := nowFn
         this._days := Map()
         this._sess := Map()
+        this._all := Map()       ; all-time totals (never pruned)
+        this._since := ""        ; yyyyMMdd: first day in the totals
         this._running := false
         this._segStart := ""     ; stamp: start of the part not yet booked
         this._sessMs := 0        ; booked ms of this session
@@ -68,6 +78,13 @@ class DailyStats {
         d := this._DayMap(this._Today())
         d[key] := (d.Has(key) ? d[key] : 0) + n
         this._sess[key] := (this._sess.Has(key) ? this._sess[key] : 0) + n
+        this._AllAdd(key, n, this._Today())
+    }
+
+    _AllAdd(key, n, ymd) {
+        this._all[key] := (this._all.Has(key) ? this._all[key] : 0) + n
+        if (this._since = "" || ymd < this._since)
+            this._since := ymd
     }
 
     ; ---- run time ------------------------------------------------------------
@@ -95,6 +112,7 @@ class DailyStats {
         for ymd, ms in DailyStats._Split(this._segStart, now) {
             d := this._DayMap(ymd)
             d["runMs"] := (d.Has("runMs") ? d["runMs"] : 0) + ms
+            this._AllAdd("runMs", ms, ymd)
             this._sessMs += ms
         }
         this._segStart := now
@@ -152,6 +170,21 @@ class DailyStats {
         return out
     }
 
+    AllTime() {
+        out := Map()
+        for k, v in this._all
+            out[k] := v
+        if this._running {
+            t := 0
+            for _, ms in DailyStats._Split(this._segStart, this._Now())
+                t += ms
+            out["runMs"] := (out.Has("runMs") ? out["runMs"] : 0) + t
+        }
+        return out
+    }
+
+    Since() => this._since
+
     ; ---- save / load ---------------------------------------------------------
 
     _Prune() {
@@ -176,8 +209,18 @@ class DailyStats {
                     o[k] := v
                 days[ymd] := o
             }
-            text := Json.Stringify(Map("days", days))
+            all := Map()
+            for k, v in this._all
+                all[k] := v
+            text := Json.Stringify(Map("days", days, "allTime", all, "since", this._since))
             DirCreate(RegExReplace(this.path, "\\[^\\]*$"))
+            ; a file Load could not read is kept as .bad before it is
+            ; replaced (the all-time totals are never rebuilt from anything)
+            if (this.HasOwnProp("_badFile") && this._badFile) {
+                if FileExist(this.path)
+                    FileCopy(this.path, this.path ".bad", 1)
+                this._badFile := false
+            }
             tmp := this.path ".tmp"
             try FileDelete(tmp)
             FileAppend(text, tmp, "UTF-8-RAW")
@@ -189,12 +232,27 @@ class DailyStats {
 
     Load() {
         this._days := Map()
+        this._all := Map()
+        this._since := ""
+        this._badFile := false
         try {
             if !FileExist(this.path)
                 return
-            root := Json.Parse(FileRead(this.path, "UTF-8"))
-            if !(root is Map) || !root.Has("days") || !(root["days"] is Map)
+            text := "", read := false
+            Loop 3 {                        ; a scanner holding the file for a moment
+                try {
+                    text := FileRead(this.path, "UTF-8"), read := true
+                    break
+                }
+                Sleep(100)
+            }
+            if !read
+                throw Error("stats file unreadable")
+            root := Json.Parse(text)
+            if !(root is Map) || !root.Has("days") || !(root["days"] is Map) {
+                this._badFile := true       ; kept as .bad before the next Save replaces it
                 return
+            }
             for ymd, m in root["days"] {
                 if !RegExMatch(ymd, "^\d{8}$") || !(m is Map)
                     continue
@@ -205,9 +263,26 @@ class DailyStats {
                 }
                 this._days[ymd] := d
             }
+            if (root.Has("allTime") && root["allTime"] is Map) {
+                for k, v in root["allTime"] {
+                    if (v is Integer || v is Float)
+                        this._all[String(k)] := v
+                }
+                if (root.Has("since") && RegExMatch(String(root["since"]), "^\d{8}$"))
+                    this._since := String(root["since"])
+            } else {
+                ; older file: seed the totals once from the days it keeps
+                for ymd, d in this._days {
+                    for k, v in d
+                        this._AllAdd(k, v, ymd)
+                }
+            }
             this._Prune()
         } catch {
             this._days := Map()
+            this._all := Map()
+            this._since := ""
+            this._badFile := true           ; kept as .bad before the next Save replaces it
         }
     }
 

@@ -346,8 +346,13 @@ class MerchantTask {
             seen := this._OpenDialog(name, ctx)
             if (seen < 0)
                 return false
-            if !seen
+            if !seen {
+                ; what was on screen, for the next look at why (2026-11-17)
+                shot := HasMethod(io, "Shot") ? io.Shot() : ""
+                if (shot != "")
+                    env.Log("merchant: screen when her dialog did not open saved to " shot)
                 return this._ShopFail(name, name "'s dialog did not open after E (read: '" this._last "'): nothing bought")
+            }
             ready := this._WaitOpen(ctx)
             if (ready < 0)
                 return false
@@ -388,7 +393,7 @@ class MerchantTask {
                 if !this._used {
                 } else if !this._LeaveDialog(name, ctx)
                     this._ShopFail(name, name "'s dialog is still open after Leave; not resetting (close it, then press F2)")
-                else
+                else if env.RespawnAfter()
                     Input.ResetToSpawn(ctx, io)
             } else
                 this._CloseOnPreempt(name, ctx, cal)
@@ -525,6 +530,13 @@ class MerchantTask {
             seen := this._See(MerchantTask.Layout.dialogName, MerchantTask.NameRe[name], ctx, MerchantTask.NameScale, MerchantTask.DialogMs)
             if (seen != 0)
                 return seen
+            ; her name did not read but her Leave button does: the dialog is
+            ; open (live 2026-11-15 in GRAVEYARD: Leave read three times after
+            ; the visit had given up on her name)
+            if this._ButtonReads(MerchantTask.Layout.leave, MerchantTask.LeaveRe, MerchantTask.LeaveScale) {
+                env.Log("merchant: " name "'s name did not read, but her dialog's Leave button does: going on")
+                return 1
+            }
             if (A_Index < MerchantTask.DialogTries)
                 env.Log("merchant: " name "'s dialog not open after E (try " A_Index "/" MerchantTask.DialogTries "): E again")
         }
@@ -744,6 +756,11 @@ class MerchantTask {
         Input.TypeText(String(qty), env.io)
         if !env.Wait(MerchantTask.SettleMs, ctx) || ctx.ShouldStop()
             return ""
+        ; Purchase sits inside a Roblox purchase prompt's area: with one up
+        ; (a click that went through into the world) the click could press
+        ; its Buy and spend Robux. Closed with Esc, nothing clicked.
+        if (env.Unsafe("merchant") != "")
+            return spec.name ": not bought (a Roblox purchase prompt was up, closed with Esc)"
         env.Click(L.buy)
         waited := 0
         Loop {

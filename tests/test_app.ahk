@@ -311,6 +311,29 @@ Test_App_MarkRunCalledAfterRun() {
     AssertEq(t.tasks["fishing"].runs, 1, "fishing ran")
 }
 
+; a running task that Holds (the minions' orb fight) is not preempted by a
+; higher priority task it holds off; one that does not hold is
+class AppFakeHolder extends AppFakeTask {
+    hold := true
+    Holds(nxt) => this.hold && nxt.name = "quests"
+}
+
+Test_App_TaskHoldsOffAPreempt() {
+    for hold in [true, false] {
+        seen := {pre: ""}
+        q := AppFakeTask("quests", 5, false)
+        hunt := AppFakeHolder("minions", 6, true, (self, ctx) => (q.can := true, seen.t.clk.t += App.LogPollMs, seen.t.app.Tick(), seen.pre := ctx.IsPreempted()))
+        hunt.hold := hold
+        t := AppTestMake(Map("tasks", Map("minions", hunt, "quests", q)))
+        seen.t := t
+        t.app.Start()
+        t.app.Tick()
+        AppTestRunLaunched(t)
+        AssertEq(hunt.runs, 1, "the hunt ran")
+        AssertEq(seen.pre, !hold, hold ? "held: no preempt" : "not held: preempted")
+    }
+}
+
 Test_App_PreemptWhenPotionsDuringFishing() {
     seen := {pre: false}
     fish := AppFakeTask("fishing", 99, true, AppTestFishRun.Bind(seen))

@@ -60,6 +60,13 @@ class DailyQuestsTask {
     static RerollMs := 1000
     static MaxRerolls := 3        ; per row per run
     static MatchMin := 0.7        ; the panel shows the row's quest (letters, similarity)
+    ; "Use 10 Lucky Potion" (2026-11-17): its progress is the row's bar (the
+    ; "0/10" on it is too small to read): white fill from BarX0, the count
+    ; text drawn over TextX0..TextX1 (real frame daily_quests_buy_reroll_1440)
+    static UseRe := "i)^\s*use\s+(\d+)\s+(.+?)\s*$"
+    static BarX0 := 1068, BarX1 := 1875, BarDy := 34
+    static TextX0 := 1433, TextX1 := 1516
+    static UseMax := 25
 
     name := "dailyquests"
     priority := 5                 ; Scheduler task contract (Sched.Priority)
@@ -67,6 +74,8 @@ class DailyQuestsTask {
     __New(deps := "") {
         this._env := TaskEnv(deps)
         this._lastAt := ""
+        this._potionFn := TaskEnv.Dep(deps, "potionQuest", "")    ; (potion, n) -> true when queued
+        this._asked := Map()            ; "yyyyMMdd|quest" -> the uses handed to the potion task that day
     }
 
     CanRun(state) {
@@ -113,6 +122,7 @@ class DailyQuestsTask {
             return 0
         }
         acts := 0, done := 0, lines := []
+        this._potionAsks := []
         try {
             words := this.Words()
             for y in DailyQuestsTask.RowYs {
@@ -133,6 +143,7 @@ class DailyQuestsTask {
         } finally {
             this._Close(CleanupCtx(ctx))
         }
+        this._QueuePotions(ctx)
         if acts {
             msg := ""
             for l in lines
@@ -173,6 +184,8 @@ class DailyQuestsTask {
                 env.Log("daily quests: '" name "' finished, its button did not read Claim Rewards: left alone")
             return out
         }
+        if this._PotionQuest(y, name)      ; a "Use N <potion>" quest: potions queued, never rerolled
+            return out
         if DailyQuestsTask.Wanted(name, words) {
             env.Log("daily quests: '" name "' in progress")
             return out
@@ -200,6 +213,103 @@ class DailyQuestsTask {
         if (name != old)
             out.line := "Rerolled: " old " -> " name
         return out
+    }
+
+    ; An unfinished "Use N <potion>" with DailyQuests.usePotions on: the
+    ; uses still needed (its bar) go to the potion task. -> true when it is
+    ; such a quest (handled, even when nothing was queued).
+    _PotionQuest(y, name) {
+        env := this._env
+        on := env.cfg.Get("DailyQuests.usePotions", 0)
+        if !(IsObject(this._potionFn) && IsNumber(on) && on != 0 && RegExMatch(name, DailyQuestsTask.UseRe, &m))
+            return false
+        n := Integer(m[1])
+        potion := RegExReplace(Trim(m[2]), "i)(potion)s$", "$1")
+        if (n < 1 || n > DailyQuestsTask.UseMax) {
+            env.Log("daily quests: '" name "' wants " n " uses: left alone (" DailyQuestsTask.UseMax " at most)")
+            return true
+        }
+        w := DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
+        arr := ""
+        try arr := (env.rectFn)(DailyQuestsTask.BarX0, y + DailyQuestsTask.BarDy, w, 1)
+        if !(arr is Array && arr.Length = w) {
+            env.Log("daily quests: '" name "' progress bar did not read: no potion used")
+            return true
+        }
+        done := DailyQuestsTask.BarDone(arr, n)
+        left := n - done
+        if (left <= 0) {
+            env.Log("daily quests: '" name "' bar reads " done "/" n ": nothing to use")
+            return true
+        }
+        ; queued once the window is closed (_QueuePotions): a potion event
+        ; waiting now preempted this task, so the rows after this one and the
+        ; bonus were never done (and not again for intervalMin)
+        ; the same uses already handed over today: not again (dry run, none
+        ; owned or a cap: the bar never moves, and every visit opened the
+        ; inventory and sent a potions message again). A bar that moved
+        ; (some used) asks for the rest once.
+        key := FormatTime(, "yyyyMMdd") "|" StrLower(name)
+        if (this._asked.Has(key) && this._asked[key] = left) {
+            env.Log("daily quests: '" name "' " done "/" n ": the same " left " " potion " were asked for today already: not again")
+            return true
+        }
+        if !this.HasOwnProp("_potionAsks")
+            this._potionAsks := []
+        this._potionAsks.Push({name: name, potion: potion, left: left, done: done, n: n, key: key})
+        env.Log("daily quests: '" name "' " done "/" n ": " left " " potion " for the potion task once this window is closed")
+        return true
+    }
+
+    ; The "Use N <potion>" uses found this visit, handed to the potion task
+    ; after the window closed (not after F3).
+    _QueuePotions(ctx) {
+        asks := this.HasOwnProp("_potionAsks") ? this._potionAsks : []
+        this._potionAsks := []
+        if (!asks.Length || !IsObject(this._potionFn))
+            return
+        if (HasMethod(ctx, "IsStopped") && ctx.IsStopped())
+            return
+        for a in asks {
+            ok := false
+            try ok := this._potionFn.Call(a.potion, a.left)
+            if ok
+                this._asked[a.key] := a.left
+            this._env.Log("daily quests: '" a.name "' " a.done "/" a.n ": " (ok ? a.left " " a.potion " queued for the potion task" : "not queued (see the Potions lines)"))
+        }
+    }
+
+    ; Uses done from one pixel row of the bar (BarX0..BarX1): the white
+    ; fill's end; a fill reaching the count text counts up to the text's
+    ; end (fewer potions, never more), or on to where it ends past it.
+    static BarDone(arr, n) {
+        w := arr.Length, x0 := DailyQuestsTask.BarX0
+        e := DailyQuestsTask._White(arr[1]) ? DailyQuestsTask._RunEnd(arr, 0) : -1
+        t0 := DailyQuestsTask.TextX0 - x0, t1 := DailyQuestsTask.TextX1 - x0
+        if (e >= t0 - 3) {
+            e := t1
+            Loop 9 {
+                i := t1 + A_Index - 1
+                if (i < w && DailyQuestsTask._White(arr[i + 1])) {
+                    e := Max(t1, DailyQuestsTask._RunEnd(arr, i))
+                    break
+                }
+            }
+        }
+        return Max(0, Min(n, Round((e + 1) / w * n)))
+    }
+    static _White(c) => ((c >> 16) & 255) >= 200 && ((c >> 8) & 255) >= 200 && (c & 255) >= 200
+    ; last white index of the run from index from (gaps of 2 px allowed)
+    static _RunEnd(arr, from) {
+        e := -1, gap := 0, i := from, w := arr.Length
+        while (i < w) {
+            if DailyQuestsTask._White(arr[i + 1])
+                e := i, gap := 0
+            else if (++gap > 2)
+                break
+            i++
+        }
+        return e
     }
 
     _Bonus(ctx) {

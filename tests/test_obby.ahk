@@ -196,7 +196,15 @@ class ObStore {
         }
         return ""
     }
-    Pixel(x, y, c, tol) => (x = 600 && y = 600 && this.blessing && this.State().expanded) || (x = 500 && y = 500 && this.buffShown)
+    Pixel(x, y, c, tol) => (x = 600 && y = 600 && this.blessing && this.State().expanded) || (x = 500 && y = 500 && this._ButtonUp())
+    ; buffHiddenReads: the button reads hidden this many times first (a respawn fade)
+    _ButtonUp() {
+        if (this.HasOwnProp("buffHiddenReads") && this.buffHiddenReads > 0) {
+            this.buffHiddenReads--
+            return false
+        }
+        return this.buffShown
+    }
     ; logLag: each change reaches the log this many reads later, in order
     ; (the log's "Equipped" line follows a click by ~2 s live)
     Aura() {
@@ -1350,4 +1358,149 @@ ObbyCountReads(reads, aura) {
     for a in reads
         n += (a = aura)
     return n
+}
+
+; speed (2026-11-17): with respawnAfter false the run ends without its own
+; respawn (the sell trip after it respawns), the aura still goes back
+Test_Obby_NoRespawnAfterWhenTheSellTripFollows() {
+    a := QmObbyTask()
+    AssertEq(a.t.Run(SchedCtx()), 1, "default run")
+    b := QmObbyTask()
+    b.t._respawnAfter := false
+    AssertEq(b.t.Run(SchedCtx()), 1, "run without the last respawn")
+    AssertEq(QmObbyDowns(b.io, "Enter") + 1, QmObbyDowns(a.io, "Enter"), "one respawn fewer (its Enter)")
+    AssertEq(b.s.State().eq, "Glock", "the aura put back all the same")
+}
+
+; the "not checked" error names why, though the aura put-back clears _why
+; (2026-11-17: 61 errors ended in ": ")
+Test_Obby_NotCheckedSaysWhy() {
+    o := QmObbyTask()
+    o.s.buffShown := false
+    o.t.Run(SchedCtx())
+    AssertTrue(QmObbyLogHas(o.logs, "not checked: the buff list button"), "the reason in the error")
+}
+
+; ---- the buff list on real frames (tests\screens: rows 1380-1419 of 2560x1440,
+; 2026-11-17: open after an obby, 17 buffs, the blessing star leftmost; closed
+; while fishing) ----
+; a rect dep over a strip saved from y 1380
+ObBarRect(name) {
+    g := MatchFileGrab(A_ScriptDir "\screens\" name)
+    return (x, y, w, h) => ObBarFlat(g, x, y, w, h)
+}
+ObBarFlat(g, x, y, w, h) {
+    ys := []
+    Loop h
+        ys.Push(y - 1380 + A_Index - 1)
+    out := []
+    for row in g.Call(x, x + w - 1, ys)
+        for c in row
+            out.Push(c)
+    return out
+}
+
+Test_Obby_BarOpenFindsMinusAndStar() {
+    o := QmObbyTask()
+    o.t._env.rectFn := ObBarRect("obby_buffs_open_1440.png")
+    m := o.t._BarMinus({x: 1997, y: 1400, color: "0xFFFFFF"})
+    AssertTrue(IsObject(m), "the - found left of the open list")
+    AssertTrue(Abs(m.x - 1244) <= 4 && Abs(m.y - 1399) <= 2, "at the - (" (IsObject(m) ? m.x "," m.y : "") ")")
+    AssertTrue(o.t._BarStar({x: 1696, y: 1402, color: "0xD4FFFF"}), "the blessing star, though not at its calibrated pixel")
+}
+
+Test_Obby_BarClosedHasNeither() {
+    o := QmObbyTask()
+    o.t._env.rectFn := ObBarRect("obby_buffs_closed_1440.png")
+    AssertEq(o.t._BarMinus({x: 1997, y: 1400, color: "0xFFFFFF"}), "", "no - while closed")
+    AssertTrue(!o.t._BarStar({x: 1696, y: 1402, color: "0xD4FFFF"}), "no star while closed")
+}
+
+; the world boards behind the see-through name panel (the real reads of
+; 2026-11-17 12:56, PUMPKIN MOON): still Sailor; Sailor: Admiral still other
+Test_Obby_BoardTextBehindTheNameIgnored() {
+    AssertEq(ObbyTask.NameVerdict(["Sailor :TED STAT", ":TED STAT Sailor", "Sailor }TED STAT"], "Sailor"), "same", "the real reads")
+    AssertEq(ObbyTask.NameVerdict(["Sailor :TED STAT", "Sailor XED STAT", "Sailor STAT"], "Sailor"), "same", "the real reads at 13:01")
+    AssertEq(ObbyTask.NameRead("Sailor MOST ROLLED", "Sailor"), "same", "the other board")
+    AssertEq(ObbyTask.NameRead("Sailor: Admiral :TED STAT", "Sailor"), "other", "another Sailor stays other")
+    AssertEq(ObbyTask.NameRead("SAILOR", "Sailor"), "same", "a caps read of the name itself kept")
+    AssertEq(ObbyTask.NameRead("TED STAT", "Sailor"), "unread", "only board text: unread")
+}
+
+; speed (2026-11-17): a route that always misses walked twice every obby;
+; after MissStreakOne obbies in a row with no blessing, one run each, and
+; the retry comes back once the blessing shows
+Test_Obby_NoRetryAfterMissesInARow() {
+    o := QmObbyTask("Glock", Map("Obby.retries", 1))
+    o.s.blessing := false
+    plays := []
+    Loop ObbyTask.MissStreakOne + 1 {
+        before := QmObbyDowns(o.io, "w")
+        o.t.Run(SchedCtx())
+        plays.Push(QmObbyDowns(o.io, "w") - before)
+    }
+    AssertEq(plays[1], 2, "first miss: run + retry")
+    AssertEq(plays[ObbyTask.MissStreakOne], 2, "still the retry")
+    AssertEq(plays[ObbyTask.MissStreakOne + 1], 1, "after the streak: one run")
+    o.s.blessing := true
+    o.t.Run(SchedCtx())
+    AssertEq(o.t._missStreak, 0, "seen: the streak ends")
+}
+
+; live 2026-11-17 17:30 and 17:48: the character walked off the top after
+; the blessing and the check ran on the black respawn screen; the button is
+; waited for, then the check goes on
+Test_Obby_ButtonWaitedThroughRespawnFade() {
+    o := QmObbyTask("Glock", Map("Obby.retries", 1))
+    o.s.buffHiddenReads := 5
+    AssertEq(o.t.Run(SchedCtx()), 1, "claimed after the fade")
+    AssertEq(QmObbyDowns(o.io, "w"), 1, "no second run")
+    AssertEq(QmObbyLogHas(o.logs, "does not show its calibrated"), false, "not refused")
+}
+
+; live 2026-11-17 19:00: after a rejoin (Roblox's own zoom, no sell trip yet)
+; the first run went the wrong way; the sell trip's zoom is set before the
+; first run (once: it stays for the retry), nothing without camera data
+Test_Obby_SellZoomBeforeTheRoute() {
+    cam := Map("wheelUp", 20, "wheelDown", 10, "wheelGapMs", 0, "pauseMs", 0, "afterMs", 0)
+    data := QmObbyRoutes()
+    data["coords"] := Map("sell", Map("camera", cam))
+    o := QmObbyTask("Glock", Map("Obby.retries", 1), , data)
+    o.s.blessing := false
+    o.t.Run(SchedCtx())
+    ups := 0, firstUp := 0, firstW := 0
+    for i, e in o.io.log {
+        if (e = "wheel up 10")
+            ups++, firstUp := firstUp ? firstUp : i
+        if (e = "down w" && !firstW)
+            firstW := i
+    }
+    AssertEq(ups, 2, "wheel up 20 (two clicks of 10), once for both runs")
+    AssertTrue(firstUp > 0 && firstUp < firstW, "zoom before the route")
+    o2 := QmObbyTask("Glock")
+    o2.t.Run(SchedCtx())
+    n := 0
+    for e in o2.io.log
+        n += InStr(e, "wheel") ? 1 : 0
+    AssertEq(n, 0, "no camera data: no zoom")
+}
+
+; 2026-11-17: "Use 10 Lucky Potion": progress from the row's bar on a real
+; frame (Roll 100 times 100/100, Play 7/30, Collect 10 Lucky Potions 10/10)
+DqBarRow(y) {
+    g := MatchFileGrab(A_ScriptDir "\screens\daily_quests_buy_reroll_1440.jpg")
+    out := []
+    for row in g.Call(DailyQuestsTask.BarX0, DailyQuestsTask.BarX1, [y + DailyQuestsTask.BarDy])
+        for c in row
+            out.Push(c)
+    return out
+}
+Test_DailyQuests_BarProgressRealFrame() {
+    AssertEq(DailyQuestsTask.BarDone(DqBarRow(699), 100), 100, "100/100")
+    AssertEq(DailyQuestsTask.BarDone(DqBarRow(797), 30), 7, "7/30")
+    AssertEq(DailyQuestsTask.BarDone(DqBarRow(897), 10), 10, "10/10")
+    blank := []
+    Loop DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
+        blank.Push(0x101010)
+    AssertEq(DailyQuestsTask.BarDone(blank, 10), 0, "empty bar: 0")
 }

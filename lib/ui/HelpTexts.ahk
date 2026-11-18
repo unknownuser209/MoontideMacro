@@ -19,6 +19,7 @@ class HelpTexts {
         m := Map()
         add := (k, t) => m[StrLower(k)] := t
         ; fishing / selling
+        add("General.idleMode", "Start only watches: biomes, auras, chat and the biome clock, with Discord alerts. No clicks or keys, Roblox can stay behind other windows. No tasks run.")
         add("General.fishing", "Fishing is what the macro does whenever no other task is due. Turn it off if you only want hunting, quests or alerts.")
         add("General.sellAll", "On: sells every fish. Off: sells only the fish you ticked in the Fishing Shop.")
         add("General.sellEvery", "How many catches before walking to the Fisher to sell. Lower = more trips, never a full bag.")
@@ -44,18 +45,19 @@ class HelpTexts {
         add("BiomeItems.biomeSelector", "The Biome Selector (60 min cooldown). Each use spends one Drive.")
         add("Obby.enabled", "Runs the obby for its reward on a timer, with the aura it needs.")
         add("Obby.intervalMin", "Minutes between obby runs.")
-        add("Obby.retries", "How many times a failed obby run is tried again before waiting for the next one.")
+        add("Obby.retries", "How many times a failed obby run is tried again before waiting for the next one. After 2 obbies in a row that miss, no tries again until it works.")
         add("DailyQuests.enabled", "Opens Daily Quests every few minutes, claims every finished quest (and the Good job today bonus), then closes it.")
+        add("General.joinButton", "Biome and rare biome messages get a Join Server button with your private server link (Private server above). On by default: anyone who can read that Discord channel can join, so turn it off for a public channel.")
         add("DailyQuests.reroll", "Quests holding one of these words (comma list, e.g. craft, fish) are rerolled with the free rerolls. Buy Reroll (Robux) is never pressed.")
         add("MemoryMatch.enabled", "Plays Memory Match every 12 hours and keeps the best pairs. Needs the memory_match walk recorded.")
         add("Auras.equipFirst", "Swaps auras by searching the name and equipping the first result, without reading it. Faster, but only use it if your aura names are unique.")
         ; hunting
-        add("Minions.enabled", "Hunts orbs and minions in rare biomes (this event ends later in November).")
+        add("Minions.enabled", "Hunts orbs and minions in biomes like Windy, Rainy or Snowy (not NORMAL, not rare ones) and fishes in between. Orbs show up about 40 s into a biome. Works best with Eden.")
         add("Minions.aura", "The aura worn for fights. Small auras like Eden work best: big ones hide the targets.")
         add("Minions.boss", "Also fights the GRAVEYARD boss when it spawns.")
-        add("Limited.bossAlert", "Sends a 'Boss Spawned - Sinister S. / P.' card with a Join Server button (your private server link) when the chat names Sinister S. or Sinister P., even with hunting off.")
+        add("Limited.bossAlert", "Sends a 'Boss Spawned - Sinister S. / P.' card with a Join Server button when the chat names Sinister S. or P., even with hunting off. Pings the webhook's Mention.")
         add("Limited.cursedRune", "Uses ONE Cursed Rune Fragment (it starts Blood Rain) when Graveyard or Pumpkin Moon starts. No second one until the next Graveyard / Pumpkin Moon night.")
-        add("Minions.normal", "Also hunts in the NORMAL biome, not only in rare ones.")
+        add("Minions.normal", "Also hunts in the NORMAL biome, not only in Windy, Rainy, Snowy and the like.")
         add("Minions.maxSec", "The longest one hunt may take before the macro goes back to fishing.")
         add("Minions.putBack", "Puts your previous aura back on after the hunt.")
         add("Minions.shiftLock", "Uses Roblox shift lock while fighting (turn on Shift Lock Switch in Roblox settings first).")
@@ -66,8 +68,9 @@ class HelpTexts {
         add("AuraAlert.enabled", "Sends a Discord message with a screenshot to the webhooks with Rare ticked when you roll a new rare aura, and pings the user ID.")
         add("AuraAlert.userId", "The Discord user ID to ping (Discord: Settings > Advanced > Developer Mode, then right-click yourself > Copy User ID). Empty = no ping.")
         add("AuraAlert.minRarity", "Only auras this rare or rarer (1 in N) send the alert, for example 10m or 1b.")
-        add("Medal.enabled", "Saves a clip with Medal (or another clip app) by pressing its clip hotkey.")
-        add("Medal.clipHotkey", "The same hotkey your clip app uses to save a clip, for example F8 or Alt+9.")
+        add("Medal.enabled", "Saves a clip with your clip app (Medal, Discord, NVIDIA, AMD, OBS or another) by pressing its save-clip hotkey.")
+        add("Medal.app", "The app that saves your clips. Picking one fills in its usual hotkey; the macro checks that it is running (not for Other).")
+        add("Medal.clipHotkey", "The same hotkey your clip app uses to save a clip, for example F8, Alt+C or Alt+F10. Empty = the app's usual one.")
         add("Medal.onRareBiome", "Clips when a rare biome starts.")
         add("Medal.onRareAura", "Clips when you roll a rare aura.")
         add("Medal.auraMinRarity", "Only auras rarer than this (1 in N) are clipped.")
@@ -96,7 +99,9 @@ class HelpTexts {
         add("recovery.stuckMin", "If nothing has worked for this long, the macro respawns and starts over.")
         ; look
         add("UI.animations", "Fades, moving stars and the running pulse. They only move while this window is in front.")
-        add("UI.simple", "Simple mode shows only the main pages. Turn it off to see every page and option.")
+        add("UI.customBg", "Your own theme: pick the background, panel, text and accent colours (Pick, or type a hex code like 0D1117). The other shades are mixed from them. Start from copies a theme.")
+        add("UI.customPicture", "The custom theme's background: none, a theme's picture, or a picture of your own (darkened so the text stays readable).")
+        add("UI.simple","Simple mode shows only the main pages. Turn it off to see every page and option.")
         return m
     }
 }
