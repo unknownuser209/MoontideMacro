@@ -503,7 +503,11 @@ QmBoardTask(board, gets := "", cal := "", logs := "") {
         io: io, webhook: wh, cal: IsObject(cal) ? cal : QmBoardCal(), log: (s) => lg.Push(s),
         ocr: (x, y, w, h, scale := 1) => board.Read(x, y, w, h),
         cards: IsObject(board.cards) ? board.cards : "",
-        ink: (x, y, w, h, scale := 1, ink := 0) => (board.HasOwnProp("green") ? board.green : "")
+        ink: (x, y, w, h, scale := 1, ink := 0) => (board.HasOwnProp("green") ? board.green : ""),
+        ; the button's pixels: board.colour "green" / "yellow" (QmButtonPx), else none
+        ; (the Dismiss box, around 300,400: red unless board.noRed)
+        rect: (x, y, w, h) => (board.HasOwnProp("colour") && !board.closed)
+            ? QmButtonPx((x = 180 && y = 370) ? (board.HasOwnProp("noRed") ? "none" : "red") : board.colour, w, h) : ""
     })
     return {t: t, io: io, wh: wh, logs: lg, board: board}
 }
@@ -1556,8 +1560,173 @@ Test_Quests_GreenWordUnderTheSkillList() {
     board2.green := "Cloim Re"
     m2 := QmBoardTask(board2, Map("quests.dismissDisabled", 1))
     m2.t.Run(SchedCtx())
-    AssertTrue(InStr(m2.wh.sent.Length ? m2.wh.sent[1].desc : "", "claimed"), "read as Claim: claimed, never dismissed")
+    ; (the fake board keeps a quest whose button word is no Claim: "not finished yet")
+    AssertTrue(m2.io.Moved(100, 200) && !m2.io.Moved(300, 400), "read as Claim: the Claim spot pressed, never dismissed")
     board3 := QmBoard([["River Angler`nCatch fish", "rkmot"]])
     m3 := QmBoardTask(board3, Map("quests.dismissDisabled", 1))
     AssertEq(m3.t.Run(SchedCtx()), 0, "no green word: never dismissed blind")
+}
+
+; ---- 2026-11-18: the night's misreads ----------------------------------------
+
+; A board whose Claim Rewards does nothing (the quest is not finished yet)
+class QmBoardUnfinished extends QmBoard {
+    Click(x, y) {
+        if (x = 100 && y = 200)
+            return
+        super.Click(x, y)
+    }
+}
+
+; A button box like the board's: dark fill, a word of one colour (~9%)
+QmButtonPx(colour, w, h) {
+    c := (colour = "green") ? 0x22E050 : (colour = "red") ? 0xF05050 : (colour = "none") ? 0x1A1612 : 0xF5E23A
+    out := []
+    Loop w * h
+        out.Push(Mod(A_Index, 11) = 0 ? c : 0x1A1612)
+    return out
+}
+
+Test_Quests_ButtonWordsOfTheNight() {
+    ; live 2026-11-18 (2560x1440): the button halves read for Accept, and
+    ; Claim Rewards cut at the box's left edge (real frames day1118)
+    for t in ["ccep", "cc:eap", "AcceOVrl<", "AccegL", "-xcceel", "Accevi", "Accep t", "Accept"]
+        AssertEq(QuestsTask.WordOf(t), "accept", "'" t "' is Accept")
+    for t in ["aim Rewords", "loim Rewords", "loim Re%ords", "aim Re'..ords", "aim Revvrds", "loim Rev+ords", "Cloim Rewords", "CIoim"]
+        AssertEq(QuestsTask.WordOf(t), "claim", "'" t "' is Claim Rewards")
+    ; never Accept: what else sits on that spot
+    for t in ["", "Dismiss", "Taunt Darkmatter Barrage", "rkmot", "orkrnotl", "Nothingness Impale", "Deadeye Voidrush"]
+        AssertTrue(QuestsTask.WordOf(t) != "accept", "'" t "' is no Accept")
+    ; the game said the board is empty: 'Ouests' (06:07)
+    AssertTrue(RegExMatch("No Ouests to are in every", QuestsTask.NoQuestRe) > 0, "'No Ouests' is the empty board")
+    AssertTrue(!RegExMatch("Potion Auto Adde Impale", QuestsTask.NoQuestRe), "the potion toast is not")
+}
+
+Test_QuestMatch_GameFontKAndA() {
+    ; 'Hell Breol<through' (04:18 - 05:20): no match, left alone each visit
+    m := QuestMatch.Match("Hell Breol<through`nObjects", Config._DefQuests())
+    AssertEq(IsObject(m) ? m.name : "", "Breakthroughs", "'Breol<through' is Breakthroughs")
+    AssertEq(QuestMatch.Norm("LucI<y"), "lucky", "I< is k")
+    AssertEq(QuestMatch.Norm("Collect 10 Lucl" Chr(0xAB) "y Potions"), "collect 10 lucky potions", "l + U+00AB is k (09:55)")
+    m := QuestMatch.Match("Delivery II", Config._DefQuests())
+    AssertEq(IsObject(m) ? m.name : "", "Delivery II", "Delivery II stays II")
+}
+
+; Real frames (day1118 09:25, 2560x1440, crops x 2000.., y 1000..): the
+; button's colour decides when its words do not read
+QmSeq(from, n) {
+    out := []
+    Loop n
+        out.Push(from + A_Index - 1)
+    return out
+}
+QmButtonFrame(name, pt, ox := 2000, oy := 1000) {
+    g := MatchFileGrab(A_ScriptDir "\screens\" name ".jpg")
+    b := QuestsTask.Button
+    out := []
+    for row in g.Call(pt.x + b.dx - ox, pt.x + b.dx - ox + b.w - 1, QmSeq(pt.y + b.dy - oy, b.h))
+        for c in row
+            out.Push(c)
+    return out
+}
+QmColourOf(name, ox := 2000, oy := 1000) {
+    return QuestsTask.ButtonColour(QmButtonFrame(name, {x: 2169, y: 1081}, ox, oy), QmButtonFrame(name, {x: 2371, y: 1086}, ox, oy))
+}
+Test_Quests_ButtonColourRealFrames() {
+    pt := {x: 2169, y: 1081}            ; the live quest_accept (quest_dismiss 2371,1086)
+    AssertEq(QmColourOf("quest_button_claim_1440"), "claim", "Claim Rewards: yellow")
+    AssertEq(QmColourOf("quest_button_claim_toast_1440"), "claim", "under the Quest Accepted toast: yellow")
+    AssertEq(QmColourOf("quest_button_accept_1440"), "accept", "Accept: green, Dismiss red beside it")
+    ; 11:27 (Eden's skill list over the buttons): Snowy Breakthrough's
+    ; Claim Rewards dimmed under it, Resonance's Accept under it, and under
+    ; it plus the Potion Auto Added toast (too faint: left alone)
+    AssertEq(QmColourOf("quest_button_claim_skills_1440"), "claim", "dim yellow under the skill list: Claim")
+    AssertEq(QmColourOf("quest_button_accept_skills_1440"), "accept", "green under the skill list: Accept")
+    AssertEq(QmColourOf("quest_button_accept_skills_toast_1440"), "", "under the skill list and a toast: unknown")
+    ; 10:07: no board, a bright green wall behind the skill list: never Accept
+    AssertEq(QmColourOf("quest_button_none_greenwall_1440"), "", "green wall, no Dismiss red: no verdict")
+    AssertEq(QuestsTask.ButtonColour(QmButtonFrame("quest_button_accept_1440", pt)), "", "green without the Dismiss box: no Accept")
+    b := QuestsTask.Button
+    box := {x: pt.x + b.dx, y: pt.y + b.dy, w: b.w, h: b.h}
+    for f in ["quest_button_claim_1440", "quest_button_claim_toast_1440"]
+        AssertEq(QuestsTask.WordOf(ScrCropRead(f, box, 2000, 1000)), "claim", f ": the words read Claim")
+    AssertEq(QuestsTask.WordOf(ScrCropRead("quest_button_accept_1440", box, 2000, 1000)), "accept", "the words read Accept")
+    ; a world without the board (grass, sand, a shop): never a verdict
+    for f in ["mari_day_dialog", "daily_quests_reroll_user_upscaled", "inventory_open_day", "daily_rewards_claim_1440", "ugc_shop_windy", "aura_selected_dutchman", "world_day"]
+        AssertEq(QmColourOf(f, 0, 0), "", f ": no button colour")
+}
+
+; live 2026-11-18 09:51 - 09:57 (2560x1440, crops x 2000.., y 1040..): the
+; board was empty, but its "No Quests" notification lies under Eden's skill
+; list: the plain read gave 'Cut Into Nothing Impole' and the board was walked
+; to twice. Its white words alone (NoticeInk) read the small line.
+Test_Quests_NoQuestsUnderTheSkillListRealFrames() {
+    n := {x: 2041, y: 1080, w: 497, h: 136}            ; the live notify_rect
+    rd := (f, ink := 0) => Ocr.ReadFile(A_ScriptDir "\screens\" f ".jpg", n.x - 2000, n.y - 1040, n.w, n.h, ink ? 2 : 1, ink)
+    AssertTrue(!RegExMatch(rd("quest_notify_noquests_skills_1440"), QuestsTask.NoQuestRe), "the plain read misses it (as live)")
+    k := rd("quest_notify_noquests_skills_1440", QuestsTask.NoticeInk)
+    AssertTrue(RegExMatch(k, QuestsTask.NoQuestRe) > 0, "the white words read the empty board: '" k "'")
+    for f in ["quest_notify_skills_1440", "quest_button_claim_1440", "quest_button_accept_1440", "quest_button_claim_toast_1440"] {
+        AssertTrue(!RegExMatch(rd(f), QuestsTask.NoQuestRe), f ": no empty board (plain)")
+        AssertTrue(!RegExMatch(rd(f, QuestsTask.NoticeInk), QuestsTask.NoQuestRe), f ": no empty board (white words)")
+    }
+    ; 10:07: a scrap off a house sign ('lil') was taken as the board open
+    AssertTrue(!QuestsTask.PanelUp("lil") && !QuestsTask.PanelUp("") && !QuestsTask.PanelUp("i`n-"), "scraps are no board")
+    AssertTrue(QuestsTask.PanelUp("Windy Breakthrough`nObjects`n- Roll o biom") && QuestsTask.PanelUp("0bjects") && QuestsTask.PanelUp("Delivery II"), "the panel is")
+    ; the task: one E, logged as an empty board
+    board := QmBoard([])
+    board.notify := "Cut Into Nothing Impole"
+    board.green := "Cut Into Nothing`n-JT111Ere g no queguuo gee. (Lluegug ore creoueo rn every I nour)"
+    m := QmBoardTask(board)
+    AssertEq(m.t.Run(SchedCtx()), 0, "no actions")
+    AssertEq(QmCountLog(m.io, "down e"), 1, "E once: not walked to again")
+    AssertTrue(InStr(m.logs[m.logs.Length], "no quests right now"), "logged as an empty board")
+}
+
+Test_Quests_ButtonColourDecidesWhenTheWordsDoNot() {
+    ; 06:37 an unticked 'Delivery II' (here River Angler) button read '' and
+    ; was left: its green Accept dismisses it now
+    board := QmBoard([["River Angler`nCatch fish", ""]])
+    board.colour := "green"
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1))
+    AssertEq(m.t.Run(SchedCtx()), 1, "dismissed by the green button")
+    AssertTrue(m.io.Moved(300, 400), "dismiss clicked")
+    ; a yellow button that read as Accept: Claim, never Dismiss
+    board2 := QmBoard([["Mythic Aura Hunt`nRoll 1 Mythic aura", "ccep"]])
+    board2.colour := "yellow"
+    m2 := QmBoardTask(board2, Map("quests.dismissDisabled", 1))
+    m2.t.Run(SchedCtx())
+    AssertTrue(!m2.io.Moved(300, 400), "never dismissed")
+    AssertTrue(m2.io.Moved(100, 200), "claimed on the accept spot")
+    ; green but no Dismiss red beside it (not the board's buttons): never dismissed
+    board4 := QmBoard([["River Angler`nCatch fish", ""]])
+    board4.colour := "green", board4.noRed := true
+    m4 := QmBoardTask(board4, Map("quests.dismissDisabled", 1))
+    AssertEq(m4.t.Run(SchedCtx()), 0, "no red: left alone")
+    AssertTrue(!m4.io.Moved(300, 400), "no red: never dismissed")
+    ; 11:27: a ticked quest's unread button: only the Accept / Claim spot
+    ; is pressed (and said so), never Dismiss
+    lg := []
+    board5 := QmBoard([["Delivery II`nBring 3 crates", ""]])
+    m5 := QmBoardTask(board5, Map("quests.dismissDisabled", 1), , lg)
+    m5.t.Run(SchedCtx())
+    AssertTrue(m5.io.Moved(100, 200) && !m5.io.Moved(300, 400), "the accept spot only")
+    found := false
+    for l in lg
+        found := found || InStr(l, "button unread")
+    AssertTrue(found, "logged as pressed on an unread button")
+    ; Claim Rewards on a quest not finished yet: it stays, not reported as claimed
+    board6 := QmBoardUnfinished([["Delivery II`nBring 3 crates", "Claim Rewards"]])
+    lg6 := []
+    m6 := QmBoardTask(board6, , , lg6)
+    AssertEq(m6.t.Run(SchedCtx()), 0, "nothing reported")
+    found := false
+    for l in lg6
+        found := found || InStr(l, "not finished yet")
+    AssertTrue(found, "said it is not finished")
+    ; no colour and no word: still never dismissed blind
+    board3 := QmBoard([["River Angler`nCatch fish", ""]])
+    m3 := QmBoardTask(board3, Map("quests.dismissDisabled", 1))
+    AssertEq(m3.t.Run(SchedCtx()), 0, "left alone")
+    AssertTrue(!m3.io.Moved(300, 400), "never dismissed blind")
 }

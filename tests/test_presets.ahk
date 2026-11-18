@@ -76,6 +76,30 @@ Test_Presets_MatchToSystem() {
     AssertTrue(sys.w > 0 && sys.h > 0 && sys.scale >= 100, "this system's display is read")
 }
 
+; a laptop at 1920x1080, Windows scale 125% (dpi 120, work area ~1920x1020
+; screen px): the shipped 1080p preset is the one picked, and the windows
+; the macro places by their size stay on the screen and fit its height
+Test_Presets_Laptop1080At125() {
+    root := RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "")
+    p := Calibrate.MatchPreset(Calibrate.Presets(root "\data\calibration.json"), {w: 1920, h: 1080, scale: 125})
+    AssertTrue(IsObject(p) && InStr(p.path, "calibration_1920x1080_100.json"), "the shipped 1080p preset")
+    old := Theme.DpiFn
+    try {
+        Theme.DpiFn := () => 120
+        AssertEq(Theme.Dpi(100), 125, "100 Gui units = 125 px")
+        c := FixCard.Pos(1920, 1020)
+        AssertTrue(c.x >= 0 && c.x + Theme.Dpi(FixCard.W) <= 1920 && c.y + Theme.Dpi(FixCard.H) <= 1020, "the fix-it card inside the work area")
+        o := Overlay.DefaultPos(1920)
+        AssertTrue(o.x + Theme.Dpi(Overlay.W) <= 1920, "the overlay inside the screen (x " o.x ")")
+        AssertTrue(Theme.Dpi(Dashboard.W) <= 1920 && Theme.Dpi(Dashboard.H) + Theme.Dpi(40) <= 1020, "the dashboard (and its title bar) fits 1080p at 125%")
+        for cls in [SetupWizard, WhatsNewWindow]
+            AssertTrue(Theme.Dpi(cls.H) + Theme.Dpi(40) <= 1020, cls.Prototype.__Class " fits")
+        Theme.DpiFn := () => 96
+        AssertEq(FixCard.Pos(1920, 1040).x, 1920 - FixCard.W - 24, "100%: as before")
+    } finally
+        Theme.DpiFn := old
+}
+
 Test_Presets_FirstRunAppliesOnlyAMatch() {
     ; a matching preset fills a missing calibration
     d := PrTmp()

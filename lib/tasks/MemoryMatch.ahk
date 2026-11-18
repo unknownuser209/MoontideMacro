@@ -761,10 +761,20 @@ class MemoryMatchTask {
                     ; tiles that stay up = the whole board shown: the round
                     ; is over after all (Close can take longer than
                     ; EndCheckMs, review 2026-11-12); _Close waits for it
+                    ; ... but only once Close shows: a lagging pair stays up
+                    ; too, and the board was left open with a chance to go
+                    ; (live 2026-11-18 08:41: the sell after it failed under
+                    ; it and the mouse stayed pinned)
                     if (!(board[a]["state"] = "matched" && board[b]["state"] = "matched")
                         && !this._WaitState(ctx, "hidden", MemoryMatchTask.FlipBackMs, a, b)) {
-                        env.Log("memory match: the tiles stayed up: the round is over")
-                        break
+                        r := this._WaitRead(MemoryMatchTask.Layout.closeBox, MemoryMatchTask.CloseRe, MemoryMatchTask.CloseWaitMs, ctx)
+                        if (r < 0)
+                            break
+                        if r {
+                            env.Log("memory match: the tiles stayed up and Close shows: the round is over")
+                            break
+                        }
+                        env.Log("memory match: tiles " a " and " b " stayed up but no Close: playing on")
                     }
                 }
             }

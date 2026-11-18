@@ -44,6 +44,7 @@ class MmBoard {
         this.closeDelay := 800      ; after the last chance: the board shown, Close after this
         this.dropTiles := Map()     ; tile -> clicks on it the game drops (lag)
         this.titleGoneAfter := 0    ; the title stops reading once this many tiles were clicked
+        this.slowBack := Map()      ; chances left after a miss -> its own BackMs (lag: the pair stays up)
         this.io := MmIO(this)
         this.vision := MmVision(this)
     }
@@ -138,8 +139,9 @@ class MmBoard {
             this.greenAt[a] := this.t + g
             this.greenAt[i] := this.t + g
         } else if this.chances > 0 {
-            this.downAt[a] := this.t + this.BackMs
-            this.downAt[i] := this.t + this.BackMs
+            back := this.slowBack.Has(this.chances) ? this.slowBack[this.chances] : this.BackMs
+            this.downAt[a] := this.t + back
+            this.downAt[i] := this.t + back
         }
         if (this.chances = 0)
             this.endAt := this.t + this.closeDelay
@@ -747,6 +749,29 @@ Test_MM_PreemptWithUnreadableTitleFinishes() {
 
 ; review 2026-11-12: Close slower than EndCheckMs after the last chance: the
 ; round counted as unfinished and tiles were clicked on the shown board
+; live 2026-11-18 08:41: a chance more than the count, and the last counted
+; miss stayed up (lag) past the Close wait: taken for "the round is over",
+; Close never came and the board was left over the next task (the sell
+; failed under it, the mouse stayed pinned). Close must show before the
+; round counts as over; without it the round is played on.
+Test_MM_StuckPairWithoutCloseIsPlayedOn() {
+    b := MmStd()
+    b.chances := 11
+    Loop 10
+        b.slowPic[10 + A_Index] := 99999             ; their pictures never hold still: misses
+    b.slowBack[1] := 60000                           ; the 10th miss stays up (lag)
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        AssertEq(b.chances, 0, "the extra chance played")
+        AssertTrue(b.closed, "the board closed")
+        AssertTrue(!MmHasLog(m, "no Close button under the board"), "no board left open")
+        AssertTrue(MmHasLog(m, "stayed up but no Close: playing on"), "logged")
+    } finally {
+        MmClean(m)
+    }
+}
+
 Test_MM_SlowCloseIsNoExtraTurn() {
     b := MmStd()
     b.closeDelay := 4500

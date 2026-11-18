@@ -53,6 +53,8 @@ class Ocr {
     static Langs := ["en-US", "en"]
     static MaxScale := 4
     static InkMaxScale := 8      ; ReadInk: no smoothing, a bigger upscale is cheap
+    static WhiteInkMin := 200   ; ReadInk "w": every channel at least this
+    static WhiteGap := 0.18     ; ReadInk "w": gap between re-laid glyphs, a share of the box height
     static GreenInkDiff := 25   ; ReadInk "g": green above red and blue by this (25: 'Accevi' through Eden's skill list)
     static InkPad := 24          ; ReadInk: white px around (the recognizer needs a margin)
     static TimeoutMs := 5000
@@ -120,7 +122,7 @@ class Ocr {
     static ReadInk(x, y, w, h, scale, ink) {
         Prof.Begin("ocr")
         try {
-            return ((IsNumber(ink) && ink > 0) || ink == "g") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
+            return ((IsNumber(ink) && ink > 0) || ink == "g" || ink == "w") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
         } catch Any {
             return ""
         } finally {
@@ -244,16 +246,31 @@ class Ocr {
                 while (s > 1 && (Round(w * s) + 2 * pad > maxDim || Round(h * s) + 2 * pad > maxDim))
                     s := Max(1, s - 1)
             }
+            lay := ""
+            if (ink == "w") {
+                ; white ink: the glyphs re-laid with gaps (Windows OCR drops a
+                ; whole line of the game's tile digits when its bar-shaped 1s
+                ; touch: 2026-11-18 'x112842' / 'x541' read as nothing)
+                lay := Ocr._WhiteLayout(Ocr._Capture(x, y, w, h, w, h), w, h)
+                w := lay.w
+                while (s > 1 && (Round(w * s) + 2 * pad > maxDim))
+                    s := Max(1, s - 1)
+            }
             iw := Round(w * s), ih := Round(h * s)
-            if (iw + 2 * pad > maxDim || ih + 2 * pad > maxDim)
+            if (iw + 2 * pad > maxDim || ih + 2 * pad > maxDim) {
+                if IsObject(lay)
+                    Ocr._FreeCapture(lay.g)
                 return ""
+            }
 
             engine := Ocr._Engine(statics, objs, hstrs)
             if !engine
                 return ""
 
             sw := iw + 2 * pad, sh := ih + 2 * pad, size := sw * sh * 4
-            if ink {
+            if IsObject(lay)
+                gdi := Ocr._Ink(lay.g, w, h, 255, iw, ih, pad), lay := ""
+            else if ink {
                 gdi := Ocr._Capture(x, y, w, h, w, h)
                 gdi := Ocr._Ink(gdi, w, h, ink, iw, ih, pad)
             } else
@@ -476,6 +493,131 @@ class Ocr {
     ; ReadInk: the 1x capture g (w x h) made black where red < ink, white
     ; elsewhere, then stretched to iw x ih (COLORONCOLOR: no smoothing) into a
     ; white DIB pad px bigger on each side. g is freed. -> the new capture.
+    ; Capture g (w x h, freed here) -> {g: a new w2 x h capture, w: w2}:
+    ; white pixels (every channel >= WhiteInkMin) as black ink on white,
+    ; shapes touching the box edge dropped (the inventory tile's white
+    ; corner brackets), each run of ink columns (a glyph, or touching
+    ; glyphs) copied with a WhiteGap px gap before and after it.
+    static _WhiteLayout(g, w, h) {
+        try {
+            m := Buffer(w * h, 0), q := g.bits
+            Loop w * h {
+                if (Min(NumGet(q, 0, "UChar"), NumGet(q, 1, "UChar"), NumGet(q, 2, "UChar")) >= Ocr.WhiteInkMin)
+                    NumPut("UChar", 1, m, A_Index - 1)
+                q += 4
+            }
+        } finally {
+            Ocr._FreeCapture(g)
+        }
+        stack := []
+        Loop w
+            stack.Push(A_Index - 1), stack.Push((h - 1) * w + A_Index - 1)
+        Loop h
+            stack.Push((A_Index - 1) * w), stack.Push((A_Index - 1) * w + w - 1)
+        while stack.Length {
+            i := stack.Pop()
+            if (i < 0 || i >= w * h || !NumGet(m, i, "UChar"))
+                continue
+            NumPut("UChar", 0, m, i)
+            cx := Mod(i, w)
+            if (cx > 0)
+                stack.Push(i - 1)
+            if (cx < w - 1)
+                stack.Push(i + 1)
+            stack.Push(i - w), stack.Push(i + w)
+        }
+        ; runs of columns holding ink
+        segs := [], a := -1
+        Loop w + 1 {
+            c := A_Index - 1, ink := false
+            if (c < w)
+                Loop h
+                    if NumGet(m, (A_Index - 1) * w + c, "UChar") {
+                        ink := true
+                        break
+                    }
+            if (ink && a < 0)
+                a := c
+            else if (!ink && a >= 0)
+                segs.Push([a, c]), a := -1
+        }
+        ; touching glyphs ("54" in x541) split at their thinnest column: a run
+        ; wider than 1.6 x the usual glyph width becomes Round(width / usual)
+        ; glyphs (bar-shaped 1s, under 6 px, do not count for the usual width)
+        ws := []
+        for sg in segs
+            if (sg[2] - sg[1] >= 6)
+                ws.Push(sg[2] - sg[1])
+        if (ws.Length >= 2) {
+            srt := ""
+            for v in ws
+                srt .= (srt = "" ? "" : ",") v
+            srt := StrSplit(Sort(srt, "N D,"), ",")
+            usual := Integer(srt[(srt.Length + 1) // 2])
+            out := []
+            for sg in segs {
+                wd := sg[2] - sg[1]
+                if (usual >= 6 && wd > usual * 1.6) {
+                    k := Round(wd / usual), st := sg[1]
+                    Loop k - 1 {
+                        want := sg[1] + Round(A_Index * wd / k), best := want, bestN := h + 1
+                        Loop 7 {
+                            c := want - 4 + A_Index
+                            if (c <= st || c >= sg[2] - 1)
+                                continue
+                            cnt := 0
+                            Loop h
+                                cnt += NumGet(m, (A_Index - 1) * w + c, "UChar")
+                            if (cnt < bestN)
+                                bestN := cnt, best := c
+                        }
+                        out.Push([st, best]), st := best
+                    }
+                    out.Push([st, sg[2]])
+                } else
+                    out.Push(sg)
+            }
+            segs := out
+        }
+        gap := Max(4, Round(h * Ocr.WhiteGap))
+        w2 := gap
+        for sg in segs
+            w2 += sg[2] - sg[1] + gap
+        w2 := Max(w2, 8)
+        n := {hdcScreen: 0, hdcMem: 0, hbm: 0, old: 0, bits: 0}
+        try {
+            n.hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
+            n.hdcMem := DllCall("CreateCompatibleDC", "Ptr", n.hdcScreen, "Ptr")
+            bi := Buffer(40, 0)
+            NumPut("UInt", 40, bi, 0), NumPut("Int", w2, bi, 4), NumPut("Int", -h, bi, 8)
+            NumPut("UShort", 1, bi, 12), NumPut("UShort", 32, bi, 14)
+            n.hbm := DllCall("CreateDIBSection", "Ptr", n.hdcMem, "Ptr", bi, "UInt", 0, "Ptr*", &bits := 0, "Ptr", 0, "UInt", 0, "Ptr")
+            if (!n.hbm || !bits)
+                throw Error("Ocr: CreateDIBSection failed")
+            n.bits := bits
+            n.old := DllCall("SelectObject", "Ptr", n.hdcMem, "Ptr", n.hbm, "Ptr")
+            Loop w2 * h
+                NumPut("UInt", 0xFFFFFFFF, bits, (A_Index - 1) * 4)
+            ox := gap
+            for sg in segs {
+                Loop h {
+                    yy := A_Index - 1
+                    Loop sg[2] - sg[1] {
+                        c := sg[1] + A_Index - 1
+                        if NumGet(m, yy * w + c, "UChar")
+                            NumPut("UInt", 0xFF000000, bits, (yy * w2 + ox + A_Index - 1) * 4)
+                    }
+                }
+                ox += sg[2] - sg[1] + gap
+            }
+            DllCall("GdiFlush")
+            return {g: n, w: w2}
+        } catch Any as e {
+            Ocr._FreeCapture(n)
+            throw e
+        }
+    }
+
     static _Ink(g, w, h, ink, iw, ih, pad) {
         try {
             p := g.bits

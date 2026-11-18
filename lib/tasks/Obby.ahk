@@ -53,7 +53,7 @@
 ;      calibrated): the buff list only shows every buff when expanded, so
 ;      click buff_expand, poll the obby_blessing pixel for up to BlessingMs,
 ;      click buff_expand again (collapsed). Not seen -> play again, up to
-;      Obby.retries more times (default 1, 0..3), then errors webhook.
+;      Obby.retries more times (default 2, 0..3), then errors webhook.
 ;      Uncalibrated check -> one run, reported as unchecked. buff_expand is
 ;      clicked only while it shows its calibrated colour and no purchase
 ;      prompt is up (else, or a prompt after the click: no more clicks or
@@ -256,7 +256,7 @@ class ObbyTask {
         expand := env.cal.Point("buff_expand")
         pt := env.cal.Point("obby_blessing")
         check := (expand != "" && pt != "")
-        retries := check ? ObbyTask.Retries(env.cfg.Get("Obby.retries", 1)) : 0
+        retries := check ? ObbyTask.Retries(env.cfg.Get("Obby.retries", 2)) : 0
         ; the route itself misses (live 2026-11-17: every run since 12:50, the
         ; retry walked it again for ~40 s each time): after MissStreakOne
         ; obbies in a row with no blessing, one run until it shows again
@@ -275,6 +275,9 @@ class ObbyTask {
                 ; Roblox's own zoom and the first run after it went the wrong
                 ; way (live 2026-11-17 19:00); the zoom stays for the retry
                 if (A_Index = 1 && !this._Zoom(ctx, io))
+                    break
+                al := ObbyTask.AlignSteps(env.cfg)
+                if (al.Length && !Input.PlayRoute(al, ctx, io))
                     break
                 if !Input.PlayRoute(steps, ctx, io)
                     break
@@ -395,6 +398,43 @@ class ObbyTask {
     Owed() => IsObject(this._owed) ? this._owed.prev : ""
 
     ; Obby.retries as a whole number in 0..MaxRetries (junk -> 1).
+    ; START ALIGNMENT (settings, default off; live 2026-11-18: a miss and a
+    ; success split ~20 s in at the drop to the dock, the spawn 1-3 studs
+    ; apart): Obby.align, then Obby.alignOffset, each "key:ms[,key:ms...]"
+    ; (w a s d only, 1..AlignMaxMs each): every key held its ms after the
+    ; camera reset (and the first run's zoom), before the route - into the
+    ; spawn's walls so every run starts from one spot; the offset walks from
+    ; there to where the recording started. The route recorder (Setup >
+    ; Routes) plays the same before an obby recording, the route test too.
+    static AlignKeys := Map("w", 1, "a", 1, "s", 1, "d", 1)
+    static AlignMaxMs := 5000
+    static AlignGapMs := 150     ; between two holds: the character stops
+
+    ; "key:ms, key:ms" -> [{k, ms}]; a broken or unknown entry is left out
+    static ParseAlign(s) {
+        out := []
+        for part in StrSplit(String(s), ",") {
+            if !RegExMatch(Trim(part), "i)^([a-z]+)\s*:\s*(\d+)$", &m)
+                continue
+            k := StrLower(m[1]), ms := Integer(m[2])
+            if (ObbyTask.AlignKeys.Has(k) && ms >= 1 && ms <= ObbyTask.AlignMaxMs)
+                out.Push({k: k, ms: ms})
+        }
+        return out
+    }
+
+    ; Obby.align then Obby.alignOffset as route steps for Input.PlayRoute
+    ; ([] = off)
+    static AlignSteps(cfg) {
+        steps := []
+        if !IsObject(cfg)
+            return steps
+        for name in ["Obby.align", "Obby.alignOffset"]
+            for h in ObbyTask.ParseAlign(cfg.Get(name, ""))
+                steps.Push([h.k, "down", h.ms]), steps.Push([h.k, "up", ObbyTask.AlignGapMs])
+        return steps
+    }
+
     static Retries(v) {
         if !IsNumber(v)
             return 1
@@ -536,6 +576,12 @@ class ObbyTask {
             line := RegExReplace(RegExReplace(line, "(^|\s+)\S*[,\d]\S*.*$"), "(\s+\S{0,3})?\s+in(\s.*)?$")
             ; ...and with no digit or comma at all: "npoopoo" (live 2560x1440)
             line := RegExReplace(line, "i)(^|\s+)[nu1il2]{0,2}[po0][po0.]{3,}\s*$")
+            ; ...and its "in" alone on a line of its own, the digits lost
+            ; ('Sailor`nin', live 2026-11-18 11:39: the verdict went unread,
+            ; Sailor: Admiral and an unread result were equipped first).
+            ; Lower case only: a name's "In..." stays
+            if RegExMatch(line, "^\W*(\S{0,2}\s+)?in\W*$")
+                continue
             if !RegExMatch(line, "\d|^\W*\S{0,2}\s+in(\s|$)")
                 s .= line " "
         }
@@ -549,8 +595,15 @@ class ObbyTask {
     ; them) go.
     static Boards := ["COLLECTED", "STATS", "MOST", "ROLLED"]
     static _NoBoard(line) {
-        ; a garbled board word right before a board piece ('XED STAT') goes too
-        out := RegExReplace(line, "[\s:;}|)\]({\[]*\b[A-Z]{2,}\b(?=\s+(STATS?|ROLLED)\b)", " "), pos := 1
+        ; a garbled board word right before a board piece ('XED STAT') goes too,
+        ; the piece cut short as well ('Sailor MED STA-', live 2026-11-18 12:58:
+        ; Sailor never read, Sailor: Admiral equipped by the log pick)
+        ; ...glued to the name in mixed case ('CTED sTATSailor', 'Sailor eTED
+        ; STAT', live 2026-11-18 14:02: Sailor never read, the obby skipped):
+        ; STAT glued before a capital, then a 3-letter-or-less + TED piece
+        line := RegExReplace(line, "(\b[A-Za-z:]{0,3}TED\s*)?[sS]TATS?(?=[A-Z][a-z])", " ")
+        line := RegExReplace(line, "(^|[\s:;}|)\]({\[]+)[A-Za-z:]{0,3}TED(?=\s+[sS]TA)", " ")
+        out := RegExReplace(line, "[\s:;}|)\]({\[]*\b[A-Z]{2,}\b(?=\s+(STA(TS?)?|ROLL(ED)?)\b)", " "), pos := 1
         while RegExMatch(out, "[\s:;}|)\]({\[]*\b([A-Z]{3,})\b", &m, pos) {
             piece := false
             for w in ObbyTask.Boards
@@ -730,6 +783,7 @@ class ObbyTask {
         env := this._env
         first := ""
         this._tileReads := Map()
+        this._tileHas := Map()               ; k -> its reads hold the wanted name (_LogPick tries those first)
         seen := "", last := ""
         tabName := (this._tab = 2 ? "Special" : "Regular")
         hintKey := StrLower(aura) "|" this._tab
@@ -765,6 +819,7 @@ class ObbyTask {
             if (k = 1)
                 first := text
             this._tileReads[k] := rd.v
+            this._tileHas[k] := InStr(GameLists.Fold(rd.all), GameLists.Fold(aura)) > 0
             seen .= (seen = "" ? "" : ", ") k " '" SubStr(Trim(RegExReplace(text, "\s+", " ")), 1, 24) "'"
             if (rd.v = "same") {
                 env.Log("obby: " aura " is result " k " on the " tabName " tab (its name read)")
@@ -1582,9 +1637,18 @@ class ObbyTask {
         order := []
         if hint
             order.Push(hint)
-        else
+        else {
+            ; a result whose reads hold the wanted name first (live 11:39:
+            ; 'Sailor|Sailor|Sailor in' at 12, results 1 and 2 equipped first,
+            ; one of them Sailor: Admiral)
+            has := (this.HasOwnProp("_tileHas") && this._tileHas is Map) ? this._tileHas : Map()
             Loop ObbyTask.ScanTiles
-                order.Push(A_Index)
+                if (has.Has(A_Index) && has[A_Index])
+                    order.Push(A_Index)
+            Loop ObbyTask.ScanTiles
+                if !(has.Has(A_Index) && has[A_Index])
+                    order.Push(A_Index)
+        }
         for k in order {
             if (equips >= ObbyTask.LogPickEquips)
                 return 0

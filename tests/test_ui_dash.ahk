@@ -1953,6 +1953,40 @@ Test_Theme_CustomInLookPanel() {
 }
 
 ; Home > Stats: the second panel switches between this run and all time
+; the hunt rows (orbs, minions, hunts, deaths) in all three views, every row
+; inside its panel and clear of the next, the 7-day list below them
+Test_Dashboard_StatsHuntRows() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        d := Dashboard(Config.Load(dir))
+        d.SelectPage(UiDashPageIdx("Stats"))
+        d.SetStatsPage(Map("huntOrbs", 2, "huntMinions", 9), Map("hunts", 3, "huntDeaths", 1), "", Map("huntOrbs", 40), "20261101")
+        AssertEq(d.Ctrl("stats:day:huntOrbs").Text, "2", "orbs today")
+        AssertEq(d.Ctrl("stats:day:huntMinions").Text, "9", "minions today")
+        AssertEq(d.Ctrl("stats:run:hunts").Text, "3", "hunts this run")
+        AssertEq(d.Ctrl("stats:run:huntDeaths").Text, "1", "deaths this run")
+        d.Ctrl("statsView")["All time"].Flip()
+        AssertEq(d.Ctrl("stats:run:huntOrbs").Text, "40", "orbs all time")
+        hist := UiDashPos(d.Ctrl("stats:history"))
+        for col in ["day", "run"] {
+            prev := ""
+            for r in Dashboard.StatRows {
+                p := UiDashPos(d.Ctrl("stats:" col ":" r[1]))
+                AssertTrue(p.y >= 184 && p.y + p.h <= 152 + 330, col " " r[1] " inside its panel")
+                if IsObject(prev)
+                    AssertTrue(prev.y + prev.h <= p.y, col " " r[1] " clear of the row above")
+                prev := p
+            }
+            AssertTrue(prev.y + prev.h + 12 <= hist.y, col ": the rows end above the 7-day list")
+        }
+        AssertTrue(hist.y + hist.h <= 646, "the 7-day list on the page")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
 Test_Dashboard_StatsAllTime() {
     dir := UiDashTmp()
     d := ""

@@ -1769,3 +1769,109 @@ Test_Pt_JoinUrlNormalised() {
     AssertEq(BiomeEvents.JoinUrl("https://evil.example/roblox.com/x"), "", "other site")
     AssertEq(BiomeEvents.JoinUrl(""), "", "empty")
 }
+
+; 2026-11-18 live: a 6-digit tile count (x112842) over the see-through tile
+; read as 'xu25ß7_' with plain OCR, so a "Use N" quest skipped. White ink
+; at the task's scale on the padded count box reads every tile (real frame
+; tests\screens\inv_lucky_tiles_6digit.png: x 1050, y 560 of a 2560x1440
+; inventory with Lucky Potion L / Lucky Potion / Lucky Potion XL).
+Test_Pt_CountWhiteInkRealTiles() {
+    f := A_ScriptDir "\screens\inv_lucky_tiles_6digit.png"
+    AssertTrue(FileExist(f), "frame exists")
+    pad := PotionsTask.CountPad
+    want := ["541", "112842", "255"]
+    Loop 3 {
+        x := 1075 + (A_Index - 1) * 133 - pad.x - 1050, y := 661 - pad.y - 560
+        t := Ocr.ReadFile(f, x, y, 114 + 2 * pad.x, 23 + 2 * pad.y, PotionsTask.CountInkScale, "w")
+        AssertEq(PotionsTask.ParseCount(t), want[A_Index], "tile " A_Index " count (read '" t "')")
+    }
+}
+
+; the white-ink count reads win when they agree; otherwise the plain reads
+; decide (a game font the ink mode misses still works as before)
+Test_Pt_CountInkThenPlainFallback() {
+    r := PtRig()
+    try {
+        cal := {inv_tile1_rect: {x: 1076, y: 578, w: 110, h: 112}, inv_tile2_rect: {x: 1209, y: 578, w: 114, h: 111}
+            , inv_count_rect: {x: 1075, y: 661, w: 114, h: 23}}
+        r.task._ocrFn := (rect, scale := 1) => "x9"
+        r.task._inkFn := (rect) => "x112842"
+        AssertEq(r.task._ReadCount(cal, 2, ""), "112842", "ink reads agree")
+        n := 0
+        r.task._inkFn := (rect) => (++n = 1 ? "x11284" : "xu25")
+        got := r.task._ReadCount(cal, 1, "")
+        AssertTrue(InStr(r.task._lastCount, "(ink)") > 0, "plain reads used after ink disagreed: " r.task._lastCount)
+        AssertEq(got, "9", "the plain reads' count")
+        AssertEq(PotionsTask.ParseCount("x 54-1"), "541", "glyph gaps / marks between digits dropped")
+        AssertEq(PotionsTask.ParseCount("x 112B 42"), "112842", "spaced digits with a confusable")
+    } finally r.Done()
+}
+
+; the tile's name is read above its count: a count line can never join it
+Test_Pt_NameRectStopsAboveCount() {
+    r := PtRig()
+    try {
+        cal := {inv_tile1_rect: {x: 1076, y: 578, w: 110, h: 112}, inv_tile2_rect: {x: 1209, y: 578, w: 114, h: 111}
+            , inv_count_rect: {x: 1075, y: 661, w: 114, h: 23}}
+        n := r.task._NameRect(cal, 2)
+        AssertEq(n.x, 1209, "tile 2 x")
+        AssertEq(n.y, 578, "top kept")
+        AssertEq(n.h, 661 - 578 - 1, "cut above the count box")
+        cal.inv_count_rect := {x: 1075, y: 590, w: 114, h: 23}
+        AssertEq(r.task._NameRect(cal, 1).h, 112, "a count box too high up: the whole tile")
+    } finally r.Done()
+}
+
+; TileDigits (game-font digit shapes) on real tile counts: every digit,
+; 1 to 6 digits, the bar-shaped 1s Windows OCR drops (2026-11-18 frames:
+; tests\screens\inv_potion_grid_counts.png = screen x 1090, y 640;
+; inv_lucky_tiles_6digit.png = x 1050, y 560; inv_lucky_tiles_113115.png
+; = x 1090, y 640, a count the templates were not made from)
+Test_Pt_TileDigitsRealCounts() {
+    S := A_ScriptDir "\screens\"
+    rows := [[16, ["5", "14", "21", "80", "55"]], [152, ["1", "8", "90", "87", "77"]], [288, ["2037", "821", "550", "1057", "2036"]]]
+    try {
+        Ocr._srcFile := S "inv_potion_grid_counts.png"
+        for rr in rows
+            for k, want in rr[2]
+                AssertEq(TileDigits.Read(5 + (k - 1) * 136, rr[1], 124, 34), want, "grid count " want)
+        Ocr._srcFile := S "inv_lucky_tiles_6digit.png"
+        for k, want in ["541", "112842", "255"]
+            AssertEq(TileDigits.Read(20 + (k - 1) * 133, 96, 124, 33), want, "lucky tile " k)
+        Ocr._srcFile := S "inv_lucky_tiles_113115.png"
+        for k, want in ["541", "113115", "255"]
+            AssertEq(TileDigits.Read(5 + (k - 1) * 136, 16, 124, 34), want, "unseen count tile " k)
+    } finally Ocr._srcFile := ""
+}
+
+; anything unclear -> "": an empty box, a box with only the tile's corner
+; brackets (they touch the edge), a glyph that is no digit
+Test_Pt_TileDigitsRefusesUnclear() {
+    w := 40, h := 24, m := Buffer(w * h, 0)
+    AssertEq(TileDigits.FromMask(m, w, h), "", "empty box")
+    Loop h
+        NumPut("UChar", 1, m, (A_Index - 1) * w)            ; a bracket on the left edge
+    AssertEq(TileDigits.FromMask(m, w, h), "", "a shape touching the edge is dropped")
+    Loop 16 {
+        y := A_Index + 3
+        Loop 16
+            NumPut("UChar", (A_Index = 1 || A_Index = 16 || y = 4 || y = 19 || A_Index = y - 3) ? 1 : 0, m, y * w + 10 + A_Index)
+    }
+    AssertEq(TileDigits.FromMask(m, w, h), "", "a box with a slash is no digit")
+}
+
+; the count read: digit shapes first when both reads agree
+Test_Pt_CountDigitsFirst() {
+    r := PtRig()
+    try {
+        cal := {inv_tile1_rect: {x: 1076, y: 578, w: 110, h: 112}, inv_tile2_rect: {x: 1209, y: 578, w: 114, h: 111}
+            , inv_count_rect: {x: 1075, y: 661, w: 114, h: 23}}
+        r.task._digitsFn := (rect) => "113115"
+        r.task._inkFn := (rect) => "x999"
+        AssertEq(r.task._ReadCount(cal, 2, ""), "113115", "digits win")
+        AssertTrue(InStr(r.task._lastCount, "(digits)"), "logged as digits: " r.task._lastCount)
+        n := 0
+        r.task._digitsFn := (rect) => (++n = 1 ? "113115" : "")
+        AssertEq(r.task._ReadCount(cal, 2, ""), "999", "digit reads disagree: the white-ink reads")
+    } finally r.Done()
+}

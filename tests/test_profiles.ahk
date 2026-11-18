@@ -154,7 +154,7 @@ Test_Profiles_ImportSkipsSecretAndUnknownKeys() {
         AssertEq(cfg.Get("quests.enabled", 1), 0, "lower-case section merged")
         AssertEq(cfg.Get("Craft.qty_speed_potion", 0), 4, "per-potion qty merged")
         AssertEq(cfg.Get("Obby.intervalMin", 0), 25, "Obby interval merged")
-        AssertEq(cfg.Get("Obby.retries", 0), 1, "a negative number skipped")
+        AssertEq(cfg.Get("Obby.retries", 0), 2, "a negative number skipped (the default 2 kept)")
         AssertEq(cfg.Get("Limbo.enabled", 9), 0, "a switch that is not a number skipped")
         AssertEq(cfg.Get("General.privateServer", ""), PfLink(), "own link kept")
         AssertEq(cfg.Get("Remote.token", ""), PfToken(), "own token kept")

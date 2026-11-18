@@ -30,13 +30,21 @@ class QuestMatch {
     ; turn in": 2026-10-27 review).
     static CompleteRe := "i)\b(?:completed|turn[ \-]?in|re[ao]dy to turn|c[lI1|][ao]im(?: rew[ao]rds?)?)\b"
 
+    ; OCR's "l<" / "I<" for the game font's k ('Hell Breol<through', 'LucI<y';
+    ; live 2026-11-18) is put back first
     static Norm(text) {
-        s := RegExReplace(StrLower(String(text)), "[^a-z0-9]+", " ")
+        s := RegExReplace(StrLower(QuestMatch.FixK(text)), "[^a-z0-9]+", " ")
         return Trim(s)
     }
 
     ; The board's other name for a list entry ("" = none): "<rarity> aura
     ; hunt" -> "<rarity> hunt".
+    ; "l<" / "I<" / "l" + U+00AB read for k ('Lucl<<y', 2026-11-18 09:55) -> k
+    static FixK(text) => RegExReplace(String(text), "[lI1|][<" Chr(0xAB) "]", "k")
+
+    ; The game font's look-alikes as one letter (a and o) for fuzzy compares
+    static Fold(s) => StrReplace(String(s), "a", "o")
+
     static Alt(norm) {
         a := RegExReplace(norm, "^(\w+) aura hunt$", "$1 hunt")
         return (a != norm) ? a : ""
@@ -109,7 +117,8 @@ class QuestMatch {
                     for cand in QuestMatch._Windows(words, nWords) {
                         if (numeral != "" && !RegExMatch(cand, " " numeral "$"))
                             continue
-                        score := Max(score, QuestMatch.Similarity(cand, qn))
+                        ; the game font's a reads as o ('Breokthrough'): compared folded
+                        score := Max(score, QuestMatch.Similarity(QuestMatch.Fold(cand), QuestMatch.Fold(qn)))
                     }
                 }
             }

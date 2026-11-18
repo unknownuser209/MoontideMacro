@@ -91,12 +91,16 @@ class Overlay {
         y := this.cfg.Get("Overlay.y", -99999)
         vx := SysGet(76), vy := SysGet(77), vw := SysGet(78), vh := SysGet(79)   ; virtual screen
         if (x < vx || y < vy || x > vx + vw - 40 || y > vy + vh - 40) {
-            x := A_ScreenWidth - Overlay.W - 24
-            y := 24
+            p := Overlay.DefaultPos(A_ScreenWidth)
+            x := p.x, y := p.y
         }
         this._gui.Show("x" x " y" y " w" Overlay.W " h" Overlay.H " NoActivate")
         this._shown := true
     }
+
+    ; top right of a screen screenW px wide, its width in screen px at the
+    ; Windows scale (Theme.Dpi: at 125% the old spot ran 70 px off the edge)
+    static DefaultPos(screenW) => {x: screenW - Theme.Dpi(Overlay.W + 24), y: Theme.Dpi(24)}
 
     Hide() {
         this._gui.Hide()

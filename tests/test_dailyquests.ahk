@@ -69,8 +69,13 @@ class DqWin {
         if !this.sel
             return ""
         r := this._Sel()
-        if (x = D.PanelBox.x && y = D.PanelBox.y)
+        if (x = D.PanelBox.x && y = D.PanelBox.y) {
+            if (this.HasOwnProp("panelLate") && this.panelLate > 0) {    ; still redrawing
+                this.panelLate--
+                return "RNG for minutes verloe"
+            }
             return this.panelLie ? "Something else entirely" : r.name
+        }
         if (x = D.RerollBox.x && y = D.RerollBox.y)
             return (r.done || this.sel = D.BonusY) ? "" : (this.free > 0 ? "Reroll Quest`n[" this.free "/3]" : "Buv Reroll`n10R$")
         if (x = D.ClaimBox.x && y = D.ClaimBox.y)
@@ -232,6 +237,59 @@ Test_DailyQuests_PotionQuestAskedOncePerBar() {
     t.Run(SchedCtx())
     AssertEq(calls.Length, 2, "the bar moved: the rest asked for")
     AssertEq(calls.Length = 2 ? calls[2] : 0, 7, "7 left")
+}
+
+; live 2026-11-18: the count reads 'IO' for 10 ("Use IO Lucky Potion")
+Test_DailyQuests_UseCountInTheGameFont() {
+    for pair in [["IO", 10], ["10", 10], ["l0", 10], ["1O", 10], ["5", 5], ["I", 1]]
+        AssertEq(DailyQuestsTask.Count(pair[1]), pair[2], "'" pair[1] "' is " pair[2])
+    for s in ["O", "Oo", "", "ab"]
+        AssertEq(DailyQuestsTask.Count(s), "", "'" s "' is no count")
+    AssertTrue(RegExMatch("Use IO Lucky Potion", DailyQuestsTask.UseRe, &m) && DailyQuestsTask.Count(m[1]) = 10 && m[2] = "Lucky Potion", "Use IO Lucky Potion: 10 Lucky Potion")
+    win := DqWin(DqRows(["Use IO Lucky Potion", false], ["Roll 100 times", true, true], ["Roll 50 times", true, true]))
+    io := DqIO(win), calls := []
+    w := DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
+    t := DailyQuestsTask({cfg: QmCfg(Map("DailyQuests.enabled", 1, "DailyQuests.usePotions", 1)), io: io, webhook: QmWh()
+        , cal: QmCal(), log: (s) => 0, ocr: (x, y, wd, h, scale := 1) => win.Ocr(x, y, wd, h, scale)
+        , now: () => 0, rect: (x, y, wd, h) => DqFill(w, w * 4 // 10), potionQuest: (p, n) => (calls.Push(p "|" n), true)})
+    t.Run(SchedCtx())
+    AssertEq(calls.Length ? calls[1] : "", "Lucky Potion|6", "6 of 10 left asked for")
+    AssertEq(win.free, 3, "never rerolled")
+}
+
+; live 2026-11-18 05:36: "Play Sol's RNG for 10 minutes" selected, the panel
+; read 'RNG for minutes verloe' once and the row was left alone
+Test_DailyQuests_PanelReadAgainWhileItRedraws() {
+    win := DqWin(DqRows(["Ploy Sol's RNG for 10 minutes", true], ["Roll 100 times", true, true], ["Roll 50 times", true, true]))
+    win.panelLate := 2
+    d := DqTask(win)
+    d.t.Run(SchedCtx())
+    AssertTrue(win.rows[699].claimed, "claimed once the panel showed it")
+    AssertTrue(!DqLogged(d, "did not show on the left"), "not left alone")
+    ; a panel that keeps showing another quest: still left alone
+    win2 := DqWin(DqRows(["Roll 100 times", true]))
+    win2.panelLie := true
+    d2 := DqTask(win2)
+    d2.t.Run(SchedCtx())
+    AssertTrue(!win2.rows[699].claimed, "another quest on the left: nothing claimed")
+    AssertTrue(DqLogged(d2, "did not show on the left"), "said why")
+    ; reroll words fold the game font's a / o
+    AssertTrue(!DailyQuestsTask.Wanted("Ploy Sol's RNG for 10 minutes", ["play"]), "'Ploy' holds the word play")
+}
+
+; Real frames (day1118 09:26, 2560x1440, crops x 640.., y 440..): the
+; selected quest on the left and the row names
+Test_DailyQuests_SelectedPanelRealFrames() {
+    D := DailyQuestsTask
+    rd := (f) => ((x, y, w, h, scale := 1) => ScrCropRead(f, {x: x, y: y, w: w, h: h}, 640, 440, scale))
+    t := DailyQuestsTask({cfg: QmCfg(Map()), io: QmIO(), ocr: rd("daily_quests_play_selected_1440")})
+    b := D.PanelBox
+    AssertTrue(D.Same(rd("daily_quests_play_selected_1440").Call(b.x, b.y, b.w, b.h), t._RowName(897)), "Play Sol's RNG on the left is row 3")
+    AssertTrue(!D.Same(rd("daily_quests_play_selected_1440").Call(b.x, b.y, b.w, b.h), t._RowName(797)), "not row 2")
+    u := DailyQuestsTask({cfg: QmCfg(Map()), io: QmIO(), ocr: rd("daily_quests_use_selected_1440")})
+    n := u._RowName(797)
+    AssertTrue(RegExMatch(n, D.UseRe, &m) && D.Count(m[1]) = 10, "row 2 '" n "' is Use 10")
+    AssertTrue(D.Same(rd("daily_quests_use_selected_1440").Call(b.x, b.y, b.w, b.h), n), "Use 10 Lucky Potion on the left is row 2")
 }
 
 DqFill(w, fill) {

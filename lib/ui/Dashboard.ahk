@@ -1642,11 +1642,12 @@ class Dashboard {
         this._BoolField(692, 294, "Dismiss unticked quests", "quests.dismissDisabled", 0, , "WARNING: Dismiss abandons the quest and its progress. "
             . "Off (default): unticked quests are only skipped, never abandoned.")
         Theme.Label(g, "x692 y324 w304 h20", "Abandons the quest and its progress.", "muted")
-        this._Panel(676, 376, 336, 196, "Daily quests")
+        this._Panel(676, 376, 336, 232, "Daily quests")
         this._BoolField(692, 410, "Do daily quests", "DailyQuests.enabled", 0)
         this._IntField(692, 446, "Check every", "DailyQuests.intervalMin", 30, "min", 140, 5)
         this._StrField(692, 482, "Reroll quests with", "DailyQuests.reroll", "", 164, 140)
         Theme.Label(g, "x692 y516 w304 h40", "Words, comma between (e.g. craft, fish). Free rerolls only, never Buy Reroll.", "muted")
+        this._BoolField(692, 566, "Use potions for Use quests", "DailyQuests.usePotions", 0)
         p.load := ObjBindMethod(this, "_QuestLoad")
         p.save := ObjBindMethod(this, "_QuestSave")
         this._SaveBar(p)
@@ -2904,7 +2905,7 @@ class Dashboard {
             . "With buff_expand and obby_blessing calibrated the buff list is expanded, the blessing checked and the list collapsed again; a failed run is tried again Retries times.")
         this._BoolField(220, 186, "Run the obby", "Obby.enabled", 0)
         this._IntField(220, 224, "Every", "Obby.intervalMin", 10, "minutes", 170, 1)
-        this._IntField(220, 262, "Retries", "Obby.retries", 1)
+        this._IntField(220, 262, "Retries", "Obby.retries", 2)
         this._ids["obbyBlessingNote"] := Theme.Label(g, "x220 y306 w364 h56", "", "muted")
         this._Panel(616, 152, 396, 220, "Memory Match", "Plays the Memory Match board (20 tiles, 10 turns, every 12 hours) and keeps the best pairs. "
             . "Record the memory_match route (to the board) on Setup > Routes. It stays off until the board layout is added from a clip of one round.")
@@ -2962,7 +2963,7 @@ class Dashboard {
         mins := UiLogic.UInt(this.Ctrl("Obby.intervalMin").Value, 10)
         if (mins < 1 || mins > 120)
             return "obby: every must be 1 to 120 minutes"
-        tries := UiLogic.UInt(this.Ctrl("Obby.retries").Value, 1)
+        tries := UiLogic.UInt(this.Ctrl("Obby.retries").Value, 2)
         if (tries > 3)
             return "obby: retries must be 0 to 3"
         return ""
@@ -2974,12 +2975,15 @@ class Dashboard {
     ; counters or DailyStats.Derived values (reelRate, fishPerHour, uptimeText).
     static StatRows := [["fishCaught", "Fish caught"], ["fishFailed", "Fish missed"], ["reelRate", "Reel success"]
         , ["fishPerHour", "Fish per hour"], ["sells", "Sell trips"], ["biomes", "Biomes seen"], ["rareBiomes", "Rare biomes"]
-        , ["rareAuras", "Rare auras"], ["rejoins", "Rejoins"], ["uptimeText", "Uptime"]]
+        , ["rareAuras", "Rare auras"], ["rejoins", "Rejoins"]
+        , ["hunts", "Hunts"], ["huntOrbs", "Orbs killed"], ["huntMinions", "Minions killed"], ["huntDeaths", "Hunt deaths"]   ; MinionsTask._CountHunt
+        , ["uptimeText", "Uptime"]]
+    static StatRowH := 21         ; row pitch: 14 rows fit the panels above the 7-day list
 
     _PageStats(p) {
         g := this._gui
         for col in [["day", 204, "Today"], ["run", 616, "This run"]] {
-            parts := this._Panel(col[2], 152, 396, 300, col[3])
+            parts := this._Panel(col[2], 152, 396, 330, col[3])
             if (col[1] = "run") {
                 ; the second panel shows this run or the all-time totals
                 ; (DailyStats.AllTime); the title says which, the pick is kept
@@ -2992,15 +2996,15 @@ class Dashboard {
                 this._ids["statsView"] := seg
             }
             for i, r in Dashboard.StatRows {
-                y := 184 + (i - 1) * 26
-                Theme.Label(g, "x" col[2] + 16 " y" y " w200 h22", r[2], "body", Theme.CardBg)
-                this._ids["stats:" col[1] ":" r[1]] := Theme.Label(g, "x" col[2] + 216 " y" y " w164 h22 Right", "0", "value", Theme.CardBg)
+                y := 184 + (i - 1) * Dashboard.StatRowH
+                Theme.Label(g, "x" col[2] + 16 " y" y " w200 h20", r[2], "body", Theme.CardBg)
+                this._ids["stats:" col[1] ":" r[1]] := Theme.Label(g, "x" col[2] + 216 " y" y " w164 h20 Right", "0", "value", Theme.CardBg)
             }
         }
-        this._Panel(204, 468, 808, 148, "Last 7 days")
+        this._Panel(204, 494, 808, 148, "Last 7 days")
         hw := [120, 90, 90, 80, 90, 80, 90, 110]
-        Theme.ListHeader(g, 220, 496, hw, ["Day", "Fish", "Missed", "Reel", "Biomes", "Rare", "Rejoins", "Uptime"])
-        this._statsHist := Theme.ListView(g, 220, 520, 776, 84, ["Day", "Fish", "Missed", "Reel", "Biomes", "Rare", "Rejoins", "Uptime"], hw)
+        Theme.ListHeader(g, 220, 522, hw, ["Day", "Fish", "Missed", "Reel", "Biomes", "Rare", "Rejoins", "Uptime"])
+        this._statsHist := Theme.ListView(g, 220, 546, 776, 84, ["Day", "Fish", "Missed", "Reel", "Biomes", "Rare", "Rejoins", "Uptime"], hw)
         this._ids["stats:history"] := this._statsHist
     }
 

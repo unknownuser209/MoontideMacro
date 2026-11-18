@@ -48,6 +48,7 @@ class HelpTexts {
         add("Obby.retries", "How many times a failed obby run is tried again before waiting for the next one. After 2 obbies in a row that miss, no tries again until it works.")
         add("DailyQuests.enabled", "Opens Daily Quests every few minutes, claims every finished quest (and the Good job today bonus), then closes it.")
         add("General.joinButton", "Biome and rare biome messages get a Join Server button with your private server link (Private server above). On by default: anyone who can read that Discord channel can join, so turn it off for a public channel.")
+        add("DailyQuests.usePotions", "Quests like Use 10 Lucky Potion: uses what the quest still needs, with every potion check (unlock the potion and fill its description on the Potions page; dry run only reports).")
         add("DailyQuests.reroll", "Quests holding one of these words (comma list, e.g. craft, fish) are rerolled with the free rerolls. Buy Reroll (Robux) is never pressed.")
         add("MemoryMatch.enabled", "Plays Memory Match every 12 hours and keeps the best pairs. Needs the memory_match walk recorded.")
         add("Auras.equipFirst", "Swaps auras by searching the name and equipping the first result, without reading it. Faster, but only use it if your aura names are unique.")

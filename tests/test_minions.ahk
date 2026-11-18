@@ -704,7 +704,7 @@ Test_Minions_RealPointsAndRank() {
     AssertEq(MinionsTask.Points(bar("eden_bar_70.png"), 985, 1080), 70, "70 points (404 px)")
     AssertEq(MinionsTask.Points(bar("eden_bar_90_rank_d.png"), 985, 1080), 90, "90 points, the rank's line above not counted")
     AssertEq(MinionsTask.Rank(bar("eden_bar_70.png"), 985, 1080), "", "no combo rank")
-    AssertEq(MinionsTask.Rank(bar("eden_bar_90_rank_d.png"), 985, 1080), "?", "rank D: a letter, not V")
+    AssertEq(MinionsTask.Rank(bar("eden_bar_90_rank_d.png"), 985, 1080), "D", "rank D: a letter, not V")
     AssertEq(MinionsTask.Points(bar("world_day.jpg")), -1, "no points bar in the world frame")
     AssertEq(MinionsTask.Rank(bar("world_day.jpg")), "", "nor a rank")
 }
@@ -724,8 +724,8 @@ Test_Minions_RealZeroPointsAndRanks() {
     ; with their time line; the letter left after its line ran out: none
     AssertEq(MinionsTask.Rank(bar("eden_bar_0_swirl_clip.png"), 985, 1080), "", "the swirl is no rank V")
     AssertEq(MinionsTask.Rank(bar("eden_bar_0_swirl.png"), 985, 1080), "", "nor live")
-    AssertEq(MinionsTask.Rank(bar("eden_bar_30_rank_c_clip.png"), 985, 1080), "?", "rank C")
-    AssertEq(MinionsTask.Rank(bar("eden_bar_5_rank_e_clip.png"), 985, 1080), "?", "rank E, a short line left")
+    AssertEq(MinionsTask.Rank(bar("eden_bar_30_rank_c_clip.png"), 985, 1080), "C", "rank C")
+    AssertEq(MinionsTask.Rank(bar("eden_bar_5_rank_e_clip.png"), 985, 1080), "E", "rank E, a short line left")
     AssertEq(MinionsTask.Rank(bar("eden_bar_37_rank_fading_clip.png"), 985, 1080), "", "C with its line run out: over")
 }
 
@@ -774,14 +774,14 @@ Test_Minions_RankVIsAPoint() {
     ; the rank's time line under the letter: 9 rows down, 5 thick, 200 wide
     lined := (spans) => MnRankLined(spans, 200)
     AssertEq(MinionsTask.Rank(MnRankGrab(lined(v))), "V", "wide on top, a point at the bottom")
-    AssertEq(MinionsTask.Rank(MnRankGrab(lined(d))), "?", "as wide at the bottom: another letter")
+    AssertTrue(!InStr("|V|", "|" MinionsTask.Rank(MnRankGrab(lined(d))) "|") && MinionsTask.Rank(MnRankGrab(lined(d))) != "", "as wide at the bottom: another letter")
     AssertEq(MinionsTask.Rank(MnRankGrab(v)), "", "no time line under it: no rank (a swirl, the bar's 0)")
     AssertEq(MinionsTask.Rank(MnRankGrab(MnRankLined(v, 10))), "", "a dot under it is no line")
     ; a V solid at the top (no arms apart): a point, but no V
     solid := []
     Loop 22
         h := (22 - A_Index) // 2, solid.Push([1280 - h - 2, 1280 + h + 2])
-    AssertEq(MinionsTask.Rank(MnRankGrab(lined(solid))), "?", "no arms at the top: another letter")
+    AssertTrue(!InStr("|V|", "|" MinionsTask.Rank(MnRankGrab(lined(solid))) "|") && MinionsTask.Rank(MnRankGrab(lined(solid))) != "", "no arms at the top: another letter")
     ; loop L19 03:07:42 / 03:52:37: Deadeye at C / D. Hair streaks off the
     ; centre, narrowing down, over the low-bobbing fill (its top read as
     ; the time line, its tall rows past the grab) read "V" before
@@ -808,8 +808,8 @@ Test_Minions_RankVIsAPoint() {
 ; none (frame 22_hair read "?" before: a letter)
 Test_Minions_RealRankLettersAndHair() {
     bar := (name) => MatchFileGrab(A_ScriptDir "\screens\" name)
-    for f in ["eden_bar_46_rank_e.png", "eden_bar_38_rank_d.png", "eden_bar_44_rank_c.png", "eden_bar_15_rank_d_clip.png"]
-        AssertEq(MinionsTask.Rank(bar(f), 984, 1080), "?", f ": a letter, not V")
+    for f, k in Map("eden_bar_46_rank_e.png", "E", "eden_bar_38_rank_d.png", "D", "eden_bar_44_rank_c.png", "C", "eden_bar_15_rank_d_clip.png", "D")
+        AssertEq(MinionsTask.Rank(bar(f), 984, 1080), k, f ": a letter, not V")
     AssertEq(MinionsTask.Points(bar("eden_bar_44_rank_c.png"), 984, 1080), 44, "44 points under the C")
     AssertEq(MinionsTask.Points(bar("eden_bar_15_rank_d_clip.png"), 984, 1080), 15, "15 points under the D")
     AssertEq(MinionsTask.Rank(bar("eden_bar_22_hair.png"), 984, 1080), "", "hair streaks: no letter")
@@ -873,7 +873,20 @@ MnToastPanel(f) {
     }
     AssertTrue(!InStr(seen, "r"), f ": no Deadeye at 49 points, no rank (" seen ")")
     AssertEq(SubStr(seen, 1, 2), "ef", f ": by priority: E, F (FirstOfFE), Voidrush after")
-    AssertEq(b.Next({rows: p, points: 49, rank: "V"}, t + 100), "r", f ": rank V read: Deadeye")
+    AssertEq(b.Next({rows: p, points: 49, rank: "V"}, t + 6000), "r", f ": rank V read: Deadeye")
+    AssertTrue(b.Next({rows: p, points: 49, rank: "V", air: true}, t + 6000) != "r", f ": in the air: no Deadeye (the game refuses it)")
+    AssertTrue(b.Next({rows: p, points: 49, rank: "A"}, t + 6000) != "r", f ": rank A: no Deadeye")
+}
+
+; rank V read in the hunt: Deadeye, and the log says so once a stretch
+Test_Minions_RankVLoggedWithDeadeye() {
+    near := [{x: 1280, y: 680, w: 200}]
+    m := MnTask([near, near, near, near, near, near, []])
+    m.t._hudFn := () => {rows: ["", "", "", "", "", ""], points: 60, rank: "V"}
+    m.t.Run(SchedCtx())
+    AssertTrue(MnLogged(m, "combo rank V - Deadeye"), "logged")
+    AssertEq(MnCount(m, "combo rank V - "), 1, "once while it stays V")
+    AssertTrue(MnLogged(m, "skill r (points 60) rank V"), "Deadeye pressed")
 }
 
 ; the hunt with Eden's panel read: T cooling down the whole hunt, 10 points
@@ -2316,8 +2329,9 @@ Test_Minions_ShiftLockStuckOnNeverClicks() {
     m.t._lockOwed := true
     AssertEq(m.t.Run(SchedCtx()), 0, "no hunt")
     AssertEq(io.Clicks(), 0, "the storage never clicked")
-    ; two taps each, plus one after the first-person zoom out (still pinned)
-    AssertEq(MnEvents(io, "{sc02A up}"), 6, "off tried once more (two taps + zoom out + tap each)")
+    ; two taps each, one after the first-person zoom out and, still pinned,
+    ; one that undoes it (an odd count left shift lock on, 2026-11-18)
+    AssertEq(MnEvents(io, "{sc02A up}"), 8, "off tried once more (two taps + zoom out + tap + undo each)")
     AssertTrue(MnLogged(m, "shift lock may still be on - the aura swap skipped (no click)"), "logged")
     ; stuck on after the hunt: no respawn menu, no put-back (owed)
     near := [{x: 1280, y: 680, w: 200}]
@@ -3473,8 +3487,8 @@ MnKeys2(g) {
 Test_Minions_RealRankVAtNight() {
     AssertEq(MinionsTask.Rank(MnShot("eden_bar_88_rank_v_night.png"), 985, 1080), "V", "V at 88")
     AssertEq(MinionsTask.Rank(MnShot("eden_bar_10_rank_v_night.png"), 985, 1080), "V", "V after Deadeye, 10 points")
-    AssertEq(MinionsTask.Rank(MnShot("eden_bar_68_rank_e_cut.png"), 985, 1080), "?", "E, its top off the grab")
-    AssertEq(MinionsTask.Rank(MnShot("eden_bar_27_rank_c_night.png"), 985, 1080), "?", "C")
+    AssertEq(MinionsTask.Rank(MnShot("eden_bar_68_rank_e_cut.png"), 985, 1080), "E", "E, its top off the grab")
+    AssertEq(MinionsTask.Rank(MnShot("eden_bar_27_rank_c_night.png"), 985, 1080), "C", "C")
     AssertEq(MinionsTask.Points(MnShot("eden_bar_88_rank_v_night.png"), 985, 1080), 88, "the Charge")
 }
 
@@ -3486,8 +3500,8 @@ Test_Minions_RealRankVByDay() {
     AssertEq(MinionsTask.Rank(MnShot("eden_bar_90_rank_v_day_snow.png"), 985, 1080), "V", "V, its outer edge in the snow")
     AssertEq(MinionsTask.Rank(MnShot("eden_bar_90_rank_v_day.png"), 985, 1080), "V", "V by day")
     AssertEq(MinionsTask.Rank(MnShot("eden_bar_0_rank_v_day.png"), 985, 1080), "V", "V after Deadeye, 0 points")
-    AssertEq(MinionsTask.Rank(MnShot("eden_bar_75_rank_a_day.png"), 985, 1080), "?", "A by day")
-    AssertEq(MinionsTask.Rank(MnShot("eden_bar_100_rank_b_swirl.png"), 985, 1080), "?", "B over the swirl")
+    AssertEq(MinionsTask.Rank(MnShot("eden_bar_75_rank_a_day.png"), 985, 1080), "A", "A by day")
+    AssertEq(MinionsTask.Rank(MnShot("eden_bar_100_rank_b_swirl.png"), 985, 1080), "B", "B over the swirl")
     AssertEq(MinionsTask.Points(MnShot("eden_bar_90_rank_v_day_snow.png"), 985, 1080), 90, "the Charge")
 }
 
@@ -3778,6 +3792,17 @@ Test_Minions_BookVoidrushAfterTheChain() {
     AssertEq(b.Next(MnHud(, 40, "V"), 0), "r", "rank V: Deadeye before all, minions or not")
 }
 
+; night 11-18: the 17 Voidrush presses the game refused all came 0-1 s after
+; a Taunt or E; V waits VAfterMs after the last press
+Test_Minions_VoidrushWaitsAfterTheLastPress() {
+    b := MinionSkills("Eden", "")
+    gone := Map("f", 0.5, "e", 0.5, "t", 0.5)
+    b.Pressed("t", MnHud(, 40), 10000)
+    AssertEq(b.Next(MnHud(gone, 55), 10000 + 400), "", "T's cast just over: no Voidrush yet")
+    AssertEq(b.Next(MnHud(gone, 55), 10000 + MinionSkills.VAfterMs - 1), "", "still too soon")
+    AssertEq(b.Next(MnHud(gone, 55), 10000 + MinionSkills.VAfterMs), "v", "then Voidrush")
+}
+
 ; a book-only fight of ms: the panel's overlays from the presses (as
 ; MnArena's Hud), Charge 50, no rank. -> [{k, at, end}]
 MnBookFight(b, ms, close, no := "") {
@@ -3897,7 +3922,7 @@ Test_Minions_BookKeepsTheChargeThroughAFlash() {
     t := 0
     MnBookPress(b, MnHud(, 50), &t), MnBookPress(b, MnHud(, 50), &t), MnBookPress(b, MnHud(, 50), &t)     ; F, E and T go first
     b.Next(MnHud(, 50), t)
-    AssertEq(b.Next({rows: "", points: -1, rank: ""}, t + 1000), "v", "50 read a second ago")
+    AssertEq(b.Next({rows: "", points: -1, rank: ""}, t + MinionSkills.VAfterMs, false, "fe"), "v", "50 read two seconds ago (V waits VAfterMs after T; F, E aside)")
     AssertTrue(b.Next({rows: "", points: -1, rank: ""}, t + 1000 + MinionSkills.PointsKeepMs) != "v", "too old: no Voidrush")
 }
 
@@ -4246,6 +4271,27 @@ Test_Minions_FlashMeansNothing() {
     AssertTrue(MnSkills(m.io) >= 3, "skills went on through it")
     AssertTrue(InStr(MnStatsOf(m), "orb_down=1 ") && InStr(MnStatsOf(m), "how=toast"), "the kill by its toast")
     AssertTrue(InStr(MnStatsOf(m), " orb_fill=0 "), "a kill logs fill 0, not the last read (1): " MnStatsOf(m))
+}
+
+; Home > Stats (2026-11-18): each hunt's end counts a hunt, its orb, its
+; minions and its deaths on the App's counters (state.Bump)
+Test_Minions_HuntCountedInTheStats() {
+    beside := [{x: 1280, y: 400, w: 200}], n := 0
+    m := MnTask()
+    m.t._statsTo := m.state
+    m.t._scanFn := () => (++n <= 2 || n >= 14) ? beside : []
+    m.t._toastFn := () => (n >= 18 ? "orb" : "")
+    m.t.Run(SchedCtx())
+    s := m.state.stats
+    AssertEq(s.Has("hunts") ? s["hunts"] : 0, 1, "one hunt")
+    AssertEq(s.Has("huntOrbs") ? s["huntOrbs"] : 0, 1, "its orb")
+    RegExMatch(MnStatsOf(m), "\bdown=(\d+)", &d)
+    AssertEq((s.Has("huntMinions") ? s["huntMinions"] : 0) + 1, Integer(d[1]), "minions = down - the orb")
+    st := SchedState()
+    m.t._statsTo := st
+    m.t._CountHunt(0, 3, 2)
+    AssertEq(st.stats["hunts"] "|" st.stats["huntMinions"] "|" st.stats["huntDeaths"], "1|3|2", "minions and deaths")
+    AssertTrue(!st.stats.Has("huntOrbs"), "no orb: no orb count")
 }
 
 ; night 11-18: after an orb kill the re-hunts of that biome found nothing
@@ -7335,4 +7381,18 @@ Test_Minions_WaitNoteSaysWhyNoHunt() {
     AssertEq(m.WaitNote("GLITCHED"), "no orbs in GLITCHED", "a rare biome")
     AssertEq(m.WaitNote("RAINY"), "", "an orb biome")
     AssertEq(m.WaitNote(""), "", "no biome yet")
+}
+
+; the letter under V for the log (_RankKind), on every real frame with one
+; (E D C B A; V as before), and the live SNOWY day frames of 2026-11-18
+; 09:37 (full-res, 2 fps capture): D twice, none at 0 points
+Test_Minions_RealRankLetterNames() {
+    bar := (name) => MatchFileGrab(A_ScriptDir "\screens\" name)
+    for f, k in Map("eden_bar_100_rank_b_swirl.png", "B", "eden_bar_15_rank_d_clip.png", "D", "eden_bar_27_rank_c_night.png", "C"
+        , "eden_bar_30_rank_c_clip.png", "C", "eden_bar_38_rank_d.png", "D", "eden_bar_44_rank_c.png", "C", "eden_bar_46_rank_e.png", "E"
+        , "eden_bar_5_rank_e_clip.png", "E", "eden_bar_68_rank_e_cut.png", "E", "eden_bar_75_rank_a_day.png", "A", "eden_bar_90_rank_d.png", "D"
+        , "eden_bar_before_voidrush_snowy_clip.png", "E", "eden_bar_0_rank_v_day.png", "V", "eden_bar_10_rank_v_night.png", "V"
+        , "eden_bar_88_rank_v_night.png", "V", "eden_bar_90_rank_v_day.png", "V", "eden_bar_90_rank_v_day_snow.png", "V"
+        , "eden_bar_10_rank_d_snowy_day.png", "D", "eden_bar_30_rank_d_snowy_day.png", "D", "eden_bar_0_snowy_day.png", "")
+        AssertEq(MinionsTask.Rank(bar(f), 985, 1080), k, f)
 }

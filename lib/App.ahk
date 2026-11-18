@@ -385,7 +385,7 @@ class App {
                     , respawnAfter: ra})
                 case "minions": return MinionsTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()
                     , hintPath: App.DefaultRoot() "\data\aura_hints.json"
-                    , biome: () => this._BiomeNow(), ghost: () => this._GhostNow(), sinister: this.sinister})
+                    , biome: () => this._BiomeNow(), ghost: () => this._GhostNow(), sinister: this.sinister, state: this.state})
                 case "memorymatch": return MemoryMatchTask({cfg: cfg, webhook: this.wh, log: this._logFn, respawnAfter: ra})
                 case "merchant": return MerchantTask({cfg: cfg, webhook: this.wh, log: this._logFn, respawnAfter: ra})
                 case "recovery": return RecoveryTask({cfg: cfg, webhook: this.wh, log: this._logFn})
@@ -2108,6 +2108,12 @@ class App {
                 this.Log("Route recorder: camera top-down, like playback does")
                 try this.input.PlayRoute(cam, ctx)
             }
+            ; the obby's start alignment (Obby.align / alignOffset), as its runs play it
+            al := IsObject(ob) ? ObbyTask.AlignSteps(this.cfg) : []
+            if (ok && al.Length && HasMethod(this.input, "PlayRoute")) {
+                this.Log("Route recorder: the obby's start alignment first, like its runs")
+                try this.input.PlayRoute(al, ctx)
+            }
         } else {
             this.Log("Route recorder: Roblox is not open, fullscreen and focused: no automatic respawn; respawn yourself before pressing " RouteRecorder.Key)
         }
@@ -2246,6 +2252,9 @@ class App {
                 return ctx.ShouldStop() ? "" : "camera re-aim failed: " (Input.LastResetError != "" ? Input.LastResetError : "Aura Collections did not open")
         } else if !this.input.ResetToSpawn(ctx, io)
             return ctx.ShouldStop() ? "" : "respawn failed: " (Input.LastResetError != "" ? Input.LastResetError : "Esc, R, Enter did not work")
+        al := (this._walkName = "obby") ? ObbyTask.AlignSteps(this.cfg) : []
+        if (al.Length && !this.input.PlayRoute(al, ctx, io))
+            return ""
         if !this.input.PlayRoute(steps, ctx, io)
             return ""
         if (key != "" && !ctx.ShouldStop())

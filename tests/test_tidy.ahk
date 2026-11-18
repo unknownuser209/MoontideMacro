@@ -601,6 +601,26 @@ class TdFirstPersonIO extends MnLockIO {
     }
 }
 
+; a game window holds the mouse (Captain Flarg's dialog left open, live
+; 2026-11-18 08:41): the cursor stays pinned whatever Shift does. The taps
+; tried must not leave shift lock ON for real (3 taps did: the "Shift lock
+; gets stuck on" card once the window went)
+class TdWindowPinIO extends MnLockIO {
+    MousePos() => {x: 1280, y: 720}
+    Wheel(dir, n := 1, gapMs := 25) => this.log.Push("wheel " dir " " n)
+}
+
+Test_Input_ShiftOffNeverLeavesItOnUnderAPinningWindow() {
+    io := TdWindowPinIO()
+    AssertEq(Input.ShiftLock(false, io), false, "still pinned: not off")
+    AssertEq(io.lock, false, "shift lock itself left as it was (off)")
+    AssertEq(io.Clicks(), 0, "never a click")
+    io2 := TdWindowPinIO()
+    io2.lock := true
+    Input.ShiftLock(false, io2)
+    AssertEq(io2.lock, true, "on before: on after (no tap changed the pin)")
+}
+
 Test_Input_ShiftOffZoomsOutOfFirstPerson() {
     io := TdFirstPersonIO()
     AssertTrue(Input.ShiftLock(false, io), "free after the zoom out")

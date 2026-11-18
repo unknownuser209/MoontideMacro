@@ -100,7 +100,7 @@ Test_Config_CreatesIniWithDefaults() {
         AssertEq(cfg.Get("Obby.intervalMin"), "10", "default obby interval")
         AssertEq(cfg.Get("Obby.enabled"), "0", "obby off by default")
         AssertEq(cfg.Get("Obby.route"), "obby", "default obby route")
-        AssertEq(cfg.Get("Obby.retries"), "1", "default obby retries")
+        AssertEq(cfg.Get("Obby.retries"), "2", "default obby retries")
         AssertEq(cfg.Get("MemoryMatch.enabled"), "0", "memory match off by default")
         AssertEq(cfg.Get("MemoryMatch.route"), "memory_match", "default memory match route")
         AssertEq(cfg.Webhooks().Length, 0, "no webhooks by default")

@@ -306,6 +306,36 @@ Test_App_ObbyRecordWearsSailor() {
     AssertEq(order[4], "back Glock", "then the old aura back")
 }
 
+; an input fake that records the routes played (PlayRoute: their first key)
+class AppRouteInput extends AppFakeCounter {
+    played := []
+    PlayRoute(steps, ctx := "", io := "") {
+        this.played.Push(steps.Length ? steps[1][1] ":" steps[1][3] : "")
+        return true
+    }
+}
+
+; Obby.align set: the recorder plays the same start alignment after the
+; respawn, before the recording (so it starts where the runs will)
+Test_App_ObbyRecordAlignsFirst() {
+    order := []
+    inp := AppRouteInput()
+    t := AppTestMake(Map("tasks", Map("fishing", AppFakeTask("fishing", 99), "obby", AppSailorFake(order))
+        , "input", inp, "cfgVals", Map("General.sound", 0, "Medal.onRareBiome", 0, "Obby.align", "d:1500")
+        , "recordRespawn", (ctx) => (order.Push("respawn"), true)
+        , "recordRoute", (name, path) => (order.Push("record " inp.played.Length), {ok: true, msg: "saved", steps: [], routes: ""})))
+    t.app.OnRecordRoute("obby")
+    AssertEq(inp.played.Length, 1, "one route played before the recording")
+    AssertEq(inp.played[1], "d:1500", "the alignment")
+    AssertEq(order[3], "record 1", "then the recording")
+    inp2 := AppRouteInput()
+    t2 := AppTestMake(Map("tasks", Map("fishing", AppFakeTask("fishing", 99), "obby", AppSailorFake(order))
+        , "input", inp2, "recordRespawn", (ctx) => true
+        , "recordRoute", (name, path) => ({ok: true, msg: "saved", steps: [], routes: ""})))
+    t2.app.OnRecordRoute("obby")
+    AssertEq(inp2.played.Length, 0, "no Obby.align: nothing played")
+}
+
 ; 2026-10-27: the dashboard minimizes itself for Record / Test and Windows
 ; gives the focus to the next window (the browser) just after Roblox was
 ; focused, so both stopped at once: "could not equip Sailor (stopped)",

@@ -49,8 +49,13 @@ class FixCard {
     ; bottom-right of the primary screen's work area, no activation
     Show() {
         MonitorGetWorkArea(MonitorGetPrimary(), , , &r, &b)
-        this._gui.Show("x" r - FixCard.W - 24 " y" b - FixCard.H - 24 " w" FixCard.W " h" FixCard.H " NA")
+        p := FixCard.Pos(r, b)
+        this._gui.Show("x" p.x " y" p.y " w" FixCard.W " h" FixCard.H " NA")
     }
+
+    ; its top-left for a work area ending at r, b (screen px): the size in
+    ; screen px at the Windows scale (Theme.Dpi), so it stays on the screen
+    static Pos(r, b) => {x: r - Theme.Dpi(FixCard.W + 24), y: b - Theme.Dpi(FixCard.H + 24)}
 
     _Fire(name, args*) {
         if !this._cb.Has(name)

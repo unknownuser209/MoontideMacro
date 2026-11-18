@@ -781,6 +781,7 @@ class MinionsTask {
 
     __New(deps := "") {
         this._env := TaskEnv(deps)
+        this._statsTo := TaskEnv.Dep(deps, "state", "")     ; hunt counters (Bump: today, this run, all time)
         this._grab := TaskEnv.Dep(deps, "grab", "")
         if !IsObject(this._grab)
             this._grab := ScreenFrame()
@@ -1376,7 +1377,25 @@ class MinionsTask {
             this._biomeDown := 0, this._orbKilled := true, this._fightSpot := ""   ; the next orb has its own minions
         env.Log(MinionsTask.Stats(f.maxSeen, down, f.waits, env.Now() - start, sweep.left, sweep.orb, orbDown
             , f.casts, orbDown ? 0 : f.orbFill, f.deaths, orbDown ? f.how : "", this._boss ? 1 : 0))   ; a kill: 0 (05:06:52 logged a whole bar read last, 1.00)
+        this._CountHunt(orbDown, down - orbDown, f.deaths)
         return down
+    }
+
+    ; Home > Stats: the hunt's numbers on the App's counters (state.Bump ->
+    ; this run, today, all time): huntOrbs, huntMinions, hunts, huntDeaths
+    _CountHunt(orbs, minions, deaths) {
+        st := this._statsTo
+        if !(IsObject(st) && HasMethod(st, "Bump"))
+            return
+        try {
+            st.Bump("hunts", 1)
+            if orbs
+                st.Bump("huntOrbs", orbs)
+            if (minions > 0)
+                st.Bump("huntMinions", minions)
+            if (deaths > 0)
+                st.Bump("huntDeaths", deaths)
+        }
     }
 
     ; The hunt's biome ended (b0 -> b): so does the hunt. The new biome is
@@ -2007,6 +2026,15 @@ class MinionsTask {
                 no .= "v"
         }
         k := book.Next(hud, env.Now(), close, no)
+        ; rank V is rare (night 11-18: one Deadeye, 03:38:48): each V read
+        ; and what came of it logged once a stretch, to tell a missed chance
+        rk := (IsObject(hud) && hud.HasOwnProp("rank")) ? hud.rank : ""
+        if (rk = "V" && !(f.HasOwnProp("vSeen") && f.vSeen)) {
+            f.vSeen := true
+            env.Log("minions: combo rank V - " (k = "r" ? "Deadeye" : book.Casting(env.Now()) ? "a cast still on, no Deadeye yet"
+                : (hud.HasOwnProp("air") && hud.air) ? "in the air, no Deadeye" : "Deadeye not ready (" (k = "" ? "nothing" : k) " instead)"))
+        } else if (rk != "V")
+            f.vSeen := false
         this._LearntSave(book)                   ; what it learnt, kept at once (a halt loses nothing)
         if (k != "" && this._QuestSeen())
             return this._ClearView(ctx)
@@ -5641,7 +5669,72 @@ class MinionsTask {
             split += MinionsTask._Split(run[A_Index].row, (a + b) // 2) ? 1 : 0
         Loop f
             bot := Max(bot, run[n - f + A_Index].b - run[n - f + A_Index].a + 1)
-        return (bot * 2 <= top && split * 2 >= q) ? "V" : "?"
+        return (bot * 2 <= top && split * 2 >= q) ? "V" : MinionsTask._RankKind(run)
+    }
+
+    ; Which letter under V (E D C B A, solid strokes, the order they rise in)
+    ; for the log: Deadeye waits for "V" alone, so a wrong guess costs
+    ; nothing. run: the letter's rows ({a, b, row}; 28..45 of them by the
+    ; frame), its box from their ends 15% / 85% of the way through them (a
+    ; row of white scenery joining the run by day, 38_rank_d, and an E's
+    ; bare stem left out). A: its top rows 0.6 of its foot's width or less;
+    ; else a bar across the middle third (B, E) or not (D, C), and the right
+    ; side white down the body (B, D) or not (E, C: a C's curl reaches it
+    ; on half its rows). Unsure (too small a box): "?"
+    static _RankKind(run) {
+        aa := [], bb := []
+        for e in run
+            aa.Push(e.a), bb.Push(e.b)
+        a := MinionsTask._Pct(aa, 0.15), b := MinionsTask._Pct(bb, 0.85)
+        n := run.Length, w := b - a + 1
+        if (n < 8 || w < 8)
+            return "?"
+        q := Max(2, w // 4), x0 := MinionsTask.RankLineX1
+        white := (row, x) => MinionsTask._Low(row[x - x0 + 1]) >= 200
+        side := (row, from, to) => MinionsTask._AnyWhite(row, from, to)
+        ; A: its top a point in the middle, its foot two legs wide apart (an E
+        ; cut off at the top by the grab, 68_rank_e_cut: its stem on the left)
+        k := Max(2, n // 5), topW := 0, footW := 0, topMid := 0
+        Loop k
+            topW += run[A_Index].b - run[A_Index].a + 1, footW += run[n - k + A_Index].b - run[n - k + A_Index].a + 1
+            , topMid += (run[A_Index].a + run[A_Index].b) / 2
+        if (topW <= 0.6 * footW && Abs(topMid / k - (a + b) / 2) <= w / 6)
+            return "A"
+        midBar := false, body := 0, right := 0
+        for i, e in run {
+            t := (i - 1) / (n - 1)
+            c := 0
+            Loop w - 2 * q
+                c += white(e.row, a + q + A_Index - 1) ? 1 : 0
+            bar := c >= 0.6 * (w - 2 * q)
+            if (bar && t >= 0.3 && t <= 0.7)
+                midBar := true
+            if (!bar && t >= 0.2 && t <= 0.8)
+                body++, right += side(e.row, b - q + 1, b) ? 1 : 0
+        }
+        rightOn := body && right >= 0.75 * body
+        return midBar ? (rightOn ? "B" : "E") : (rightOn ? "D" : "C")
+    }
+
+    ; the value at share p (0..1) of a's sorted values
+    static _Pct(a, p) {
+        s := ""
+        for v in a
+            s .= v "`n"
+        a := StrSplit(Sort(RTrim(s, "`n"), "N"), "`n")
+        return Integer(a[Max(1, Min(a.Length, Round(p * (a.Length - 1)) + 1))])
+    }
+
+    ; row (x RankLineX1..) white (_Low >= 200) somewhere in screen x from..to
+    static _AnyWhite(row, from, to) {
+        x := from
+        while (x <= to) {
+            i := x - MinionsTask.RankLineX1 + 1
+            if (i >= 1 && i <= row.Length && MinionsTask._Low(row[i]) >= 200)
+                return true
+            x++
+        }
+        return false
     }
 
     ; the run's rows look like a rank letter: centred, as wide as one,
@@ -6154,6 +6247,14 @@ class MinionSkills {
     static PointsKeepMs := 5000      ; the Charge read last, through a flash
     static EWaitMs := 1500           ; Eden: F ready, E back within this: F waits for E (at most this long)
     static LearnDrop := 0.2          ; an unknown cooldown: overlay width lost between its two reads
+    ; Eden: Voidrush not sooner than this after the last press. Night 11-18,
+    ; 25 V presses: all 17 the game refused came 0-1 s (log seconds) after a
+    ; Taunt or E (the "T straight before V" chain, T's cast is 400 ms but the
+    ; game is not ready again so soon), at 48-100 points; 6 of the 8 that went
+    ; came 2 s or more after the last press, 2 at "1 s". Charge (35..100 on
+    ; both sides) and HP told nothing apart. GUESSED a little long: V's 60 s
+    ; cooldown makes a 2 s wait cheap
+    static VAfterMs := 2000
 
     __New(aura, rows, learnt := "") {
         a := StrLower(Trim(String(aura)))
@@ -6168,6 +6269,7 @@ class MinionSkills {
         this._i := 0
         this._castUntil := 0
         this._rootUntil := 0
+        this._pressAt := ""          ; the last press (VAfterMs)
         this._pts := -1, this._ptsAt := 0
         this._fWait := ""            ; Eden: since when a ready F waits for E ("" = not)
         this._state := Map()         ; key -> {at, est, seen, pts, cds} since its press
@@ -6233,7 +6335,9 @@ class MinionSkills {
             return ""
         if this.eden {
             pts := this._Points(hud, now)
-            if (IsObject(hud) && hud.HasOwnProp("rank") && hud.rank != "" && hud.rank = this._NeedsRank("r") && this._Ready("r", hud, now))
+            ; on the ground too: "You need to be on ground to use this" (the SNOWY
+            ; hand clip), and a refused press would count R as cooling
+            if (this.DeadeyeOn(hud, now) && !(IsObject(hud) && hud.HasOwnProp("air") && hud.air))
                 return "r"
             ; F and E first: V at first contact threw the player off the target (L23 18:05:18, 18:09:50)
             if ((k := this._FirstOfFE(hud, now, no)) != "")
@@ -6249,7 +6353,8 @@ class MinionSkills {
             ; lapses 3.5-4 s after the last hit, so V comes on a live chain
             if (!InStr(no, "t") && (pts < 100 || !InStr(no, "v")) && this._Ready("t", hud, now))
                 return "t"
-            if (!InStr(no, "v") && pts >= this._Cost("v") && !(IsObject(hud) && hud.HasOwnProp("air") && hud.air) && this._Ready("v", hud, now))
+            if (!InStr(no, "v") && pts >= this._Cost("v") && !(IsObject(hud) && hud.HasOwnProp("air") && hud.air) && this._Ready("v", hud, now)
+                && (this._pressAt = "" || now - this._pressAt >= MinionSkills.VAfterMs))
                 return "v"
             return ""
         }
@@ -6284,7 +6389,7 @@ class MinionSkills {
         cast := this.CastMs(k)
         if (k = "f" || k = "e")
             this._fWait := ""
-        this._castUntil := now + cast
+        this._castUntil := now + cast, this._pressAt := now
         if this.Roots(k)
             this._rootUntil := now + cast
         this._state[k] := {at: now, est: now + cast + this._CoolMs(k), seen: false, cds: cds
@@ -6299,6 +6404,9 @@ class MinionSkills {
     Learnt() => (this._learnt.Has(this.aura) && !(this._learnt[this.aura] is Map)) ? this._learnt[this.aura] : ""
 
     _Cost(k) => (IsObject(this.spec) && this.spec.cost.Has(k)) ? this.spec.cost[k] : 0
+    ; the rank Deadeye needs is up (V) and R is ready
+    DeadeyeOn(hud, now) => IsObject(hud) && hud.HasOwnProp("rank") && hud.rank != "" && hud.rank = this._NeedsRank("r") && this._Ready("r", hud, now)
+
     _NeedsRank(k) => (IsObject(this.spec) && this.spec.rank.Has(k)) ? this.spec.rank[k] : ""
     _CoolMs(k) => (IsObject(this.spec) && this.spec.cool.Has(k)) ? this.spec.cool[k] : this._cool.Has(k) ? this._cool[k] : 0
 

@@ -31,8 +31,8 @@ class FixIt {
             , title: "The private server link is not right"
             , fix: "Copy the link again from your private server's Share / Copy Link button. It starts with https://www.roblox.com/.", page: "Settings", act: ""},
         {key: "shift", re: "i)shift lock (may still be on|would not turn off)", n: 2
-            , title: "Shift lock gets stuck on"
-            , fix: "Press Shift once in Roblox to turn shift lock off. If it keeps happening, turn off Shift Lock Switch in Roblox's settings.", page: "", act: ""},
+            , title: "The mouse is stuck in the middle"
+            , fix: "The mouse is stuck in the middle of the screen. If a game window is open (a shop or Captain Flarg's dialog), close it: the macro rejoins by itself after 3 tries. Otherwise press Shift once in Roblox to turn shift lock off.", page: "", act: ""},
         {key: "rejoins", re: "i)rejoin limit reached", n: 1
             , title: "Roblox keeps disconnecting"
             , fix: "Check your internet and Roblox's status page. The macro tries again by itself in a few minutes.", page: "", act: ""},

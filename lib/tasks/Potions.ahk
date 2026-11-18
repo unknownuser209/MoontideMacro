@@ -7,6 +7,7 @@
 #Include %A_LineFile%\..\..\Biomes.ahk
 #Include %A_LineFile%\..\..\Scheduler.ahk
 #Include %A_LineFile%\..\..\Webhook.ahk
+#Include %A_LineFile%\..\..\TileDigits.ahk
 ; ---------------------------------------------------------------------------
 ; PotionsTask: uses the rare biome's potion list (spec 4.6 / 4.6a).
 ; THIS CLICKS "Use" ON REAL POTIONS. Every doubt resolves to NOT clicking.
@@ -150,6 +151,8 @@ class PotionsTask {
 
     static PointIds := ["inv_open", "inv_items_tab", "inv_search", "inv_use"]
     static SearchTries := 3       ; typed searches before tile_not_found (Roblox drops letters)
+    static CountInkScale := 2
+    static CountPad := {x: 5, y: 5}   ; the count box grown by this (a 6-digit count overruns the calibrated box)
     static RectIds := ["inv_tile1_rect", "inv_tile2_rect", "inv_count_rect", "inv_desc_rect"]
     static AmountId := "inv_amount_box"      ; falls back to the rect of an inv_amount_empty recording
     static OcrScale := 2
@@ -235,6 +238,10 @@ class PotionsTask {
     ; it -> no click).
     static ParseCount(s) {
         t := Trim(String(s), " `t`r`n")
+        ; spaces / dots / dashes between digits are dropped (the white-ink
+        ; read lays glyphs apart: 'x 54-1', 'x 112B 42'); commas stay
+        ; (ambiguous: Plan rejects them)
+        t := RegExReplace(t, "(?<=[0-9OoTIl|iSsB])[\s.\-]+(?=[0-9OoTIl|iSsB])", "")
         if RegExMatch(t, "^([xX\x{00D7}]?)\s*([0-9OoTIl|iSsB]+)$", &m) {
             if (m[1] = "" && !RegExMatch(m[2], "\d"))
                 return t
@@ -262,6 +269,11 @@ class PotionsTask {
         this._logFn := d.Has("log") ? d["log"] : ""
         this._io := d.Has("io") ? d["io"] : ""
         this._ocrFn := d.Has("ocr") ? d["ocr"] : ((r, scale := 1) => Ocr.Read(r.x, r.y, r.w, r.h, scale))
+        ; tile counts: white text over the see-through tile (2026-11-18 live:
+        ; plain OCR read x112842 as 'xu25ß7_'; white ink at 4x reads it)
+        ; tile counts by the game font's digit shapes first (TileDigits)
+        this._digitsFn := d.Has("digits") ? d["digits"] : d.Has("ocr") ? ((r) => "") : ((r) => TileDigits.Read(r.x, r.y, r.w, r.h))
+        this._inkFn := d.Has("ink") ? d["ink"] : d.Has("ocr") ? ((r) => "") : ((r) => Ocr.ReadInk(r.x, r.y, r.w, r.h, PotionsTask.CountInkScale, "w"))
         this._amountFn := d.Has("amount") ? d["amount"] : ((r) => this._Ocr(r, 3))     ; amount box text
         this._cal := d.Has("cal") ? d["cal"] : Calibrate
         this._activeFn := d.Has("active") ? d["active"] : (() => WinActive("ahk_exe RobloxPlayerBeta.exe") ? true : false)
@@ -273,6 +285,7 @@ class PotionsTask {
         this._missing := ""
         this._lastCount := ""
         this._lastDesc := ""
+        this._postDesc := ""
         this._preDesc := ""
         ; A corrupt / unwritable usage file turns every potion off: say so
         ; at startup, not only as skips later (2026-10-27 review).
@@ -641,7 +654,7 @@ class PotionsTask {
         if (String(before) != "1" || String(after) = "1")
             return false
         this._Park(cal)
-        if this._safety.NameMatches(this._Ocr(this._TileRect(cal, "inv_tile1_rect", idx)), info.name)
+        if this._safety.NameMatches(this._Ocr(this._NameRect(cal, idx)), info.name)
             return false
         return PotionSafety.Canon(this._Ocr(cal.inv_desc_rect)) !== PotionSafety.Canon(this._lastDesc)
     }
@@ -653,7 +666,7 @@ class PotionsTask {
         id := info.id
         done := (stop) => ({status: "done", stop: stop, before: ""})
         ; 1. the chosen result tile still reads exactly this name
-        seen := this._Ocr(this._TileRect(cal, "inv_tile1_rect", idx))
+        seen := this._Ocr(this._NameRect(cal, idx))
         if !this._safety.NameMatches(seen, info.name) {
             this._Report(biome, id, "skip", "name_mismatch", "", "", "tile " idx " OCR '" PotionsTask._Flat(seen) "'", dry)
             this._Error("Potions: tile " idx " OCR '" PotionsTask._Flat(seen) "' does not match " info.name "; " id " not used")
@@ -819,7 +832,7 @@ class PotionsTask {
         hits := [], present := []
         seen := ""
         Loop n {
-            t := this._Ocr(this._TileRect(cal, "inv_tile1_rect", A_Index))
+            t := this._Ocr(this._NameRect(cal, A_Index))
             if (t != "") {
                 present.Push(A_Index)
                 seen .= (seen = "" ? "" : ", ") A_Index ":'" PotionsTask._Flat(t) "'"
@@ -852,7 +865,7 @@ class PotionsTask {
         if (match.Length > 1)
             return {reason: "tile_ambiguous", extra: hits.Length " tiles read '" info.name "'; " match.Length " have '" info.desc "' in the description"}
         if (match.Length = 0)
-            return {reason: "select_unverified", extra: "after selecting " (hits.Length = 1 ? "the tile" : "each of the " hits.Length " tiles") " reading '" info.name "', no description had '" info.desc "' (dropped click or wrong desc)"}
+            return {reason: "select_unverified", extra: "after selecting " (hits.Length = 1 ? "the tile" : "each of the " hits.Length " tiles") " reading '" info.name "', no description had '" info.desc "' (dropped click or wrong desc; the description read '" PotionsTask._Flat(this._postDesc) "')"}
         if (last != match[1]) {
             r := this._ClickFromOther(info, cal, match[1], present, ctx)
             if (r = "aborted")
@@ -894,6 +907,7 @@ class PotionsTask {
         post := this._OcrStrict(cal.inv_desc_rect)
         if !post.ok
             return "nomatch"
+        this._postDesc := post.text
         return (this._safety.DescMatches(post.text, info.desc)
             && PotionSafety.Canon(post.text) !== PotionSafety.Canon(pre)) ? "match" : "nomatch"
     }
@@ -956,7 +970,7 @@ class PotionsTask {
             return "aborted"
         ok := false
         Loop this._CfgInt("Potions.tileScan", 6, 1, 12) {
-            if (this._Ocr(this._TileRect(cal, "inv_tile1_rect", A_Index)) = "")
+            if (this._Ocr(this._NameRect(cal, A_Index)) = "")
                 continue
             if !this._SelectTile(cal, A_Index, ctx)
                 return "aborted"
@@ -969,7 +983,7 @@ class PotionsTask {
             return "aborted"
         if !ok
             return "unverified"
-        if !this._safety.NameMatches(this._Ocr(this._TileRect(cal, "inv_tile1_rect", k)), info.name)
+        if !this._safety.NameMatches(this._Ocr(this._NameRect(cal, k)), info.name)
             return "unverified"
         if !this._DescIsOther(info, cal)
             return "unverified"
@@ -983,6 +997,21 @@ class PotionsTask {
             return false
         this._Park(cal)
         return this._Wait("afterSelect", ctx)
+    }
+
+    ; The name part of tile k: the tile rect cut off above the count box
+    ; (2026-11-18 live: the tile read 'Lucky / Potion / xli2az,2', a
+    ; 6-digit count read as a third line, so the name never matched).
+    _NameRect(cal, k) {
+        r := this._TileRect(cal, "inv_tile1_rect", k)
+        t := cal.inv_tile1_rect
+        try {
+            c := cal.inv_count_rect
+            cut := c.y - t.y - 1
+            if (cut >= 20 && cut < t.h)
+                r.h := cut
+        }
+        return r
     }
 
     ; Rect of tile k (1-based): the tile-1 rect `id` moved by (k-1) * the
@@ -1061,14 +1090,42 @@ class PotionsTask {
 
     ; Count of tile idx: two reads must parse to the same digits, else "".
     ; this._lastCount = what the two reads said (for reports).
+    ; White-ink reads of the padded box first, the plain reads of the
+    ; calibrated box when those do not agree.
     _ReadCount(cal, idx, ctx) {
         r := this._TileRect(cal, "inv_count_rect", idx)
-        a := this._Ocr(r)
+        pad := PotionsTask.CountPad
+        p := {x: r.x - pad.x, y: r.y - pad.y, w: r.w + 2 * pad.x, h: r.h + 2 * pad.y}
+        a := "", b := ""
+        try a := String(this._digitsFn.Call(p))
         this._Wait("countReread", ctx)
-        b := this._Ocr(r)
+        try b := String(this._digitsFn.Call(p))
+        if (RegExMatch(a, "^\d{1,9}$") && a == b) {
+            this._lastCount := "'" a "' / '" b "' (digits)"
+            return a
+        }
+        a := this._InkOcr(p)
+        this._Wait("countReread", ctx)
+        b := this._InkOcr(p)
         pa := PotionsTask.ParseCount(a), pb := PotionsTask.ParseCount(b)
-        this._lastCount := "'" PotionsTask._Flat(a) "' / '" PotionsTask._Flat(b) "'"
+        if (RegExMatch(pa, "^\d{1,9}$") && pa == pb) {
+            this._lastCount := "'" PotionsTask._Flat(a) "' / '" PotionsTask._Flat(b) "'"
+            return pa
+        }
+        a2 := this._Ocr(r)
+        this._Wait("countReread", ctx)
+        b2 := this._Ocr(r)
+        pa := PotionsTask.ParseCount(a2), pb := PotionsTask.ParseCount(b2)
+        this._lastCount := "'" PotionsTask._Flat(a) "' / '" PotionsTask._Flat(b) "' (ink), '" PotionsTask._Flat(a2) "' / '" PotionsTask._Flat(b2) "'"
         return (RegExMatch(pa, "^\d{1,9}$") && pa == pb) ? pa : ""
+    }
+
+    _InkOcr(rect) {
+        try {
+            return String(this._inkFn.Call(rect))
+        } catch {
+            return ""
+        }
     }
 
     ; Click a text box, empty it, type text (one char per gap).

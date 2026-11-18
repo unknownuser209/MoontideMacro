@@ -56,6 +56,8 @@ class DailyQuestsTask {
     static PollMs := 150
     static HoverMs := 150
     static SelectMs := 500        ; after a row click (the panel redraws)
+    static PanelTries := 4        ; panel reads before a row is left alone
+    static PanelRetryMs := 300
     static ClaimMs := 700
     static RerollMs := 1000
     static MaxRerolls := 3        ; per row per run
@@ -63,7 +65,16 @@ class DailyQuestsTask {
     ; "Use 10 Lucky Potion" (2026-11-17): its progress is the row's bar (the
     ; "0/10" on it is too small to read): white fill from BarX0, the count
     ; text drawn over TextX0..TextX1 (real frame daily_quests_buy_reroll_1440)
-    static UseRe := "i)^\s*use\s+(\d+)\s+(.+?)\s*$"
+    ; the count in the game font reads 'IO' / 'l0' for 10 (live 2026-11-18)
+    static UseRe := "i)^\s*use\s+([0-9IlOo|]{1,3})\s+(.+?)\s*$"
+    ; 'IO' / 'l0' / '1O' -> 10; "" when it holds no digit at all (a word)
+    static Count(s) {
+        s := String(s)
+        if !RegExMatch(s, "[0-9]") && !RegExMatch(s, "^[IlOo|]*[Il|][IlOo|]*$")
+            return ""
+        s := RegExReplace(RegExReplace(s, "[Il|]", "1"), "[Oo]", "0")
+        return RegExMatch(s, "^\d+$") ? Integer(s) : ""
+    }
     static BarX0 := 1068, BarX1 := 1875, BarDy := 34
     static TextX0 := 1433, TextX1 := 1516
     static UseMax := 25
@@ -105,10 +116,11 @@ class DailyQuestsTask {
     }
 
     ; A quest name holds one of the words (whole words, normalised).
+    ; The game font's a reads as o ('Ploy Sol's RNG'): both sides folded.
     static Wanted(name, words) {
-        n := " " QuestMatch.Norm(name) " "
+        n := " " QuestMatch.Fold(QuestMatch.Norm(name)) " "
         for w in words
-            if InStr(n, " " w " ")
+            if InStr(n, " " QuestMatch.Fold(w) " ")
                 return false
         return true
     }
@@ -221,10 +233,10 @@ class DailyQuestsTask {
     _PotionQuest(y, name) {
         env := this._env
         on := env.cfg.Get("DailyQuests.usePotions", 0)
-        if !(IsObject(this._potionFn) && IsNumber(on) && on != 0 && RegExMatch(name, DailyQuestsTask.UseRe, &m))
+        if !(IsObject(this._potionFn) && IsNumber(on) && on != 0 && RegExMatch(name, DailyQuestsTask.UseRe, &m)
+            && (n := DailyQuestsTask.Count(m[1])) != "")
             return false
-        n := Integer(m[1])
-        potion := RegExReplace(Trim(m[2]), "i)(potion)s$", "$1")
+        potion := RegExReplace(Trim(QuestMatch.FixK(m[2])), "i)(potion)s$", "$1")     ; 'Lucl<<y' -> Lucky
         if (n < 1 || n > DailyQuestsTask.UseMax) {
             env.Log("daily quests: '" name "' wants " n " uses: left alone (" DailyQuestsTask.UseMax " at most)")
             return true
@@ -354,17 +366,26 @@ class DailyQuestsTask {
             return false
         if !env.Wait(DailyQuestsTask.SelectMs, ctx)
             return false
-        b := DailyQuestsTask.PanelBox
-        panel := (env.ocrFn)(b.x, b.y, b.w, b.h)
-        if (y = DailyQuestsTask.BonusY || DailyQuestsTask.Same(panel, name))
+        if (y = DailyQuestsTask.BonusY)
             return true
+        ; the panel can still be redrawing after SelectMs (live 2026-11-18
+        ; 05:36: 'RNG for minutes verloe' for "Play Sol's RNG for 10
+        ; minutes"): read again a few times before leaving it
+        b := DailyQuestsTask.PanelBox
+        Loop DailyQuestsTask.PanelTries {
+            panel := (env.ocrFn)(b.x, b.y, b.w, b.h)
+            if DailyQuestsTask.Same(panel, name)
+                return true
+            if (A_Index < DailyQuestsTask.PanelTries && !env.Wait(DailyQuestsTask.PanelRetryMs, ctx))
+                return false
+        }
         env.Log("daily quests: '" name "' did not show on the left (read '" StrReplace(panel, "`n", " ") "'): left alone")
         return false
     }
 
     ; The panel's text is the row's quest (letters only; the panel wraps).
     static Same(panel, name) {
-        a := RegExReplace(StrLower(panel), "[^a-z]"), b := RegExReplace(StrLower(name), "[^a-z]")
+        a := QuestMatch.Fold(RegExReplace(StrLower(panel), "[^a-z]")), b := QuestMatch.Fold(RegExReplace(StrLower(name), "[^a-z]"))
         if (a = "" || b = "")
             return false
         return InStr(a, b) || QuestMatch.Similarity(a, b) >= DailyQuestsTask.MatchMin

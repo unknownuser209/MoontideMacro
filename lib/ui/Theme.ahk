@@ -371,6 +371,18 @@ class Theme {
         return RegExReplace(A_LineFile, "\\lib\\ui\\[^\\]+$", "") "\assets\" name
     }
 
+    ; A window size in Gui units -> screen px. A Gui (DPIScale on) grows its
+    ; w / h with the Windows scale, but a Show x / y is plain screen px: a
+    ; spot worked out from the size must use this (1920x1080 at 125%: the
+    ; card / overlay put "W px from the right" ran off the screen).
+    ; DpiFn: tests set it (A_ScreenDPI is read-only).
+    static DpiFn := () => A_ScreenDPI
+    static Dpi(n) {
+        d := 96
+        try d := Theme.DpiFn.Call()
+        return Round(n * ((IsNumber(d) && d > 0) ? d : 96) / 96)
+    }
+
     ; "RRGGBB" -> COLORREF (0x00BBGGRR)
     static BGR(hex) {
         v := Integer("0x" hex)

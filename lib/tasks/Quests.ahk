@@ -84,7 +84,15 @@ class QuestsTask {
     static OpenWaitMs := 2000      ; board text must appear within this after E
     static PollMs := 250
     static TitleUp := 130          ; px above quest_board_rect that hold the quest title
-    static NoQuestRe := "i)\bno\b.{0,20}\bquests?\b|\bquests?\b.{0,30}\b(?:empty|come back|none)\b"
+    ; the game font's Q reads as O ("No Ouests to ...", live 2026-11-18 06:07)
+    ; Its small line "There's no quest to see. (Quests are created in every
+    ; 1 hour)" read through Eden's skill list (NoticeInk): 'no queguuo gee.
+    ; ... rn every I nour' (real frame quest_notify_noquests_skills_1440)
+    static NoQuestRe := "i)\bno\b.{0,20}\b[qo0]uests?\b|\b[qo0]uests?\b.{0,30}\b(?:empty|come back|none)\b|\bno\s+q[uo]e|\bev[ae]ry\s+\S{1,2}\s+[nh]?[o0]ur\b"
+    ; the notification lies UNDER Eden's skill list (live 2026-11-18 09:51 -
+    ; 09:57: the board was empty, the read was 'Cut Into Nothing Impole' and
+    ; the board walked to twice): its white words alone, at 2x
+    static NoticeInk := 230
     static Button := {dx: -120, dy: -30, w: 240, h: 60}   ; OCR box around quest_accept
     static ExitBox := {dx: -120, dy: -30, w: 240, h: 60}  ; OCR box around quest_close
     static ExitRe := "i)ex[il1|]t"
@@ -99,6 +107,9 @@ class QuestsTask {
         ; deps "cards": (ctx) => true when it closed a fishing catch card (App:
         ; the fishing task's leftovers); "" = none
         this._cards := (IsObject(deps) && deps.HasOwnProp("cards")) ? deps.cards : ""
+        ; the button's colour (ButtonColour): read from the screen in the
+        ; real task, from deps "rect" in tests; a faked ocr without one: none
+        this._colourOn := !(IsObject(deps) && deps.HasOwnProp("ocr")) || (IsObject(deps) && deps.HasOwnProp("rect"))
     }
 
     CanRun(state) {
@@ -242,6 +253,12 @@ class QuestsTask {
         return ""
     }
 
+    ; The quest panel's text: "Objects", or a title's worth of letters. A
+    ; scrap the world gives ('lil' off a house sign, live 2026-11-18 10:07)
+    ; is no board: it was taken as open and the "No Quests" notification
+    ; under it was never read.
+    static PanelUp(t) => RegExMatch(String(t), "i)[o0]bjects") || StrLen(RegExReplace(String(t), "[^A-Za-z]")) >= 6
+
     ; -> 1 board text seen, 0 not within OpenWaitMs, -1 stopped.
     _WaitOpen(ctx, area) {
         env := this._env
@@ -251,7 +268,7 @@ class QuestsTask {
         n := env.cal.Rect("notify_rect")
         waited := 0
         Loop {
-            if (Trim((env.ocrFn)(area.x, area.y, area.w, area.h)) != "")
+            if QuestsTask.PanelUp((env.ocrFn)(area.x, area.y, area.w, area.h))
                 return 1
             if IsObject(n) {
                 t := (env.ocrFn)(n.x, n.y, n.w, n.h)
@@ -259,6 +276,14 @@ class QuestsTask {
                     this._notice := t
                 if RegExMatch(t, QuestsTask.NoQuestRe)
                     return 0                        ; the game says the board is empty
+                if (Trim(t) != "") {                ; something there (the skill list?): its white words alone
+                    k := ""
+                    try k := String((env.inkFn)(n.x, n.y, n.w, n.h, 2, QuestsTask.NoticeInk))
+                    if RegExMatch(k, QuestsTask.NoQuestRe) {
+                        this._notice := k
+                        return 0
+                    }
+                }
             }
             if (waited >= QuestsTask.OpenWaitMs)
                 return 0
@@ -296,30 +321,114 @@ class QuestsTask {
     ; "claim" | "active" (accepted / in progress) | "accept" | "".
     ; The game font draws "a" like "o" and l like I: "Claim Rewards" reads
     ; "Cloim Rewords" / "CIoim" (2026-10-27 review).
-    static ClaimRe := "i)c[lI1|][ao]im|rew[ao]rd"
+    ; Claim Rewards cut at the box's left edge reads 'aim Rewords' / 'loim
+    ; Re%ords' / 'aim Revvrds' (real frames day1118, 2560x1440)
+    static ClaimRe := "i)c[lI1|][ao]im|rew[ao]rd|[lI1|]?[ao]im\s*re|\bre\S{1,3}[ao]?rds?\b"
+    static ActiveRe := "i)accepted|in progress|[ao]ctive|tr[ao]cking"
+    ; 'Accep t' (split by the skill list), and the halves the night of
+    ; 2026-11-18 read: 'ccep', 'cc:eap', 'AcceOVrl<', 'AccegL', '-xcceel'.
+    ; No other word on that spot (Claim Rewards, Dismiss, Eden's skills)
+    ; holds "cce".
+    static AcceptRe := "i)a\s?c\s?c\s?e\s?p\s?t|cc\W?e"
+
+    ; The verdict of one button read -> "claim" | "active" | "accept" | ""
+    static WordOf(t) {
+        t := String(t)
+        if RegExMatch(t, QuestsTask.ClaimRe)
+            return "claim"
+        if RegExMatch(t, QuestsTask.ActiveRe)
+            return "active"
+        if RegExMatch(t, QuestsTask.AcceptRe)
+            return "accept"
+        return ""
+    }
+
     _ButtonWord(pt) {
         env := this._env
         b := QuestsTask.Button
         t := (env.ocrFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h)
         this._btnRaw := String(t)
-        if RegExMatch(t, QuestsTask.ClaimRe)
-            return "claim"
-        if RegExMatch(t, "i)accepted|in progress|[ao]ctive|tr[ao]cking")
-            return "active"
-        ; 'Accep t': split by the skill list over it (live 2560x1440)
-        if RegExMatch(t, "i)a\s?c\s?c\s?e\s?p\s?t")
-            return "accept"
+        w := QuestsTask.WordOf(t)
         ; the skill list's white names over it ('rkmot'): its green word
-        ; alone (Accept / Claim Rewards are green; 'Accevi' at 2560x1440)
-        if RegExMatch(t, QuestsTask.SkillRe) {
+        ; alone (Accept is green; 'Accevi' at 2560x1440)
+        if (w = "" && RegExMatch(t, QuestsTask.SkillRe)) {
             g := String((env.inkFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h, 2, "g"))
             this._btnRaw .= " / green '" g "'"
-            if RegExMatch(g, QuestsTask.ClaimRe)
-                return "claim"
-            if RegExMatch(g, "i)acce[pv]")
-                return "accept"
+            w := QuestsTask.WordOf(g)
+            if (w = "active")
+                w := ""
         }
-        return ""
+        if (w = "active")
+            return w
+        ; the button's own colour (Accept green, Claim Rewards yellow): reads
+        ; under a toast or the skill list, where the words do not. Claim's
+        ; yellow also overrules a misread "accept": Dismiss never follows a
+        ; yellow button (it would abandon a finished quest).
+        c := this._ButtonColour(pt)
+        if (c != "") {
+            this._btnRaw .= " / " (c = "accept" ? "green" : "yellow") " button"
+            if (w = "" || (w = "accept" && c = "claim"))
+                w := c
+        }
+        return w
+    }
+
+    ; The Accept spot's pixels -> "accept" (green words, the Dismiss button's
+    ; red beside them), "claim" (yellow) or "" (unknown / not checked).
+    _ButtonColour(pt) {
+        if !this._colourOn
+            return ""
+        b := QuestsTask.Button
+        arr := "", dis := ""
+        try arr := (this._env.rectFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h)
+        if !(arr is Array && arr.Length = b.w * b.h)
+            return ""
+        dp := ""
+        try dp := this._env.cal.Point("quest_dismiss")
+        if IsObject(dp)                     ; read like quest_accept (the panel's mode)
+            try dis := (this._env.rectFn)(dp.x + b.dx, dp.y + b.dy, b.w, b.h)
+        return QuestsTask.ButtonColour(arr, dis)
+    }
+
+    ; Pure: pixels (0xRRGGBB) of the button box (and of the Dismiss button's
+    ; box, dis) -> "accept" | "claim" | "".
+    ; Accept's word and frame are green (0,240,96; under Eden's skill list
+    ; 48,160,48), Claim Rewards' yellow (245,226,58; under the skill list
+    ; 110,95,30), on the panel's dark fill (real frames: ~7-14% text pixels
+    ; of one colour, none of the other, 70%+ dark). Grass seen through the
+    ; skill list is bluer (80,208,128) and has no dark fill. "accept" lets an
+    ; unticked quest be dismissed, so it also needs the board's own Dismiss
+    ; red beside it (a bright green wall behind the skill list, no board,
+    ; read as green: live 2026-11-18 10:07). Under a toast AND the skill
+    ; list the green is too faint to tell: "" (left alone).
+    static ButtonColour(arr, dis := "") {
+        n := arr.Length, g := 0, y := 0, d := 0
+        if (n < 100)
+            return ""
+        for c in arr {
+            r := (c >> 16) & 255, gr := (c >> 8) & 255, bl := c & 255
+            if (gr >= 120 && gr - r >= 70 && bl * 2 <= gr)
+                g++
+            else if ((r >= 190 && gr >= 170 && bl <= 110 && Abs(r - gr) <= 70)
+                || (r >= 80 && gr * 10 >= r * 7 && gr * 100 <= r * 105 && bl * 2 <= gr))
+                y++
+            if (Max(r, gr, bl) < 90)
+                d++
+        }
+        if (d < n * 0.2)
+            return ""
+        lo := n * 0.02, hi := n * 0.3, other := n * 0.003
+        if (y >= lo && y <= hi && g <= other)
+            return "claim"
+        if !(g >= lo && g <= hi && y <= other && dis is Array && dis.Length >= 100)
+            return ""
+        red := 0
+        for c in dis {
+            r := (c >> 16) & 255, gr := (c >> 8) & 255, bl := c & 255
+            if (r >= 100 && r * 10 >= gr * 22 && r * 10 >= bl * 22)
+                red++
+        }
+        return (red >= dis.Length * 0.02) ? "accept" : ""
     }
 
     ; -> Array of "accepted X" / "dismissed X" / "claimed rewards for X" strings.
@@ -394,10 +503,13 @@ class QuestsTask {
                 id := (action = "dismiss") ? "quest_dismiss" : "quest_accept"   ; Claim Rewards = the Accept spot
                 pt := env.Point(id)
                 if (pt != "") {
+                    ; an unread button is clicked only on the Accept spot (a
+                    ; ticked quest): that spot holds Accept or Claim Rewards,
+                    ; either is safe; Dismiss needs the word or the colour
                     env.Click(pt)
                     verb := (action = "turnin") ? "claimed rewards for" : (action = "accept") ? "accepted" : "dismissed"
                     done.Push(verb " " name)
-                    env.Log("quests: " verb " " name)
+                    env.Log("quests: " verb " " name (word = "" ? " (button unread: pressed the Accept / Claim Rewards spot)" : ""))
                 } else {
                     env.Log("quests: skipped " action " for " name)
                 }
@@ -408,6 +520,12 @@ class QuestsTask {
                 ; a claim may remove the quest: move on only if it is still shown
                 if (QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h)) != key)
                     continue
+                ; still shown after Claim Rewards: not finished yet (live
+                ; 09:09 / 09:25: the same quest "claimed" visit after visit)
+                if (action = "turnin" && pt != "") {
+                    done.Pop()
+                    env.Log("quests: " name " is not finished yet (it stayed on the board after Claim Rewards)")
+                }
             }
             if !IsObject(nextPt)
                 break

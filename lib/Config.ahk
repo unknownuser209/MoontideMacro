@@ -161,7 +161,9 @@ class Config {
         ob["enabled"] := "0"
         ob["intervalMin"] := "10"     ; minutes between obby runs (1..120)
         ob["route"] := "obby"         ; routes.json route that walks to the obby
-        ob["retries"] := "1"          ; extra tries after a failed run
+        ob["retries"] := "2"          ; extra tries after a failed run (2: a recorded walk misses ~1 in 2 from the random spawn spot)
+        ob["align"] := ""             ; "key:ms, ..." (w a s d) held after the camera reset, before the route: "" = off
+        ob["alignOffset"] := ""       ; the same, after align: from the aligned spot to where the recording starts
         d["Obby"] := ob
         ; Daily Quests (lib/tasks/DailyQuests.ahk): claim the finished ones,
         ; reroll (free rerolls only) the ones holding a word of reroll.

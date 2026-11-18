@@ -899,6 +899,13 @@ class Input {
             if (s = 1) {                         ; zoomed out, now shift lock itself
                 Input._ShiftTap(io)
                 s := Input.ShiftLockOn(io, ctx)
+                ; that tap did not free it either: shift lock is not what
+                ; pins the cursor (a game window that holds the mouse, e.g.
+                ; Captain Flarg's dialog left open, live 2026-11-18 08:41).
+                ; Undone, so the odd tap does not leave shift lock ON for
+                ; real once that window goes.
+                if (s = 1)
+                    Input._ShiftTap(io)
             }
             if (s = 0)
                 Input._Log("input: the camera was in first person (cursor pinned) - zoomed out")

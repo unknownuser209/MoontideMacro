@@ -426,6 +426,37 @@ Test_Obby_RetryThenError() {
     AssertTrue(InStr(o.wh.sent[o.wh.sent.Length].desc, "never showed"), "errors webhook says why")
 }
 
+; the start alignment (Obby.align, then Obby.alignOffset): w a s d holds of
+; 1..AlignMaxMs ms, anything else left out; off by default
+Test_Obby_ParseAlign() {
+    a := ObbyTask.ParseAlign(" D:1500 ,s : 800, q:100, d:0, d:9000, x, a:5000")
+    s := ""
+    for h in a
+        s .= h.k h.ms " "
+    AssertEq(s, "d1500 s800 a5000 ", "w a s d with 1..5000 ms only")
+    AssertEq(ObbyTask.ParseAlign("").Length, 0, "empty: none")
+    AssertEq(ObbyTask.AlignSteps(QmCfg(Map(), Map())).Length, 0, "no settings: off")
+    st := ObbyTask.AlignSteps(QmCfg(Map("Obby.align", "d:1500,s:800", "Obby.alignOffset", "w:200"), Map()))
+    t := ""
+    for x in st
+        t .= x[1] x[2] x[3] " "
+    AssertEq(t, "ddown1500 dup" ObbyTask.AlignGapMs " sdown800 sup" ObbyTask.AlignGapMs " wdown200 wup" ObbyTask.AlignGapMs " ", "align, then the offset")
+}
+
+; every run (the retry too) holds the alignment after the respawn, before the route
+Test_Obby_AlignBeforeEveryRun() {
+    o := QmObbyTask("Glock", Map("Obby.retries", 1, "Obby.align", "d:1500,s:700", "Obby.alignOffset", "a:120"))
+    o.s.blessing := false
+    o.t.Run(SchedCtx())
+    AssertEq(QmObbyDowns(o.io, "d") " " QmObbyDowns(o.io, "s") " " QmObbyDowns(o.io, "a"), "2 2 2", "each run aligned (2 runs)")
+    AssertTrue(QmObbyFirst(o.io, "down d") < QmObbyFirst(o.io, "down s") && QmObbyFirst(o.io, "down s") < QmObbyFirst(o.io, "down a")
+        && QmObbyFirst(o.io, "down a") < QmObbyFirst(o.io, "down w"), "d, s, the offset a, then the route")
+    p := QmObbyTask("Glock", Map("Obby.retries", 0))
+    p.s.blessing := false
+    p.t.Run(SchedCtx())
+    AssertEq(QmObbyDowns(p.io, "d") + QmObbyDowns(p.io, "s"), 0, "off by default: no hold before the route")
+}
+
 Test_Obby_RetriesAreClamped() {
     o := QmObbyTask("Glock", Map("Obby.retries", 99))
     o.s.blessing := false
@@ -1299,6 +1330,12 @@ Test_Obby_NameReadRarityOnTheSameLine() {
     AssertEq(ObbyTask.NameRead("Sailor 12poopoo", "Sailor"), "same", "digits, no comma (live 2560x1440)")
     AssertEq(ObbyTask.NameRead("Sailor npoopoo", "Sailor"), "same", "no digit, no comma (live 2560x1440)")
     AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor in", "Sailor in '2,000`""], "Sailor"), "same", "a bare 'in' left of the rarity (live 2560x1440)")
+    AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor", "Sailor`nin", ""], "Sailor"), "same", "the rarity's 'in' alone on its own line (live 2026-11-18 11:39)")
+    AssertEq(ObbyTask.NameVerdict(["Sailor STA in 12poo,ooo", "Sailor MED STA-", "Sailor MED STA"], "Sailor"), "same", "the board's STAT cut short, its garbled word before it (live 12:58)")
+    AssertEq(ObbyTask.NameRead("EQUINOX", "EQUINOX"), "same", "an all-caps name alone is kept")
+    AssertTrue(ObbyTask.NameVerdict(["Sailor: Admiral", "Sailor`nin", ""], "Sailor") != "same", "the Admiral at one scale: never Sailor")
+    AssertEq(ObbyTask.NameRead("Fin", "Fin"), "same", "a short name ending in 'in' is kept")
+    AssertEq(ObbyTask.NameRead("Infinity`n1 in", "Infinity"), "same", "a name's 'In' kept, the rarity's 'in' dropped")
     AssertEq(ObbyTask.NameVerdict(["Sailor 12poopoo", "Sailor in 12,ooopoa", "Sailor"], "Sailor"), "same", "live 11:48:57 triple")
     AssertEq(ObbyTask.NameVerdict(["Sailor", "Sailor npoopoo", "Sailor"], "Sailor"), "same", "one scale with the rarity no longer vetoes")
     AssertEq(ObbyTask.NameRead("Poseidon", "Poseidon"), "same", "a real name with po is kept")
@@ -1425,6 +1462,11 @@ Test_Obby_BoardTextBehindTheNameIgnored() {
     AssertEq(ObbyTask.NameRead("Sailor: Admiral :TED STAT", "Sailor"), "other", "another Sailor stays other")
     AssertEq(ObbyTask.NameRead("SAILOR", "Sailor"), "same", "a caps read of the name itself kept")
     AssertEq(ObbyTask.NameRead("TED STAT", "Sailor"), "unread", "only board text: unread")
+    ; 2026-11-18 14:02-14:03: the board glued to the name, in mixed case: the obby was skipped
+    AssertEq(ObbyTask.NameVerdict(["CTED sTATSailor", "Sailor CTED STAT", "Sailor eTED STAT 12ß00,OOO"], "Sailor"), "same", "glued and mixed-case board (live 14:02)")
+    AssertEq(ObbyTask.NameVerdict(["Sailor CTED STAT 12,ooopoo", "Sailor CTED STAT", "Sailor eTED STAT"], "Sailor"), "same", "the 14:03 reads")
+    AssertEq(ObbyTask.NameRead("CTED sTATSailor: Admiral", "Sailor"), "other", "Sailor: Admiral behind the glued board stays other")
+    AssertEq(ObbyTask.NameRead("Fated", "Fated"), "same", "a name ending in -ted is no board piece")
 }
 
 ; speed (2026-11-17): a route that always misses walked twice every obby;
