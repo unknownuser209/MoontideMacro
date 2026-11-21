@@ -57,12 +57,14 @@ class LmInvIO extends QmIO {
 
 ; opts: tile, desc (inventory OCR), findAfter (Eden's dialog shows after N
 ; find() calls; 0 = never), route (limbo_eden steps or ""), io (QmIO-like;
-; an LmInvIO's inventory tabs read while it is open). m.box.tile / .desc
-; change what the inventory shows.
+; an LmInvIO's inventory tabs read while it is open; default a new LmInvIO:
+; the crack is used only once the inventory reads open), shot (what the
+; screenshot dep returns). m.box.tile / .desc change what the inventory
+; shows; m.reads lists every inventory read's scale.
 LmMake(opts := "") {
     o := (opts is Map) ? opts : Map()
     get := (k, d) => o.Has(k) ? o[k] : d
-    m := {io: get("io", QmIO()), wh: QmWh(), logs: [], finds: 0, island: 0, shots: 0}
+    m := {io: get("io", LmInvIO()), wh: QmWh(), logs: [], finds: 0, island: 0, shots: 0, reads: []}
     m.state := SchedState()
     routes := Map()
     r := get("route", [["w", "down", 100], ["w", "up", 0]])
@@ -72,13 +74,14 @@ LmMake(opts := "") {
     m.box := box
     io := m.io
     findAfter := get("findAfter", 0)
+    shot := get("shot", "")
     m.t := LimboTask({cfg: QmCfg(Map("Limbo.enabled", get("enabled", 1)), Map("routes", routes))
         , io: m.io, webhook: m.wh, cal: LmCal(), log: (s) => m.logs.Push(s)
-        , ocr: (x, y, w, h, scale := 1) => (x = 200) ? box.tile : (x = 300) ? box.desc
-            : (x = 20 && y = 85 && HasProp(io, "open") && io.open) ? "Gears   Items" : ""
+        , ocr: (x, y, w, h, scale := 1) => (x = 200 || x = 300) ? (m.reads.Push(scale), x = 200 ? box.tile : box.desc)
+            : (x = 20 && y = 85 && HasProp(io, "open") && io.open && !(HasProp(io, "loading") && io.loading)) ? "Gears   Items" : ""
         , find: (x, y, w, h, re, scale := 1) => (++m.finds, (findAfter && m.finds >= findAfter && RegExMatch("Contract with it", re)) ? {x: 1300, y: 1258, text: "Contract with it"} : "")
         , toIsland: get("toIsland", true) ? ((ctx) => (++m.island, true)) : ""
-        , shot: () => (++m.shots, "")})
+        , shot: () => (++m.shots, shot)})
     return m
 }
 
@@ -371,4 +374,208 @@ Test_Limbo_SwitchedOffInLimboGoesBack() {
     AssertEq(m3.t.Run(LmCtx()), 0, "could not go back")
     AssertEq(m3.state.inLimbo, false, "inLimbo cleared: the other tasks are not blocked forever")
     AssertEq(m3.wh.Count("errors"), 1, "the user is told to rejoin")
+}
+
+; ---- the Portable Crack in the game font (live 2026-11-20) -----------------
+; A user (1920x1080) and a live run (2560x1440) never used the crack: the
+; tile reads "Portoble / Crock" (the game font's a reads as o) and its
+; description "It always guides you to the end of the living world." has
+; none of crack / limbo / void. Real frames: tests\screens\inv_crack_*
+; (<what>_<height>_x<ox>_y<oy>.png = a crop whose top left is screen ox,
+; oy; the 1080 ones are the 1440 ones scaled x0.75, Lanczos).
+
+LmLogHas(m, re) {
+    for s in m.logs
+        if RegExMatch(s, re)
+            return true
+    return false
+}
+
+LmLogText(m) {
+    s := ""
+    for l in m.logs
+        s .= " | " l
+    return s
+}
+
+Test_Limbo_CrackTileMatchRules() {
+    for s in ["Portoble`nCrock", "Portable`nCrack", "Pnrtnble`nCrock", "Portoble Crocl<", "Portable`nCr0ck"
+        , "PORTABLE CRACK", "Portoble`nCrock`nx1", "Portable Grock"]
+        AssertTrue(LimboTask.IsCrackTile(s), "crack tile: " StrReplace(s, "`n", " / "))
+    ; never another item, "portable" alone included (the Portable Device)
+    for s in ["", "Portable`nDevice", "Portoble`nDevice", "Strange`nController", "Biome`nRandomizer", "Lucky`nPotion"
+        , "Fortune`nPotion", "Heavenly`nPotion", "Oblivion`nPotion", "Void Coin", "Rock", "Clock", "Empty.", "x1"]
+        AssertTrue(!LimboTask.IsCrackTile(s), "not the crack: " StrReplace(s, "`n", " / "))
+    AssertEq(RegExMatch("Portoble`nCrock", "i)crack"), 0, "the old rule never matched the game font")
+}
+
+Test_Limbo_CrackDescMatchRules() {
+    for s in ["It always guides you to the end of the living world.", "It always guides you to the end of the living H)rld."
+        , "It guides you to the end the living", "tt guides you to the end the living", "Opens a crack into THE LIMBO"]
+        AssertTrue(LimboTask.IsCrackDesc(s), "crack description: " s)
+    for s in ["", "Empty.", "Ern*y.", "Gives you [Lucky]", "Gives you [Heavenly] for 1 roll", "Changes the biome"
+        , "Place it to raise the luck of everyone nearby"]
+        AssertTrue(!LimboTask.IsCrackDesc(s), "not the crack's: " s)
+    AssertEq(RegExMatch("It always guides you to the end of the living world.", "i)crack|limbo|void"), 0, "the old rule missed the real text")
+}
+
+; The task's own reads (LimboTask._ReadIs: ReadScales in turn) with the real
+; OCR on the frames, through the user's calibration (2560x1440 design px:
+; inv_tile1_rect 1076,578 110x112, inv_desc_rect 648,812 367x243), at
+; 2560x1440 and at 1920x1080 (Screen maps the rects as in the game).
+Test_Limbo_RealFramesFindAndProveTheCrack() {
+    tileR := {x: 1076, y: 578, w: 110, h: 112}, descR := {x: 648, y: 812, w: 367, h: 243}
+    for res in ["1440_x620_y360", "1080_x465_y270"] {
+        RegExMatch(res, "^(\d+)_x(\d+)_y(\d+)$", &m)
+        hi := (m[1] = "1440")
+        try {
+            Screen.SetClient(-Integer(m[2]), -Integer(m[3]), hi ? 2560 : 1920, hi ? 1440 : 1080)
+            dir := A_ScriptDir "\screens\inv_crack_"
+            reads := Map()
+            for f in ["searched", "selected"] {
+                p := dir f "_" res ".png"
+                AssertTrue(FileExist(p), "frame " f " " res)
+                t := LimboTask({io: QmIO(), ocr: (x, y, w, h, scale := 1) => Ocr.ReadFile(p, x, y, w, h, scale)})
+                tile := "", desc := ""
+                AssertTrue(t._ReadIs(tileR, "tile", &tile), res " " f ": the first tile is the crack (read '" LimboTask._Short(tile) "')")
+                okD := t._ReadIs(descR, "desc", &desc)
+                if (f = "selected")
+                    AssertTrue(okD, res ": the selected crack's description (read '" LimboTask._Short(desc) "')")
+                else
+                    AssertTrue(!okD, res ": nothing selected yet, no description (read '" LimboTask._Short(desc) "')")
+                reads[f] := {tile: tile, desc: desc}
+            }
+            ; RED before the fix: the old rules on the same first reads
+            sel := dir "selected_" res ".png"
+            d1 := Ocr.ReadFile(sel, descR.x, descR.y, descR.w, descR.h, 1)
+            AssertEq(RegExMatch(d1, "i)crack|limbo|void"), 0, res ": the old description rule fails on '" LimboTask._Short(d1) "'")
+            if hi {
+                t1 := Ocr.ReadFile(sel, tileR.x, tileR.y, tileR.w, tileR.h, 1)
+                AssertEq(RegExMatch(t1, "i)crack"), 0, res ": the old tile rule fails on '" LimboTask._Short(t1) "'")
+            }
+        } finally
+            Screen.Reset()
+    }
+}
+
+; ---- diagnostics (2026-11-20: a report could not say what was read) --------
+
+Test_Limbo_InventoryNotOpenIsSaid() {
+    m := LmMake(Map("io", QmIO()))          ; its tabs never read: the inventory did not open
+    m.t.CanRun(m.state)
+    AssertEq(m.t.Run(LmCtx()), 0, "not entered")
+    AssertEq(m.io.Index("type P"), 0, "nothing typed into the world")
+    AssertTrue(LmLogHas(m, "the inventory did not open \(check the inv_open point\)"), "said: " LmLogText(m))
+    AssertEq(m.wh.Count("errors"), 1, "reported")
+    AssertEq(m.io.Index("move 130,130"), 0, "Use never clicked")
+}
+
+Test_Limbo_NoTileSaysWhatItReadWithAScreenshot() {
+    m := LmMake(Map("tile", "Lucky`nPotion", "desc", "Gives you [Lucky]", "shot", "C:\Users\someone\AppData\Local\Temp\vesper_shot_1.png"))
+    m.t.CanRun(m.state)
+    AssertEq(m.t.Run(LmCtx()), 0, "not entered")
+    AssertEq(m.shots, 1, "one screenshot")
+    AssertTrue(LmLogHas(m, "the first tile read 'Lucky / Potion'"), "what the tile read is logged: " LmLogText(m))
+    AssertTrue(LmLogHas(m, "screen when no Portable Crack tile read saved to "), "the screenshot's path logged")
+    e := ""
+    for s in m.wh.sent
+        if (s.event = "errors")
+            e := s
+    AssertTrue(IsObject(e) && IsObject(e.opts) && e.opts.screenshot != "", "the errors webhook has the screenshot")
+    AssertTrue(InStr(e.desc, "Lucky / Potion") && !InStr(e.desc, "C:\"), "and the read, no path")
+    AssertEq(m.reads[1] "," m.reads[2], "1,2", "each search read at scale 1, then 2")
+}
+
+; ---- 2026-11-20 review ------------------------------------------------------
+
+Test_Limbo_ScreenshotOncePerDistinctRead() {
+    m := LmMake(Map("tile", "Lucky`nPotion", "desc", "Gives you [Lucky]", "shot", "C:\Users\someone\AppData\Local\Temp\vesper_shot_1.png"))
+    m.t.CanRun(m.state)
+    m.t.Run(LmCtx())
+    m.t._holdUntil := 0
+    m.t.CanRun(m.state)
+    m.t.Run(LmCtx())
+    AssertEq(m.shots, 1, "the same read twice: one screenshot")
+    AssertEq(m.wh.Count("errors"), 2, "the text post every try")
+    m.box.tile := "Biome`nRandomizer"
+    m.t._holdUntil := 0
+    m.t.CanRun(m.state)
+    m.t.Run(LmCtx())
+    AssertEq(m.shots, 2, "another read: a screenshot again")
+}
+
+Test_Limbo_LogsTheScale1Read() {
+    t := LimboTask({io: QmIO(), ocr: (x, y, w, h, scale := 1) => (scale = 1) ? "Portoble`nDevice" : "Pnrtnble`nDevice"})
+    read := "", more := ""
+    AssertEq(t._ReadIs({x: 1, y: 1, w: 9, h: 9}, "tile", &read, &more), false, "not the crack")
+    AssertEq(read, "Portoble`nDevice", "read = the scale 1 text")
+    AssertEq(more, "Pnrtnble`nDevice", "more = the scale 2 text that differs")
+    m := LmMake(Map("tile", "Lucky`nPotion", "desc", "Gives you [Lucky]"))
+    m.t.CanRun(m.state)
+    m.t.Run(LmCtx())
+    AssertTrue(LmLogHas(m, "the first tile read 'Lucky / Potion'; do you own"), "same text at both scales: logged once: " LmLogText(m))
+}
+
+Test_Limbo_InventoryAlreadyOpen() {
+    ; already open: no click on its button (that closed it, then "did not open")
+    io := LmInvIO()
+    io.open := true
+    m := LmMake(Map("io", io))
+    m.t.CanRun(m.state)
+    m.t.Run(LmCtx(300))
+    first := io.Index("move 100,100"), use := io.Index("move 130,130")
+    AssertTrue(use > 0, "the crack used")
+    AssertTrue(first = 0 || first > use, "no inventory button click before Use")
+    AssertEq(m.wh.Count("errors"), 0, "no error")
+}
+
+Test_Limbo_DescVoidIsAWord() {
+    AssertTrue(!LimboTask.IsCrackDesc("Helps you avoid danger"), "'avoid' is not void")
+    AssertTrue(LimboTask.IsCrackDesc("A tear into the void"), "void still counts")
+}
+
+; Live 2026-11-20 16:14: the crack worked, but the inventory was still open
+; in THE LIMBO 20 s later: the check right after Use ran during the loading
+; screen, where its tabs do not read. Fake: after Use the tabs read nothing
+; until the EnterMs wait (the teleport) is over.
+LmLoadingIO(neverCloses := false) {
+    io := LmInvIO()
+    io.loading := false
+    io.onUse := () => io.loading := true
+    io.DefineProp("Wait", {call: (self, ms, ctx := "") => ((ms >= LimboTask.EnterMs ? self.loading := false : 0)
+        , QmIO.Prototype.Wait.Call(self, ms, ctx))})
+    if neverCloses
+        io.DefineProp("ClickHere", {call: (self) => (LmInvIO.Prototype.ClickHere.Call(self)
+            , (self.x = 100 && self.y = 100 && self.loading = false && self.HasOwnProp("used")) ? self.open := true : 0
+            , (self.x = 130 && self.y = 130) ? self.used := true : 0)})
+    return io
+}
+
+Test_Limbo_InventoryClosedAfterTheTeleport() {
+    io := LmLoadingIO()
+    m := LmMake(Map("io", io))
+    m.t.CanRun(m.state)
+    m.t.Run(LmCtx(300))
+    AssertTrue(io.Index("move 130,130") > 0, "the crack used")
+    AssertEq(io.open, false, "closed once its tabs read in THE LIMBO")
+    AssertTrue(LmLogHas(m, "the inventory was still open after the teleport: closing it"), "logged: " LmLogText(m))
+    ; closed before the walk: the last inventory-button click comes before W
+    last := 0
+    for i, e in io.log
+        if (e = "move 100,100")
+            last := i
+    AssertTrue(last > io.Index("move 130,130") && last < io.Index("down w"), "closed after Use, before the walk")
+    AssertEq(m.wh.Count("errors"), 0, "no error")
+    ; one that will not close: logged and reported, the walk goes on
+    io2 := LmLoadingIO(true)
+    m2 := LmMake(Map("io", io2))
+    m2.t.CanRun(m2.state)
+    m2.t.Run(LmCtx(300))
+    AssertEq(io2.open, true, "still open")
+    AssertTrue(LmLogHas(m2, "the inventory is still open in THE LIMBO \(close it yourself\)"), "logged: " LmLogText(m2))
+    found := false
+    for s in m2.wh.sent
+        found := found || (s.event = "errors" && s.title = "Inventory left open")
+    AssertTrue(found, "reported")
+    AssertTrue(io2.Index("down w") > 0, "the walk went on")
 }

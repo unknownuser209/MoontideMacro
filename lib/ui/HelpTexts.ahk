@@ -28,7 +28,8 @@ class HelpTexts {
         add("General.advancedThreshold", "How close the fish must be to the bar's centre before a click (advanced mode only). Leave the default unless told otherwise.")
         add("General.fishingFailsafeSec", "If a cast takes longer than this, the macro gives up on it and casts again.")
         add("General.pathingFailsafeSec", "If a walk takes longer than this, the macro respawns and tries again.")
-        add("Limbo.enabled", "Uses the Portable Crack and waits in Limbo for Eden instead of fishing. Fishing, selling, crafting, quests and merchants are paused while it is on.")
+        ; the Portable Crack, not the Portable Device: users mix them up (2026-11-20)
+        add("Limbo.enabled", "Uses the Portable Crack (from The Limbo achievement, not the Portable Device) and waits in Limbo for Eden instead of fishing. Fishing, selling, crafting, quests and merchants are paused while it is on.")
         ; crafting
         add("Craft.enabled", "Crafts the potion set on this page whenever the materials allow.")
         add("Craft.cauldron", "Also uses Stella's cauldron. Needs the cauldron walk recorded (Setup > Routes).")

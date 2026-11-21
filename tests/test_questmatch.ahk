@@ -60,7 +60,7 @@ class QmWh {
         this.sent := []
     }
     Send(event, title, desc, color, opts := "") {
-        this.sent.Push({event: event, title: title, desc: desc})
+        this.sent.Push({event: event, title: title, desc: desc, opts: opts})
     }
     Count(event) {
         n := 0

@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\TaskEnv.ahk
 #Include %A_LineFile%\..\..\Screenshot.ahk
+#Include %A_LineFile%\..\..\QuestMatch.ahk
 ; ---------------------------------------------------------------------------
 ; LimboTask: stays in THE LIMBO next to Eden's spawn and contracts with Eden.
 ;
@@ -18,6 +19,14 @@
 ;   where the player is; while it is true only limbo and recovery run (buffs
 ;   and the island do not work in Limbo).
 ;
+; The Portable Crack is the permanent item from The Limbo achievement, not
+; the Portable Device (a placeable luck item). The inventory draws it in the
+; game font, which OCR reads with a as o and k as l< / I<: the first tile
+; reads "Portoble / Crock" (live 2026-11-20, 2560x1440); its description is
+; "It always guides you to the end of the living world." (no crack, Limbo
+; or void in it). IsCrackTile / IsCrackDesc fold the text the same way
+; (QuestMatch.FixK + Fold) before matching.
+;
 ; Sol's RNG wiki (2026): Eden (the NPC) spawns 1 in 50,000 every 2 minutes,
 ; client-sided, on the LAST island of THE LIMBO. Talking to it with a Void
 ; Heart plus a Darklight Core, Orb and Shard in the inventory offers "Contract
@@ -31,11 +40,15 @@
 ;     same way back; when it fails, inLimbo is cleared anyway (errors
 ;     webhook: rejoin yourself), so the other tasks are never blocked.
 ;   - not in Limbo (and no rare biome): use the Portable Crack from the
-;     inventory (search, typed again up to SearchTries when no tile reads
-;     "crack", the description must mention the crack / Limbo / void, else
-;     nothing is used, the inventory is closed (checked) and no new try for
-;     RetryMin). state.inLimbo := true the moment Use is clicked, the
-;     inventory is closed (checked), then EnterMs. Cut short after Use: the
+;     inventory (checked open first; search, typed again up to SearchTries
+;     when no tile reads as the crack (IsCrackTile), the description must
+;     be the crack's (IsCrackDesc), else nothing is used, what the tile read
+;     and a screenshot go to the log / errors webhook, the inventory is
+;     closed (checked) and no new try for RetryMin).
+;     state.inLimbo := true the moment Use is clicked, the
+;     inventory is closed (checked), then EnterMs, then closed again if it
+;     still reads open (during the loading screen its tabs do not read,
+;     live 2026-11-20). Cut short after Use: the
 ;     next run walks (no second crack).
 ;   - right after entering (THE LIMBO has no working reset, so the walk
 ;     starts where the crack puts the player): Input.ReAim (Aura Collections
@@ -52,8 +65,16 @@
 
 class LimboTask {
     static CrackName := "Portable Crack"
-    static TileRe := "i)crack"
-    static DescRe := "i)crack|limbo|void"
+    ; on folded text (FoldText: k fixed, lower case, a and 0 as o): Crack,
+    ; Crock, Grock, Crok; never "portable" alone (the Portable Device)
+    static TileRe := "\b[cg]ro?c?k\b"
+    ; the real description ("guides you to the end of the living world";
+    ; 1080p reads drop words: "It guides you to the end the living") plus
+    ; the old words
+    static DescRe := "guides? you|end (?:of )?the living|living w|\b[cg]ro?c?k\b|limbo|\bvoid\b"
+    ; OCR scales tried in turn until a read matches (both real frames read
+    ; at 1 at 2560x1440 and 1920x1080, 2026-11-20; 2 is the second try)
+    static ReadScales := [1, 2]
     static EnterMs := 9000          ; after Use, before walking (teleport + caption)
     static InvMs := 700
     static SearchMs := 700
@@ -85,9 +106,16 @@ class LimboTask {
         this._state := ""
         this._reportedAt := ""
         this._holdUntil := 0        ; env.Now() before which no new crack attempt
+        this._shotRead := Chr(1)    ; the tile read last sent with a screenshot (one per distinct read)
         this._walkDue := false      ; the crack was used, the walk to Eden not done yet
         this._usedAt := 0           ; env.Now() of the last Use click
     }
+
+    ; OCR text folded like the game font reads: "l<" / "I<" -> k, lower
+    ; case, a and 0 -> o ("Portoble Crock" == "Portable Crack")
+    static FoldText(text) => StrReplace(QuestMatch.Fold(StrLower(QuestMatch.FixK(text))), "0", "o")
+    static IsCrackTile(text) => RegExMatch(LimboTask.FoldText(text), LimboTask.TileRe) > 0
+    static IsCrackDesc(text) => RegExMatch(LimboTask.FoldText(text), LimboTask.DescRe) > 0
 
     Enabled() {
         cfg := this._env.cfg
@@ -149,6 +177,7 @@ class LimboTask {
                 return 0
         }
         env.Log("limbo: in THE LIMBO")
+        this._CloseAfterTeleport(ctx)
         if !Input.ReAim(ctx, env.io) {
             if !ctx.ShouldStop()
                 this._walkDue := false          ; watch from here next time (as before)
@@ -233,17 +262,30 @@ class LimboTask {
             if (c.%id% == "")
                 return false
         }
-        env.Click(c.inv_open)
-        if !env.Wait(LimboTask.InvMs, ctx)
-            return false
+        ; already open (left by a stop, or by the user): a click on its
+        ; button would close it, then read "did not open" (2026-11-20 review)
+        if !env.InvOpen(c.inv_items_tab) {
+            env.Click(c.inv_open)
+            if !env.Wait(LimboTask.InvMs, ctx)
+                return false
+        }
         env.Click(c.inv_items_tab)
         if !env.Wait(LimboTask.InvMs, ctx)
             return false
+        ; typed into the world otherwise (2026-11-20: a report with three
+        ; searches and no tile could not say whether the inventory was up)
+        if !env.InvOpen(c.inv_items_tab) {
+            if !env.Wait(LimboTask.InvMs, ctx)
+                return false
+            if !env.InvOpen(c.inv_items_tab)
+                return this._Fail(c, "the inventory did not open (check the inv_open point)", ctx)
+        }
         ; Roblox drops a typed letter now and then ("Portble Crack"): no crack
         ; tile -> clear the search and type it again, as the merchant does
         ; (2026-10-27 review: one try, then a 10 min hold)
         t := c.inv_tile1_rect
         found := false
+        read := "", more := ""
         Loop LimboTask.SearchTries {
             if ctx.ShouldStop()
                 return false
@@ -252,21 +294,35 @@ class LimboTask {
             Input.TypeText(LimboTask.CrackName, io)
             if !env.Wait(LimboTask.SearchMs, ctx)
                 return false
-            if RegExMatch(this._Read(t), LimboTask.TileRe) {
+            if this._ReadIs(t, "tile", &read, &more) {
                 found := true
                 break
             }
             if (A_Index < LimboTask.SearchTries)
                 env.Log("limbo: no Portable Crack tile after typing the search (a letter may have been dropped): typing it again")
         }
-        if !found
-            return this._Fail(c, "no 'Portable Crack' tile after searching " LimboTask.SearchTries " times (do you own one?)", ctx)
+        if !found {
+            ; what the tile read (scale 1, then the other scales when they
+            ; differ) and the screen, for the next report (2026-11-20:
+            ; 'Portoble Crock' never matched "crack"). The screenshot once per
+            ; distinct read, not every RetryMin with no crack owned.
+            seen := "'" LimboTask._Short(read) "'" (more != "" ? " (x2: '" LimboTask._Short(more) "')" : "")
+            shot := ""
+            if (read != this._shotRead) {
+                this._shotRead := read
+                try shot := this._shotFn.Call()
+                if (shot != "")
+                    env.Log("limbo: screen when no Portable Crack tile read saved to " shot)
+            }
+            return this._Fail(c, "no 'Portable Crack' tile after searching " LimboTask.SearchTries " times (the first tile read "
+                . seen "; do you own the Portable Crack from The Limbo achievement?)", ctx, shot)
+        }
         env.Click({x: t.x + t.w // 2, y: t.y + t.h // 2})
         if !env.Wait(LimboTask.SelectMs, ctx)
             return false
-        if !RegExMatch(this._Read(c.inv_desc_rect), LimboTask.DescRe)
-            return this._Fail(c, "the selected item's description does not mention the crack / Limbo; Use not clicked", ctx)
-        if !RegExMatch(this._Read(t), LimboTask.TileRe)
+        if !this._ReadIs(c.inv_desc_rect, "desc", &read)
+            return this._Fail(c, "the selected item's description is not the Portable Crack's (read '" LimboTask._Short(read) "'); Use not clicked", ctx)
+        if !this._ReadIs(t, "tile", &read)
             return this._Fail(c, "the first tile changed before Use; Use not clicked", ctx)
         if ctx.ShouldStop()
             return false
@@ -284,14 +340,63 @@ class LimboTask {
         return waited && env.Wait(LimboTask.EnterMs, ctx)
     }
 
-    _Read(r) => String((this._env.ocrFn)(r.x, r.y, r.w, r.h))
+    ; The inventory again once in THE LIMBO (live 2026-11-20 16:14: still
+    ; open with the crack selected 20 s after the teleport, nothing logged:
+    ; the check right after Use ran during the loading screen, its tabs did
+    ; not read, so it clicked nothing and called it closed). Closed
+    ; (checked); still open -> logged and reported, the walk goes on.
+    ; -> true when closed (or not open)
+    _CloseAfterTeleport(ctx) {
+        env := this._env
+        openPt := env.cal.Point("inv_open"), tabPt := env.cal.Point("inv_items_tab")
+        if !(IsObject(openPt) && IsObject(tabPt)) || !env.InvOpen(tabPt)
+            return true
+        env.Log("limbo: the inventory was still open after the teleport: closing it")
+        if env.CloseInv(openPt, tabPt, ctx)
+            return true
+        if !ctx.ShouldStop() {
+            env.Log("limbo: the inventory is still open in THE LIMBO (close it yourself)")
+            env.Report("errors", "Inventory left open", "the inventory is still open in THE LIMBO after the Portable Crack: close it yourself", 0xE74C3C)
+        }
+        return false
+    }
 
-    ; Not used: log + errors webhook, close the inventory (checked: a click
-    ; right after typing may only leave the search box). -> false
-    _Fail(c, why, ctx := "") {
+    _Read(r, scale := 1) => String((this._env.ocrFn)(r.x, r.y, r.w, r.h, scale))
+
+    ; Reads rect r at ReadScales in turn until it is the crack's tile / desc
+    ; (what = "tile" / "desc"). read = the first scale's text (x1 read the
+    ; 1440 tile best: 'Portoble Crock', x2 'Pnrtnble Crock'); more = the
+    ; later scales' texts that differ from it. -> bool
+    _ReadIs(r, what, &read := "", &more := "") {
+        read := "", more := ""
+        for i, sc in LimboTask.ReadScales {
+            got := this._Read(r, sc)
+            if (i = 1)
+                read := got
+            else if (got != read)
+                more .= (more = "" ? "" : " | ") got
+            if (what = "tile" ? LimboTask.IsCrackTile(got) : LimboTask.IsCrackDesc(got))
+                return true
+        }
+        return false
+    }
+
+    ; an OCR read on one line, trimmed, at most 60 characters
+    static _Short(text) {
+        s := Trim(RegExReplace(String(text), "\s*[\r\n]+\s*", " / "))
+        return StrLen(s) > 60 ? SubStr(s, 1, 57) "..." : s
+    }
+
+    ; Not used: log + errors webhook (with the screenshot when given), close
+    ; the inventory (checked: a click right after typing may only leave the
+    ; search box). -> false
+    _Fail(c, why, ctx := "", shot := "") {
         env := this._env
         env.Log("limbo: Portable Crack not used: " why)
-        env.Report("errors", "Limbo: Portable Crack not used", why, 0xE74C3C)
+        if (shot != "" && IsObject(env.wh)) {
+            try env.wh.Send("errors", "Limbo: Portable Crack not used", why, 0xE74C3C, {screenshot: shot})
+        } else
+            env.Report("errors", "Limbo: Portable Crack not used", why, 0xE74C3C)
         env.CloseInv(c.inv_open, c.inv_items_tab, ctx)
         return false
     }
