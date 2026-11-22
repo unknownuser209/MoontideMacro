@@ -162,7 +162,7 @@ class Overlay {
             this._pill.Text := pill
             Theme.SetColors(this._pill, bg, fg)
         }
-        Theme.SetText(this._task, task = "" ? Chr(0x2014) : I18n.T(task))
+        Theme.SetText(this._task, task = "" ? Chr(0x2014) : UiLogic.TaskText(task))
         b := biome = "" ? Chr(0x2014) : biome (rare ? "  " Chr(0x2726) : "")
         if (this._biome.Text != b) {
             this._biome.Text := b

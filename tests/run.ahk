@@ -67,7 +67,7 @@
 #Include test_presets.ahk
 #Include test_stats.ahk
 #Include test_i18n.ahk
-
+#Include test_gametext.ahk
 Main()
 
 Main() {
@@ -117,3 +117,10 @@ Out(line) {
 #Include test_prof.ahk
 #Include test_clockwatch.ahk
 #Include test_idle.ahk
+#Include test_themestore.ahk
+#Include test_layout.ahk
+#Include test_search.ahk
+#Include test_checkfix.ahk
+#Include test_polish.ahk
+#Include test_stuckui.ahk
+#Include test_autocal.ahk

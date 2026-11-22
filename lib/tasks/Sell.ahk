@@ -289,7 +289,7 @@ class SellTask {
 
     ; Opens the seller's dialog after the route's `e` press.
     ; The walk to Captain Flarg / back to the fishing spot: the user's own
-    ; recordings (Setup > Routes: sell_to_fisher, fisher_to_fishing) when
+    ; recordings (Help > Routes: sell_to_fisher, fisher_to_fishing) when
     ; present, else the shipped vip / nonvip walk. sell_to_fisher is
     ; recorded up to Flarg; E is pressed after it here (TrimInteract drops a
     ; recorded E at the end).

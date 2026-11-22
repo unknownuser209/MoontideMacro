@@ -5,7 +5,7 @@
 ; Standard launcher only (RobloxPlayerBeta.exe). Coordinates are screen px.
 ;
 ; Roblox is FULLSCREEN (exclusive or borderless: the client rect covers its
-; whole monitor) or, with Windowed set to Yes (General.windowed=1, Setup >
+; whole monitor) or, with Windowed set to Yes (General.windowed=1, Help >
 ; Calibrate, 2026-11-14), in a WINDOW, at any resolution and Windows scale.
 ; Every coordinate is in 2560x1440 design space and Screen maps it to the
 ; client; ClientOk refreshes that mapping on each check. A window must be
@@ -78,7 +78,7 @@ class Roblox {
         if Roblox.CoversMonitor(x, y, w, h, mx, my, mw, mh)
             return ""
         if !windowed
-            return "Roblox is in a window and Windowed is set to No (press F11 in Roblox, or set Windowed to Yes in Setup > Calibrate)"
+            return "Roblox is in a window and Windowed is set to No (press F11 in Roblox, or set Windowed to Yes in Help > Calibrate)"
         if (w < Roblox.MinW || h < Roblox.MinH)
             return "the Roblox window is too small (" w "x" h "; at least " Roblox.MinW "x" Roblox.MinH ")"
         if (x < mx || y < my || x + w > mx + mw || y + h > my + mh)

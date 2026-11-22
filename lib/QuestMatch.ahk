@@ -1,4 +1,5 @@
 #Requires AutoHotkey v2.0
+#Include %A_LineFile%\..\GameText.ahk
 ; ---------------------------------------------------------------------------
 ; QuestMatch: match OCR text from the quest board against data\quests.json.
 ; Pure logic, no I/O.
@@ -17,8 +18,9 @@
 ;          ambiguous and "" is returned. A trailing roman numeral in the name
 ;          must match exactly (never guess between "Delivery I"/"II").
 ;     "" (no/empty text, no match) means UNKNOWN: callers must take no action.
-;     An aura hunt ("Unique Aura Hunt") also goes by the board's title
-;     without "Aura" ("Unique Hunt", live 2026-11-13): Alt().
+;     A list name also goes by the board's own title (Alts()): an aura
+;     hunt without "Aura" ("Unique Hunt"), a roman numeral as "#2", Lucky
+;     Clover as "A Symbol of Luck".
 ;   QuestMatch.IsComplete(ocrText) -> bool  (turn-in wording; edit CompleteRe)
 ;   QuestMatch.Norm(text)
 ; ---------------------------------------------------------------------------
@@ -37,17 +39,28 @@ class QuestMatch {
         return Trim(s)
     }
 
-    ; The board's other name for a list entry ("" = none): "<rarity> aura
-    ; hunt" -> "<rarity> hunt".
     ; "l<" / "I<" / "l" + U+00AB read for k ('Lucl<<y', 2026-11-18 09:55) -> k
-    static FixK(text) => RegExReplace(String(text), "[lI1|][<" Chr(0xAB) "]", "k")
+    ; (the shared GameText rule)
+    static FixK(text) => GameText.FixK(text)
 
     ; The game font's look-alikes as one letter (a and o) for fuzzy compares
     static Fold(s) => StrReplace(String(s), "a", "o")
 
-    static Alt(norm) {
+    ; The board's other names for a list entry (normalised; [] = none):
+    ;  - "<rarity> aura hunt" -> "<rarity> hunt" (live 2026-11-13)
+    ;  - a trailing roman numeral I..V -> the board's "#<digit>" ("player hunt
+    ;    ii" -> "player hunt 2", live 2026-11-18)
+    ;  - "lucky clover" -> "a symbol of luck" (#1 / #2; user list 2026-11-18)
+    static Alts(norm) {
+        out := []
         a := RegExReplace(norm, "^(\w+) aura hunt$", "$1 hunt")
-        return (a != norm) ? a : ""
+        if (a != norm)
+            out.Push(a)
+        if RegExMatch(norm, "^(.+ )(i{1,3}|iv|v)$", &m)
+            out.Push(m[1] ({i: 1, ii: 2, iii: 3, iv: 4, v: 5}).%m[2]%)
+        if (norm = "lucky clover")
+            out.Push("a symbol of luck")
+        return out
     }
 
     static IsComplete(ocrText) => RegExMatch(String(ocrText), QuestMatch.CompleteRe) ? true : false
@@ -69,7 +82,7 @@ class QuestMatch {
                 n := QuestMatch.Norm(q["name"])
                 if (n = "")
                     continue
-                out.Push({name: String(q["name"]), norm: n, alt: QuestMatch.Alt(n), enabled: typeOn && QuestMatch._On(q, "enabled")})
+                out.Push({name: String(q["name"]), norm: n, alts: QuestMatch.Alts(n), enabled: typeOn && QuestMatch._On(q, "enabled")})
             }
         }
         return out
@@ -86,7 +99,7 @@ class QuestMatch {
         padded := " " text " "
         best := "", bestLen := 0
         for q in list {
-            for n in [q.norm, q.alt] {
+            for n in QuestMatch._Names(q) {
                 if (n != "" && InStr(padded, " " n " ") && StrLen(n) > bestLen)
                     best := q, bestLen := StrLen(n)
             }
@@ -105,14 +118,15 @@ class QuestMatch {
         tied := false
         for q in list {
             score := 0
-            for qn in [q.norm, q.alt] {
+            for qn in QuestMatch._Names(q) {
                 if (qn = "" || StrLen(qn) < QuestMatch.MinFuzzyLen)
                     continue
                 qWords := StrSplit(qn, " ")
                 nWords := qWords.Length
                 ; A trailing roman numeral (Delivery II) must be read exactly:
                 ; one OCR edit turns I into II or IV, which is a different quest.
-                numeral := (nWords > 1 && RegExMatch(qWords[nWords], "^[ivx]+$")) ? qWords[nWords] : ""
+                ; The board's "#2" (a digit) is read exactly too.
+                numeral := (nWords > 1 && RegExMatch(qWords[nWords], "^(?:[ivx]+|\d)$")) ? qWords[nWords] : ""
                 for words in lines {
                     for cand in QuestMatch._Windows(words, nWords) {
                         if (numeral != "" && !RegExMatch(cand, " " numeral "$"))
@@ -133,6 +147,13 @@ class QuestMatch {
         if (bestQ == "" || tied)
             return ""
         return {name: bestQ.name, enabled: bestQ.enabled}
+    }
+
+    static _Names(q) {
+        out := [q.norm]
+        for a in q.alts
+            out.Push(a)
+        return out
     }
 
     ; All runs of n consecutive words (or the whole line if it is shorter).

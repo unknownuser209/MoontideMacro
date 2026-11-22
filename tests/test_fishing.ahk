@@ -754,7 +754,7 @@ Test_Sell_NothingCaughtSkipsTheShop() {
     }
 }
 
-; The user's own recorded sell walks (Setup > Routes) replace the shipped
+; The user's own recorded sell walks (Help > Routes) replace the shipped
 ; ones; E is pressed after sell_to_fisher; a broken recording falls back.
 Test_Sell_UsesTheRecordedWalks() {
     t := FsMakeCfg()

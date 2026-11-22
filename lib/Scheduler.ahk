@@ -53,6 +53,8 @@
 ;     sell). Quests and biome items run first, then sell + buy + fishing.
 ;   - inLimbo: only limbo and recovery run (Sched.InLimboOk).
 ;   - limboMode (Limbo.enabled): only limbo, potions, recovery (LimboModeOk).
+;     Off while the crack is on hold (limboHeld, set by App from
+;     LimboTask.Held): fishing and the island tasks run until the next try.
 ;   - quests are also gated by questIntervalMs since lastRun["quests"]
 ;     (never run = due); obby by obbyIntervalMs since lastRun["obby"].
 ;   - A task with priority >= Sched.FishingPriority (99) skips the rare /
@@ -69,6 +71,7 @@ class Sched {
         "recovery", 2,
         "merchant", 3,
         "craft", 4,
+        "autocal", 5,
         "biomeitems", 5,
         "quests", 5,
         "dailyquests", 5,
@@ -80,7 +83,7 @@ class Sched {
         "fishing", 99
     )
     ; Task names blocked while state.rareActive.
-    static RareBlocked := Map("merchant", true, "craft", true, "quests", true, "dailyquests", true, "biomeitems", true
+    static RareBlocked := Map("merchant", true, "craft", true, "quests", true, "dailyquests", true, "biomeitems", true, "autocal", true
         , "obby", true, "memorymatch", true, "minions", true)
     ; Task names that wait for the start sell (state.startSell). Quests and
     ; biome items go BEFORE it (quests, sell, buy, fish: no walk back first).
@@ -99,7 +102,9 @@ class Sched {
     ; With Limbo on (state.limboMode) also on Sol's Island: the rare-biome
     ; potions still run; fishing, selling, crafting, quests, merchants and
     ; biome items do not.
-    static LimboModeOk := Map("limbo", true, "recovery", true, "potions", true)
+    ; "autocal" (InvFindTask: one look at the inventory when a step of it is
+    ; missing) too: the crack is used from the inventory.
+    static LimboModeOk := Map("limbo", true, "recovery", true, "potions", true, "autocal", true)
 }
 
 class SchedState {
@@ -120,6 +125,7 @@ class SchedState {
         this.inLimbo := false     ; LimboTask: the player is in THE LIMBO
         this.ghost := false       ; App: the last join was not the private server (RecoveryTask rejoins)
         this.limboMode := false   ; App: Limbo.enabled (Sched.LimboModeOk only)
+        this.limboHeld := false   ; App: Limbo on but the crack on hold (LimboTask.Held): island tasks run, limboMode off
         this.stats := Map()       ; session counters for the stop summary (App resets on Start)
         this.onBump := ""         ; App: (key, n) -> the day counters too (DailyStats)
     }

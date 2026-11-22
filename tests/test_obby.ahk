@@ -85,6 +85,8 @@ class ObStore {
                 prompt := prompt && this.promptStuck
             else if (e = "down Backspace")
                 search := SubStr(search, 1, StrLen(search) - 1)
+            else if (e = "down Delete")                 ; only sent after Home: the caret at the start
+                search := SubStr(search, 2)
             else if (SubStr(e, 1, 5) = "type ") {
                 search .= SubStr(e, 6)
                 daily := daily || (this.dailyOnType && !typed)
@@ -163,6 +165,9 @@ class ObStore {
         pn := ObbyTask.PanelBox
         if (x = 300 + pn.dx && y = 300 + pn.dy)
             return (s.open && !s.prompt) ? "[ Information ]" : ""
+        sx := ObbyTask.SearchBox
+        if (x = 20 + sx.dx && y = 20 + sx.dy)
+            return s.open ? s.search : ""
         cb := Input.ResetChecks["collection"]
         if (x = cb.x && y = cb.y)
             return (s.coll && this.collMiss-- <= 0) ? "Aura Collections [Exit]" : ""
@@ -1545,4 +1550,62 @@ Test_DailyQuests_BarProgressRealFrame() {
     Loop DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
         blank.Push(0x101010)
     AssertEq(DailyQuestsTask.BarDone(blank, 10), 0, "empty bar: 0")
+}
+
+; ---- package B (2026-11-20): the search box checked, the stuck-UI escape ----
+
+; live 13:54-16:17 2026-11-20: both tabs listed nothing 15 runs in a row
+; (the box's text unknown). Old text longer than End + 40 Backspaces clear
+; kept the search empty here: the box is read, cleared from both ends and
+; typed once more.
+Test_Obby_SearchBoxNotHoldingTheNameIsTypedAgain() {
+    o := QmObbyTask("Glock")
+    o.s.leftover := "GlockGlockGlockGlockGlockGlockGlockGlockGlockGlock"
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+    AssertTrue(QmObbyLogHas(o.logs, "cleared again and typed once more"), "logged")
+    AssertTrue(QmObbyDowns(o.io, "Delete") >= Input.ClearKeys, "Home + Delete clear")
+    AssertTrue(QmObbyFirst(o.io, "down Home") > 0, "from the start")
+    AssertEq(o.s.State().eq, "Glock", "the aura back on")
+    ; a clean box: no extra read, no second typing
+    o2 := QmObbyTask("Glock")
+    o2.t.Run(SchedCtx())
+    AssertTrue(!QmObbyLogHas(o2.logs, "typed once more"), "no retype")
+    AssertEq(QmObbyDowns(o2.io, "Delete"), 0, "no Delete")
+}
+
+Test_Obby_SearchHoldsTheGameFont() {
+    AssertTrue(ObbyTask.SearchHolds("Soilor", "Sailor"), "a for o")
+    AssertTrue(ObbyTask.SearchHolds("Sailorl", "Sailor"), "the caret")
+    AssertTrue(ObbyTask.SearchHolds("Soila", "Sailor"), "a letter short")
+    AssertTrue(!ObbyTask.SearchHolds("", "Sailor"), "nothing read")
+    AssertTrue(!ObbyTask.SearchHolds("GlockGlockSailor", "Sailor"), "old text in front")
+    AssertTrue(!ObbyTask.SearchHolds("Eden", "Sailor"), "another name")
+}
+
+; the Aura Storage that never opens / a search that lists nothing counts
+; toward the stuck-UI escape, with the raw read and one screenshot per
+; ShotGapMs; a title that reads ends the streak
+Test_Obby_StorageFailuresFeedTheStuckUiEscape() {
+    UiStuck.Reset()
+    try {
+        o := QmObbyTask("Glock")
+        o.s.closed := true
+        shots := []
+        o.io.DefineProp("Shot", {Call: (self) => (shots.Push(1), "C:\shot" shots.Length ".png")})
+        o.t.PutOnSailor(SchedCtx())
+        o.t.PutOnSailor(SchedCtx())
+        AssertTrue(UiStuck.Total() >= 2, "counted (" UiStuck.Total() ")")
+        AssertTrue(InStr(UiStuck.Text(), "aura storage"), "named")
+        AssertEq(shots.Length, 1, "one screenshot for both")
+        AssertTrue(QmObbyLogHas(o.logs, "screen when the aura storage failed saved to"), "logged")
+        o2 := QmObbyTask("Glock")
+        o2.t.PutOnSailor(SchedCtx())
+        AssertTrue(!InStr(UiStuck.Text(), "aura storage"), "the storage read: its count is over")
+        ; nothing owned: the search lists nothing on either tab
+        o3 := QmObbyTask("Glock", , , , ["Glock"])
+        o3.t.PutOnSailor(SchedCtx())
+        AssertTrue(InStr(UiStuck.Text(), "aura search"), "empty search counted")
+    } finally {
+        UiStuck.Reset()
+    }
 }

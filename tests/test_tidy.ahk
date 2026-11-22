@@ -473,8 +473,8 @@ Test_Craft_PreemptInTheCauldronClosesIt() {
     ; Tidy: the Workshop left open is closed by cauldron_close
     m3 := CrMake(Map("cauldron", true))
     io3 := m3.io
-    m3.ocr.map.Delete("600,100,200,40")
-    m3.ocr.dyn["600,100,200,40"] := () => io3.Idx("move 1100,100") ? "" : "Stella's Workshop"
+    m3.ocr.map.Delete("600,90,200,65")
+    m3.ocr.dyn["600,90,200,65"] := () => io3.Idx("move 1100,100") ? "" : "Stella's Workshop"
     logs := []
     Tidy.Run("craft", m3.t.Leftovers(), SchedCtx(), (s) => logs.Push(s))
     AssertEq(logs.Length, 1, "one line")

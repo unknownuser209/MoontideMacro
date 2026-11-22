@@ -81,7 +81,7 @@ Test_App_IdleDoesNotGrabFocus() {
         t.app.Tick()
     AssertEq(t.rb.focusCalls, 0, "idle: Roblox not focused")
     AssertEq(chat.checks, 0, "no chat read while Roblox is not in front")
-    AssertEq(t.ui.status.task, "Idle", "status")
+    AssertEq(t.ui.status.task, "Waiting: nothing is due right now", "status: why it waits, not 'Idle' (read as idle mode, 2026-11-20)")
     ; Roblox already in front: chat is read, still no focus call
     t.rb.activeOk := true
     t.app.Tick()

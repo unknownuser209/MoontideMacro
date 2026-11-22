@@ -55,8 +55,14 @@ class BiIO {
 ; desc rect 300,300,200,60  confirm 600,600
 ; Biome Selector list rect 500,400,600,800: Drive i fills y 400+(i-1)*100
 ; .. +100 (Drive 9 is below the fold until the list is scrolled 100 px).
-; The list is only up after Use on a Selector tile, until Confirm (or Esc
-; when escCloses; else Esc toggles the Roblox menu, read in its menu box).
+; The list is only up after Use on a Selector tile. A click on a row opens
+; the prompt "You have selected [ Drive ]" (rows hidden; wrongPick: the
+; prompt names that Drive instead), read in the prompt box 560,560,450,208;
+; its Confirm 600,974 uses it, its Cancel 908,974 goes back to the list. The
+; bottom bar "READY TO BE USED" is at y 1280 (a strip of x 500 w 600 that
+; holds it); the window's X 1318,323 closes it (xStuck: does nothing). Esc
+; closes it only when escCloses, else it toggles the Roblox menu (the real
+; game, live 2026-11-21).
 class BiOcr {
     __New(tiles, descs) {
         this.tiles := tiles
@@ -67,7 +73,15 @@ class BiOcr {
         this.strips := 0
         this.selector := false      ; the BIOME SELECTOR list is up
         this.menu := false          ; the Roblox menu (Esc)
-        this.escCloses := true      ; Esc closes the Selector (else it opens the Roblox menu)
+        this.escCloses := false     ; Esc does not close the Selector: it opens the Roblox menu (live 2026-11-21)
+        this.pick := ""             ; the Drive the open prompt names ("" = the list shows)
+        this.wrongPick := ""        ; a row click selects this Drive instead (a click that hit another row)
+        this.confirmed := ""        ; the Drive Confirm used
+        this.xStuck := false        ; the window's X does nothing
+        this.rowsBlank := false     ; no row of the list reads (OCR miss)
+        this.barBlank := false      ; the bottom bar does not read (pale on a bright sky)
+        this.btnBlank := false      ; the prompt's buttons do not read either
+        this.promptBlank := false   ; the placed prompt read gets nothing
         this.useCloses := true      ; Use closes the inventory
         this.missing := ""          ; a Drive whose row never reads (OCR miss, none left)
         this.descReads := 0
@@ -112,16 +126,35 @@ class BiOcr {
                 this.selector := true
             if this.useCloses
                 this.open := false          ; Use closes the inventory
-        } else if (x = 600 && y = 600)
-            this.selector := false          ; Confirm
+        } else if (this.selector && this.pick = "" && x = 800 && y >= 400 && y < 1200) {
+            d := this.DriveAt(y)            ; a row: its prompt
+            this.pick := (this.wrongPick != "") ? this.wrongPick : d
+        } else if (this.selector && this.pick != "" && x = 600 && (Abs(y - 974) <= 30 || y = 600)) {
+            this.confirmed := this.pick     ; Confirm
+            this.pick := "", this.selector := false
+        } else if (this.selector && this.pick != "" && x = 908 && (Abs(y - 974) <= 30 || y = 600)) {
+            this.pick := ""                 ; Cancel
+        } else if (this.selector && x = 1318 && Abs(y - 323) <= 30 && !this.xStuck) {
+            this.pick := "", this.selector := false     ; the window's X
+        }
     }
     Read(x, y, w, h) {
         r := x "," y "," w "," h
         if (x = 500 && w = 600) {               ; a strip of the Selector list: the Drive under its middle
+            if (this.selector && !this.barBlank && h <= 400 && y <= 1280 && y + h >= 1280)
+                return "BIOME SELECTOR IS READY TO BE USED"
+            if (this.selector && this.pick != "" && h >= 400)    ; the whole list rect: the prompt over it
+                return "You have selected`n[ " this.pick " ]`nAre you sure?`nConfirm Cancel"
+            if (this.selector && this.pick != "" && !this.btnBlank && h <= 120 && Abs(y + h // 2 - 974) <= 25)
+                return "Confirm      Cancel"            ; the prompt's buttons
             this.strips++
-            d := this.selector ? this.DriveAt(y + h // 2) : ""
-            return (d = this.missing) ? "" : d
+            d := (this.selector && this.pick = "") ? this.DriveAt(y + h // 2) : ""
+            return (d = this.missing || this.rowsBlank) ? "" : d
         }
+        if (r = "560,560,450,208" && this.promptBlank)
+            return ""
+        if (r = "560,560,450,208")              ; the prompt
+            return (this.selector && this.pick != "") ? "You have selected`n[ " this.pick " ]`nAre you sure?" : ""
         cb := Input.ResetChecks["collection"]
         if (x = cb.x && y = cb.y)
             return this.coll ? "Aura Collections [Exit]" : ""
@@ -368,11 +401,12 @@ Test_BiomeItems_SelectorPicksTheDriveFromTheList() {
             iUse := i
         if RegExMatch(e, "^move 800,(\d+)$", &mm)
             iPick := i, pick := Integer(mm[1])
-        if (e = "move 600,600")
+        if (e = "move 600,974")
             iConf := i
     }
     AssertTrue(iUse > 0 && iPick > iUse && iConf > iPick, "Use, then the Drive, then Confirm")
     AssertEq(m.ocr.DriveAt(pick), "Unknown Void Drive", "clicked inside the Unknown Void row (y " pick ")")
+    AssertEq(m.ocr.confirmed, "Unknown Void Drive", "the prompt named it, Confirm used it")
     wheels := 0
     for e in m.io.log
         wheels += (SubStr(e, 1, 6) = "wheel ") ? 1 : 0
@@ -391,10 +425,13 @@ Test_BiomeItems_SelectorPicksTheDriveFromTheList() {
     ; no Drive picked in settings / not calibrated: not eligible
     m3 := BiMake(Map("BiomeItems.biomeSelector", 1), ["Biome Selector"], ["x"])
     AssertEq(m3.t.CanRun(BiState()), false, "no Drive chosen -> not eligible")
+    ; the list rect needs no calibration: it is found on screen after Use
+    ; (tests\test_autocal.ahk)
     m4 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Raging Gale Drive"), ["Biome Selector"], ["x"], Map("selector_list_rect", "DEL"))
-    AssertEq(m4.t.CanRun(BiState()), false, "no list rect -> not eligible")
+    AssertEq(m4.t.CanRun(BiState()), true, "no list rect: still eligible")
+    AssertEq(m4.wh.Count("errors"), 0, "... and no missing-step error")
     m5 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Raging Gale Drive"), ["Biome Selector"], ["x"], Map("selector_confirm", "DEL"))
-    AssertEq(m5.t.CanRun(BiState()), false, "no confirm point -> not eligible")
+    AssertEq(m5.t.CanRun(BiState()), true, "no confirm point: still eligible (worked out from the list)")
     AssertEq(BiomeItemsTask.DriveKey("abyss curse drive"), "abyss", "drive key")
     AssertEq(BiomeItemsTask.DriveKey("Nonsense Drive"), "", "unknown drive")
     AssertEq(BiomeItemsTask.Drives.Length, 9, "nine Drives")
@@ -416,11 +453,18 @@ Test_BiomeItems_RefusedItemWaitsAndTile2IsTried() {
     i1 := m2.io.Index("move 140,120"), i2 := m2.io.Index("move 240,120"), iUse := m2.io.Index("move 40,40")
     AssertTrue(i1 > 0 && i2 > i1 && iUse > i2, "tile 1 refused by its description, tile 2 selected, then Use")
     AssertEq(m2.wh.Count("errors"), 0, "no error")
-    ; an inventory step not calibrated: not eligible (fishing runs), told once
+    ; an inventory step with no place yet: not eligible (fishing runs). It
+    ; is one the macro looks for on screen (lib\tasks\InvFind.ahk), which
+    ; says so when it cannot find it: not reported here
     m3 := BiMake(Map("BiomeItems.strangeController", 1), ["Strange Controller"], ["x"], Map("inv_desc_rect", "DEL"))
     Loop 5
-        AssertEq(m3.t.CanRun(BiState()), false, "inventory not calibrated: not eligible (" A_Index ")")
-    AssertEq(m3.wh.Count("errors"), 1, "reported once")
+        AssertEq(m3.t.CanRun(BiState()), false, "inventory step missing: not eligible (" A_Index ")")
+    AssertEq(m3.wh.Count("errors"), 0, "not reported by the task")
+    ; the inventory button has no text to find it by: still told once
+    m4 := BiMake(Map("BiomeItems.strangeController", 1), ["Strange Controller"], ["x"], Map("inv_open", "DEL"))
+    Loop 5
+        AssertEq(m4.t.CanRun(BiState()), false, "no inventory button: not eligible (" A_Index ")")
+    AssertEq(m4.wh.Count("errors"), 1, "reported once")
     AssertEq(m3.io.log.Length, 0, "nothing pressed")
 }
 
@@ -454,15 +498,175 @@ Test_BiomeItems_RefusedAgainBacksOffAndReportsOnce() {
     AssertEq(m.t.CanRun(BiState()), true, "the hold is back to MissingRetryMin")
 }
 
+; audit 2026-11-20 (logs #8): an inventory lockout doubled the Selector's
+; hold to 240 min. A try the screen stopped holds ScreenRetryMin, is not
+; counted as a refusal and is reported once until a use.
+Test_BiomeItems_ScreenStopIsNotTheItemsFault() {
+    m := BiMake(Map("BiomeItems.strangeController", 1), ["Strange Controller"], ["Changes the biome"])
+    m.ocr.noOpen := true
+    holds := []
+    Loop 4 {
+        AssertEq(m.t.Run(SchedCtx()), 0, "stopped by the screen " A_Index)
+        wait := 0
+        while !m.t.CanRun(BiState()) && wait < 1000 {
+            m.clk.t += 60000
+            wait++
+        }
+        holds.Push(wait)
+    }
+    for i, w in holds
+        AssertTrue(w >= BiomeItemsTask.ScreenRetryMin && w <= BiomeItemsTask.ScreenRetryMin + 1, "hold " i ": " w " min, not doubled")
+    AssertEq(m.wh.Count("errors"), 1, "reported once")
+    AssertEq(m.t._fails.Has("strangeController") ? m.t._fails["strangeController"] : 0, 0, "not counted as a refusal")
+    ; the item itself refused after that: the first refusal (30 min, reported)
+    m.ocr.noOpen := false, m.ocr.tiles := []
+    AssertEq(m.t.Run(SchedCtx()), 0, "not found")
+    AssertEq(m.t._holdMs["strangeController"], BiomeItemsTask.MissingRetryMin * 60000, "the first refusal's hold")
+    AssertEq(m.wh.Count("errors"), 2, "the refusal is reported")
+    ; a use clears it all: the next screen stop is reported again
+    m.clk.t += BiomeItemsTask.MissingRetryMin * 60000 + 1000
+    m.ocr.tiles := ["Strange Controller"]
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    m.clk.t += 25 * 60000
+    m.ocr.noOpen := true, m.ocr.open := false
+    AssertEq(m.t.Run(SchedCtx()), 0, "stopped by the screen after the use")
+    AssertEq(m.wh.Count("errors"), 3, "reported again after a use")
+}
+
+; the Selector only got a turn when both others were cooling down: of the
+; items ready, the one used longest ago goes first (never used first, then
+; in Items order)
+Test_BiomeItems_LongestUnusedGoesFirst() {
+    m := BiMake(Map("BiomeItems.biomeRandomizer", 1, "BiomeItems.strangeController", 1, "BiomeItems.biomeSelector", 1
+        , "BiomeItems.selectorDrive", "Unknown Void Drive"), [], [])
+    now := m.clk.t
+    AssertEq(m.t._Ready(now).key, "biomeRandomizer", "none used yet: Items order")
+    m.t._lastUse["biomeRandomizer"] := now - 41 * 60000
+    m.t._lastUse["strangeController"] := now - 21 * 60000
+    AssertEq(m.t._Ready(now).key, "biomeSelector", "never used goes first")
+    m.t._lastUse["biomeSelector"] := now - 30 * 60000
+    AssertEq(m.t._Ready(now).key, "biomeRandomizer", "the Selector cooling: the older of the two")
+    m.t._lastUse["biomeSelector"] := now - 70 * 60000
+    AssertEq(m.t._Ready(now).key, "biomeSelector", "the Selector used longest ago")
+    m.t._lastUse["biomeRandomizer"] := now - 90 * 60000
+    AssertEq(m.t._Ready(now).key, "biomeRandomizer", "the Randomizer used longest ago")
+}
+
+Test_BiomeItems_SelectorGeometryFromTheLiveFrame() {
+    ; live 2026-11-21, 2560x1440: list rect 822,515,672,416, bottom bar at
+    ; y 977, the window's X at 1738,479, the prompt's Cancel at 1280,820
+    r := {x: 822, y: 515, w: 672, h: 416}
+    g := BiomeItemsTask.Geo
+    row1 := 977 - g.bar * r.h
+    AssertTrue(Abs(r.x + g.closeDx * r.w - 1738) <= 3 && Abs(row1 + g.closeDy * r.h - 479) <= 4, "the X")
+    AssertTrue(Abs(r.x + g.cancelDx * r.w - 1280) <= 4 && Abs(977 + g.btnDy * r.h - 820) <= 4, "Cancel")
+    AssertTrue(Abs(row1 + 6 * g.pitch * r.h - 850) <= 8, "row 7 (Abyss Curse) at y 850")
+    AssertEq(BiomeItemsTask.RowIs("Ab ss Curse", 7), true, "'Ab ss Curse' (live read) is Abyss Curse")
+    AssertEq(BiomeItemsTask.PromptIs("You have selected [ Corrupt Ruin Drive ] Are you sure?", 7), false, "a prompt for Corrupt Ruin is not Abyss Curse")
+    AssertEq(BiomeItemsTask.PromptIs("You have selected [ Abyss Curse Drive ] Are you sure?", 7), true, "its own prompt")
+    AssertEq(BiomeItemsTask.PromptIs("", 7), false, "nothing read: not confirmed")
+}
+
+Test_BiomeItems_SelectorPaleRowClickedByItsPlace() {
+    ; live 2026-11-21: "Abyss Curse Drive" pale blue on a bright sky read
+    ; '-Oyss=etl+?e': not found, nothing used. Its place in the list is known
+    ; from the rows that read; the prompt then names it.
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m.ocr.missing := "Abyss Curse Drive"
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m.ocr.confirmed, "Abyss Curse Drive", "the right Drive confirmed")
+    said := false
+    for l in m.logs
+        said := said || InStr(l, "clicked by its place")
+    AssertTrue(said, "logged")
+}
+
+Test_BiomeItems_SelectorPromptForAnotherDriveIsCancelled() {
+    ; live 2026-11-21: a click through the open Selector picked Corrupt Ruin
+    ; Drive and its prompt stayed over the game. Confirm only when the
+    ; prompt names the Drive in settings.
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m.ocr.wrongPick := "Corrupt Ruin Drive"
+    m.ocr.useCloses := false
+    AssertEq(m.t.Run(SchedCtx()), 0, "nothing used")
+    AssertEq(m.ocr.confirmed, "", "Confirm never used")
+    AssertTrue(m.io.Moved(908, 974), "Cancel clicked")
+    AssertEq(m.ocr.selector, false, "the Selector closed with its X")
+    AssertEq(m.ocr.menu, false, "no Roblox menu")
+    AssertEq(m.wh.Count("errors"), 1, "reported")
+}
+
+Test_BiomeItems_PromptPlacedByItsButtons() {
+    ; live 2026-11-21 01:23: the prompt named Abyss Curse Drive, but the pale
+    ; bar did not read on a bright sky and the rows were hidden: "list gone
+    ; before Confirm", then "could not be placed". The prompt's dark Confirm
+    ; / Cancel text places the window.
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Unknown Void Drive"), ["Biome Selector"], ["x"])
+    m.ocr.barBlank := true
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m.ocr.confirmed, "Unknown Void Drive", "confirmed, placed by its buttons")
+    ; a leftover prompt with the bar unreadable: cancelled and closed
+    m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m2.ocr.barBlank := true
+    m2.ocr.selector := true
+    m2.ocr.pick := "Corrupt Ruin Drive"
+    AssertTrue(m2.t.Leftovers()[1].up.Call() != "", "seen by its prompt")
+    AssertEq(m2.t.Leftovers()[1].close.Call("", SchedCtx()), 1, "closed")
+    AssertEq(m2.ocr.selector, false, "really gone")
+    AssertEq(m2.ocr.confirmed, "", "nothing confirmed")
+}
+
+Test_BiomeItems_PromptReadAcrossTheWindow() {
+    ; live 05:09: bar and buttons pale on a bright sky, the placed prompt read
+    ; got the title: the window read whole names the Drive -> Confirm at the
+    ; calibrated spot; another Drive -> Cancel on that row, nothing confirmed
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Unknown Void Drive"), ["Biome Selector"], ["x"])
+    m.ocr.barBlank := true, m.ocr.btnBlank := true, m.ocr.promptBlank := true
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m.ocr.confirmed, "Unknown Void Drive", "confirmed at the calibrated Confirm")
+    m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m2.ocr.barBlank := true, m2.ocr.btnBlank := true, m2.ocr.promptBlank := true
+    m2.ocr.wrongPick := "Corrupt Ruin Drive"
+    AssertEq(m2.t.Run(SchedCtx()), 0, "nothing used")
+    AssertEq(m2.ocr.confirmed, "", "never confirmed")
+    AssertTrue(m2.io.Moved(908, 600), "Cancel on the calibrated Confirm's row")
+}
+
+Test_BiomeItems_TileMisreads() {
+    AssertTrue(BiomeItemsTask.TileIs("biome seleet0rrme", "selector"), "'biome seleet0rrme' (live) is the Selector")
+    AssertTrue(BiomeItemsTask.TileIs("Biome`nSelector", "selector"), "plain")
+    AssertEq(BiomeItemsTask.TileIs("Biome Randomizer", "selector"), false, "the Randomizer is not the Selector")
+    AssertEq(BiomeItemsTask.TileIs("Strange Controller", "selector"), false, "the Controller is not the Selector")
+    AssertEq(BiomeItemsTask.TileIs("Biome Selector", "randomizer"), false, "the Selector is not the Randomizer")
+}
+
+Test_BiomeItems_LeftoverSelectorClosedWithItsX() {
+    ; Esc only opens the Roblox menu over it: the between-tasks check
+    ; cancels a prompt still up and clicks the window's X
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m.ocr.selector := true
+    m.ocr.pick := "Corrupt Ruin Drive"
+    lo := m.t.Leftovers()[1]
+    AssertTrue(lo.up.Call() != "", "seen (prompt up, rows hidden: by its bar)")
+    AssertEq(lo.close.Call("", SchedCtx()), 1, "closed")
+    AssertEq(m.ocr.selector, false, "gone")
+    AssertEq(m.ocr.confirmed, "", "nothing confirmed")
+    AssertTrue(m.io.Index("move 908,974") > 0 && m.io.Index("move 1318,323") > m.io.Index("move 908,974"), "Cancel, then the X")
+    AssertEq(m.ocr.menu, false, "no Roblox menu left")
+    ; not up: nothing clicked
+    m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    AssertEq(m2.t.Leftovers()[1].up.Call(), "", "not up")
+}
+
 Test_BiomeItems_SelectorDriveNotFoundClosesAll() {
     ; 2026-10-27 review: Use opened the Selector, the Drive did not read, and
     ; the Selector and the inventory stayed over the screen for 20-60 min
     ; (the server cooldown had started although nothing was confirmed)
     m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Unknown Void Drive"), ["Biome Selector"], ["Select a biome using a Drive"])
-    m.ocr.missing := "Unknown Void Drive"
+    m.ocr.rowsBlank := true                     ; no row reads (one pale row alone is found by its place)
     m.ocr.useCloses := false                    ; the inventory stays behind the Selector
     AssertEq(m.t.Run(SchedCtx()), 0, "nothing confirmed")
-    AssertTrue(m.io.Moved(40, 40) && !m.io.Moved(600, 600), "Use clicked, Confirm never")
+    AssertTrue(m.io.Moved(40, 40) && !m.io.Moved(600, 974), "Use clicked, Confirm never")
     AssertEq(m.ocr.selector, false, "the Selector closed")
     AssertEq(m.ocr.open, false, "the inventory closed")
     AssertEq(m.ocr.menu, false, "no Roblox menu left open")
@@ -472,11 +676,11 @@ Test_BiomeItems_SelectorDriveNotFoundClosesAll() {
     m.t._env.cfg.g["BiomeItems.strangeController"] := 1
     AssertEq(m.t.CanRun(BiState()), true, "no server cooldown started")
     AssertEq(m.t._Ready(m.clk.t).key, "strangeController", "the Selector is held, the Controller is next")
-    ; Esc does not close it (it toggles the Roblox menu): the menu is closed
-    ; again, the inventory is closed, and the report says the Selector is up
+    ; its X does nothing: the inventory is closed, no Roblox menu is left,
+    ; and the report says the Selector is up
     m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Unknown Void Drive"), ["Biome Selector"], ["x"])
-    m2.ocr.missing := "Unknown Void Drive"
-    m2.ocr.escCloses := false
+    m2.ocr.rowsBlank := true
+    m2.ocr.xStuck := true
     m2.ocr.useCloses := false
     AssertEq(m2.t.Run(SchedCtx()), 0, "nothing confirmed")
     AssertEq(m2.ocr.menu, false, "the Roblox menu Esc opened was closed again")
@@ -491,7 +695,7 @@ Test_BiomeItems_SelectorDriveNotFoundClosesAll() {
     ctx := SchedCtx()
     m3.io.DefineProp("ClickHere", {call: (self) => (BiIO.Prototype.ClickHere.Call(self), (self.x = 40 && self.y = 40) ? ctx.RequestPreempt() : 0)})
     AssertEq(m3.t.Run(ctx), 0, "preempted")
-    AssertTrue(!m3.io.Moved(600, 600), "Confirm never clicked")
+    AssertTrue(!m3.io.Moved(600, 974), "Confirm never clicked")
     AssertEq(m3.ocr.selector, false, "the Selector closed")
     AssertEq(m3.ocr.open, false, "the inventory closed")
     m3.t._env.cfg.g["BiomeItems.strangeController"] := 1

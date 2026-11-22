@@ -26,6 +26,10 @@
 ;                          "" = no log found  (LogWatch folder, PickLog)
 ;       privateOk (link)   the link looks right           (RecoveryTask.LinkOk)
 ;       calMissing ()      Array of calibration step ids not recorded yet
+;                          (steps the macro finds on screen by itself,
+;                          Calibrate.IsAuto, are never missing)
+;       calPreset ()       Calibrate.PresetFit: "" or {fit, label, display}
+;                          (no preset made at this display: the nearest used)
 ;       procs (name)       a process with that name runs  (ProcessExist)
 ;       ahkVersion ()      A_AhkVersion
 ;       front ()           Roblox is the foreground window
@@ -52,11 +56,19 @@ class SetupCheck {
 
     ; calibration step id prefix -> [config key, default] pairs: the step is
     ; needed when ANY of them is on. Prefixes not listed here are only counted.
+    ; (audit 2026-11-20: the inventory, aura storage and chat steps were not
+    ; listed, so "none is needed" showed while Limbo, merchants, potions,
+    ; biome items, the obby or hunting skipped for want of them)
+    static InvNeeds := [["merchant.enabled", 1], ["Limbo.enabled", 0], ["BiomeItems.enabled", 0], ["Limited.cursedRune", 0], ["DailyQuests.usePotions", 0]]
     static CalNeeds := [
+        ["inv_open", SetupCheck.InvNeeds], ["inv_items_tab", SetupCheck.InvNeeds], ["inv_search", SetupCheck.InvNeeds],
+        ["inv_use", SetupCheck.InvNeeds], ["inv_tile1_rect", SetupCheck.InvNeeds], ["inv_desc_rect", SetupCheck.InvNeeds],
+        ["aura_", [["Obby.enabled", 0], ["Minions.enabled", 0]]],
+        ["chat_rect", [["merchant.enabled", 1], ["Limited.bossAlert", 1]]],
         ["fisher_", [["Craft.enabled", 1]]],
-        ["cauldron_", [["Craft.enabled", 1]]],
-        ["stella_", [["Craft.enabled", 1]]],
-        ["notify_rect", [["Craft.enabled", 1], ["quests.enabled", 1]]],
+        ["cauldron_", [["Craft.cauldron", 0]]],
+        ["stella_", [["Craft.cauldron", 0]]],
+        ["notify_rect", [["Craft.enabled", 1], ["Craft.cauldron", 0], ["quests.enabled", 1]]],
         ["quest_", [["quests.enabled", 1]]],
         ["selector_", [["BiomeItems.enabled", 0]]],
         ["buff_expand", [["Obby.enabled", 0]]],
@@ -171,6 +183,11 @@ class SetupCheck {
             add("calibration", "Calibration", "info", "could not read the calibration")
         else
             SetupCheck._CalRow(cfg, cm.v, add)
+        ; no preset made at this display: the nearest one is in use
+        pf := call("calPreset", () => Calibrate.PresetFit)
+        if (pf.ok && IsObject(pf.v) && pf.v.HasProp("fit"))
+            add("preset", "Calibration preset", pf.v.fit = "scaled" ? "info" : "warn", Calibrate.FitNote(pf.v)
+                , "Help > Calibrate: check the steps your features use, or record your own")
 
         ; ---- focus stealers --------------------------------------------------
         found := []
@@ -267,13 +284,13 @@ class SetupCheck {
         return Max(0, DateDiff(A_Now, FileGetTime(p, "M"), "Seconds"))
     }
 
-    ; calibration step ids that have no recording
+    ; calibration step ids that have no recording and need one (a step
+    ; found on screen by the macro, lib\AutoCal.ahk, needs none)
     static _CalMissing() {
         miss := []
         for st in Calibrate.Steps() {
-            id := st["id"]
-            if !(IsObject(Calibrate.Point(id)) || IsObject(Calibrate.Rect(id)) || IsObject(Calibrate.Sig(id)))
-                miss.Push(id)
+            if !Calibrate.Ready(st["id"])
+                miss.Push(st["id"])
         }
         return miss
     }
@@ -309,7 +326,7 @@ class SetupCheck {
             }
             add("calibration", "Calibration", "warn", needed.Length " calibration point" (needed.Length = 1 ? "" : "s")
                 " needed by the features you turned on " (needed.Length = 1 ? "is" : "are") " missing (" list ")"
-                , "Open the Calibrate page and record the missing points, or load the preset for your screen size")
+                , "Open the Calibrate page and record the missing points, or apply the preset it picks for your screen")
         } else {
             add("calibration", "Calibration", "info", other " calibration point" (other = 1 ? " is" : "s are")
                 " not recorded; none is needed by the features you turned on")

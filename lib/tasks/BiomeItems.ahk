@@ -74,12 +74,21 @@
 ;   An item whose tile is not found, or that is refused, is held for
 ;   MissingRetryMin, doubled per refusal in a row up to MissingMaxMin; only
 ;   the first refusal sends the errors webhook (both start over on a use).
+;   A try stopped by the screen (a purchase prompt, the inventory that did
+;   not open, the Daily Rewards popup) says nothing about the item: held
+;   ScreenRetryMin, not doubled, one webhook until a use (audit 2026-11-20: an inventory
+;   lockout pushed the Selector's wait to 240 min and it was never used).
+;   Of the items ready, the one used longest ago goes first (the Selector
+;   only got a turn when both others were cooling down).
 ;
 ; SETTINGS [BiomeItems]: enabled 0, biomeRandomizer 0, strangeController 0,
 ;   biomeSelector 0, selectorDrive "" (one of BiomeItemsTask.Drives).
 ; Calibration: inv_open, inv_items_tab, inv_search, inv_tile1_rect, inv_use,
-;   inv_desc_rect (inv_tile2_rect optional), selector_list_rect +
-;   selector_confirm for the Selector.
+;   inv_desc_rect (inv_tile2_rect optional). The Selector's
+;   selector_list_rect + selector_confirm need NO calibration: the Drive
+;   list is found on screen by its Drives' names (_FindSelector,
+;   lib\AutoCal.ahk) when they are not recorded, or when no Drive reads in
+;   the recorded rect; a recorded rect a Drive reads in is used as before.
 ; ---------------------------------------------------------------------------
 
 class BiomeItemsTask {
@@ -111,6 +120,7 @@ class BiomeItemsTask {
     static CdMarginSec := 30
     static MissingRetryMin := 30     ; first hold; doubled per refusal in a row
     static MissingMaxMin := 240      ; longest hold
+    static ScreenRetryMin := 10      ; hold after a try the screen stopped (not the item's fault)
     ; "once" counts unless it is "once every / per / each" (a cooldown text)
     static Forbidden := "i)one[\s\-]*time|single[\s\-]*use|consumed|\bonce\b(?!\s+(?:every|per|each|a\b))"
     static InvMs := 450
@@ -122,9 +132,32 @@ class BiomeItemsTask {
     static UseMs := 900
     static RereadMs := 300         ; before the tile is read once more (a read mid-redraw)
     static PickMs := 800
+    ; The Selector's list boots after Use (live 2026-11-21: one row at 0.3 s,
+    ; all nine at 1.2 s): looked at only after this much more.
+    static BootMs := 1500
+    ; The Biome Selector window, as fractions of selector_list_rect (live
+    ; 2026-11-21 at 2560x1440: list rect 822,515,672,416; rows 51 px apart,
+    ; the first row's middle 30 below its top; the bottom bar "BIOME SELECTOR
+    ; IS READY TO BE USED" 432 below the first row; its X 916 right of the
+    ; list's left and 66 above the first row; the prompt's Confirm / Cancel
+    ; 159 above the bar, Cancel 458 right of the list's left; the prompt's
+    ; "You have selected [ Drive ]" 310-350 above the bar). The window bobs
+    ; ~32 px up and down, so every place is worked out from a row or the bar
+    ; read just before.
+    static Geo := {pitch: 0.125, row1: 0.072, bar: 1.038, closeDx: 1.363, closeDy: -0.159
+        , cancelDx: 0.68, btnDy: -0.382, promptDx: 0.1, promptW: 0.75, promptTop: -0.90, promptH: 0.26
+        , barLo: 0.95, barHi: 1.30}
+    static BarRe := "i)ready|be\s*used|us[e3]d|t[o0]\s*be"
+    static PromptRe := "i)selected|sure|c[o0]nfirm|cancel"
+    static BtnRe := "i)c[o0]nfirm|cancel"     ; the prompt's buttons: dark on light, read where the bar is not (bright sky)
+    static CloseTries := 3
 
     name := "biomeitems"
     priority := 5
+
+    _selRow1 := ""
+    _selAuto := ""                   ; the Drive list's rect found on screen (_FindSelector)
+    _closeTry := ""
 
     __New(deps := "") {
         this._env := TaskEnv(deps)
@@ -139,6 +172,7 @@ class BiomeItemsTask {
         this._missing := Map()       ; key -> env.Now() when its tile was not found or it was refused
         this._holdMs := Map()        ; key -> how long that hold lasts (default MissingRetryMin)
         this._fails := Map()         ; key -> refusals in a row (since its last use)
+        this._screenTold := Map()    ; key -> a screen stop was reported (since its last use)
         this._runeSpent := false     ; a Cursed Rune Fragment was used this night
         this._state := ""            ; the state CanRun saw last (Run reads its biome)
         this._Load()
@@ -211,7 +245,21 @@ class BiomeItemsTask {
 
     ; The tile names the item: its word in the OCR text with the game font's
     ; look-alikes folded ("Biome Rondomizer" = randomizer), and not one-time.
-    static TileIs(text, word, consumable := false) => InStr(GameLists.Fold(text), GameLists.Fold(word)) && (consumable || !BiomeItemsTask.Forbid(text))
+    ; The tile names the item: its word in the folded text, or (words of 7+
+    ; letters) one letter off, with 0 read as o (live 2026-11-21: 'biome
+    ; seleet0rrme' was the Selector: c as e, o as 0; 30 min unused).
+    static TileIs(text, word, consumable := false) {
+        t := GameLists.Fold(StrReplace(String(text), "0", "o")), w := GameLists.Fold(word)
+        hit := (w != "" && InStr(t, w) > 0)
+        if (!hit && StrLen(w) >= 7 && StrLen(t) >= StrLen(w)) {
+            Loop StrLen(t) - StrLen(w) + 1
+                if (GameLists.Distance(SubStr(t, A_Index, StrLen(w)), w) <= 1) {
+                    hit := true
+                    break
+                }
+        }
+        return hit && (consumable || !BiomeItemsTask.Forbid(text))
+    }
 
     _TileIs(text, it) => BiomeItemsTask.TileIs(text, it.word, it.HasProp("consumable") && it.consumable)
 
@@ -279,9 +327,11 @@ class BiomeItemsTask {
         return IsObject(this._Ready(now))
     }
 
-    ; First enabled item off its cooldown, or "".
+    ; The enabled item off its cooldown that was used longest ago (never
+    ; used first, then in Items order), or "".
     _Ready(now) {
         env := this._env
+        pick := ""
         for it in BiomeItemsTask.Items {
             if !env.cfg.Get("BiomeItems." it.key, 0)
                 continue
@@ -292,17 +342,16 @@ class BiomeItemsTask {
                 continue
             if (it.key = "biomeSelector") {
                 if (BiomeItemsTask.DriveKey(env.cfg.Get("BiomeItems.selectorDrive", "")) = "") {
-                    env.Problem("selector:drive", "biome items: pick the Drive for the Biome Selector in Automate > Biome items: skipped")
-                    continue
-                }
-                if !(IsObject(env.cal.Rect("selector_list_rect")) && IsObject(env.cal.Point("selector_confirm"))) {
-                    env.Problem("cal:selector", "biome items: Biome Selector needs calibration steps selector_list_rect and selector_confirm: skipped")
+                    env.Problem("selector:drive", "biome items: pick the Drive for the Biome Selector in Quests & events > Biome items: skipped")
                     continue
                 }
             }
-            return it
+            if !IsObject(pick)
+                pick := it
+            else if (this._lastUse.Has(pick.key) && (!this._lastUse.Has(it.key) || this._lastUse[it.key] < this._lastUse[pick.key]))
+                pick := it
         }
-        return ""
+        return pick
     }
 
     _InvCal() {
@@ -350,7 +399,7 @@ class BiomeItemsTask {
     ; way _CloseSelector does; only while a Drive's name reads in it).
     Leftovers() {
         sel := {up: () => this._SelectorUp() ? "Biome Selector list" : ""
-            , close: (label, ctx) => this._EscSelector(ctx)}
+            , close: (label, ctx) => this._CloseSelectorX(ctx)}
         return [sel]
     }
 
@@ -391,7 +440,7 @@ class BiomeItemsTask {
         if (r = 1)
             env.Log("biome items: the Daily Rewards popup was over the game: closed it")
         else if (r = 2)
-            return this._Fail(c, it, "the Daily Rewards popup is over the game and was not closed: nothing clicked")
+            return this._Fail(c, it, "the Daily Rewards popup is over the game and was not closed: nothing clicked", true)
         ; Aura Collections left open covers the inventory (live 2026-11-02)
         r := Input.CloseCollections(ctx, io, env.ocrFn)
         if (r < 0)
@@ -400,13 +449,13 @@ class BiomeItemsTask {
             env.Log("biome items: the Aura Collections screen was open: " (r = 1 ? "closed it" : "it would not close"))
         if !env.InvOpen(c.inv_items_tab) {
             if ((why := this._Unsafe(c, false)) != "")
-                return this._Fail(c, it, why)
+                return this._Fail(c, it, why, true)
             env.Click(c.inv_open)
             if !env.Wait(BiomeItemsTask.InvMs, ctx)
                 return -1
         }
         if ((why := this._Unsafe(c)) != "")
-            return this._Fail(c, it, why)
+            return this._Fail(c, it, why, true)
         env.Click(c.inv_items_tab)
         if !env.Wait(BiomeItemsTask.InvMs, ctx)
             return -1
@@ -417,7 +466,7 @@ class BiomeItemsTask {
             if ctx.ShouldStop()
                 return -1
             if ((why := this._Unsafe(c)) != "")
-                return this._Fail(c, it, why)
+                return this._Fail(c, it, why, true)
             env.Click(c.inv_search)
             Input.ClearText(io)
             Input.TypeText(it.name, io)
@@ -447,7 +496,7 @@ class BiomeItemsTask {
         tile := "", d := ""
         for i, r in tiles {
             if ((why := this._Unsafe(c)) != "")
-                return this._Fail(c, it, why)
+                return this._Fail(c, it, why, true)
             env.Click({x: r.x + r.w // 2, y: r.y + r.h // 2})
             if !env.Wait(BiomeItemsTask.SelectMs, ctx)
                 return -1
@@ -477,7 +526,7 @@ class BiomeItemsTask {
         if ctx.ShouldStop()
             return -1
         if ((why := this._Unsafe(c)) != "")
-            return this._Fail(c, it, why)
+            return this._Fail(c, it, why, true)
         env.Click(c.inv_use)
         ; the Selector is only used once a Drive is confirmed: its cooldowns
         ; start there (2026-10-27 review: a Drive not found started the 20 min
@@ -492,6 +541,10 @@ class BiomeItemsTask {
             return sel ? this._Cut(c, it, ctx) : -1
         if sel {
             drive := env.cfg.Get("BiomeItems.selectorDrive", "")
+            if !env.Wait(BiomeItemsTask.BootMs, ctx)       ; the list boots
+                return this._Cut(c, it, ctx)
+            if (this._FindSelector(ctx) < 0)               ; the calibrated list rect, or found on screen
+                return this._Cut(c, it, ctx)
             p := this._PickDrive(drive, ctx)
             if (p < 0)
                 return this._Cut(c, it, ctx)
@@ -499,11 +552,48 @@ class BiomeItemsTask {
                 return this._NoDrive(c, it, drive, ctx)
             if !env.Wait(BiomeItemsTask.PickMs, ctx)
                 return this._Cut(c, it, ctx)
-            if (env.BuyPrompt("biome items") || !this._SelectorUp()) {
-                env.Log("biome items: a purchase prompt came up or the Biome Selector list is gone before Confirm: not confirmed")
+            if env.BuyPrompt("biome items") {
+                env.Log("biome items: a purchase prompt came up before Confirm: not confirmed")
                 return this._NoDrive(c, it, drive, ctx)
             }
-            env.Click(env.cal.Point("selector_confirm"))
+            ; the prompt names the Drive Confirm would use: only ours (live
+            ; 2026-11-21: a click through the open Selector picked Corrupt
+            ; Ruin Drive)
+            loc := this._Locate(ctx)
+            if (!IsObject(loc) && this._selRow1 != "")
+                loc := {row1: this._selRow1, bar: Round(this._selRow1 + BiomeItemsTask.Geo.bar * this._SelRect().h)}
+            pt := IsObject(loc) ? this._PromptText(loc) : ""
+            confirmPt := IsObject(loc) ? this._PromptBtn(loc, "confirm") : ""
+            wide := "", cp := ""
+            if !BiomeItemsTask.PromptIs(pt, BiomeItemsTask.DriveIndex(drive)) {
+                ; the window read whole (live 05:09: pale bar and buttons on a
+                ; bright sky placed the prompt read on the title): while the
+                ; prompt is up its rows are hidden, so the only Drive named in
+                ; the window is the selected one. Confirm at the calibrated
+                ; spot then (Cancel is far to its right: a bob only misses).
+                wide := this._WideText()
+                cp := IsObject(this._selAuto) ? "" : env.cal.Point("selector_confirm")
+                if (IsObject(cp) && RegExMatch(wide, BiomeItemsTask.PromptRe) && BiomeItemsTask.PromptIs(wide, BiomeItemsTask.DriveIndex(drive))) {
+                    env.Log("biome items: the Selector's prompt names " drive " (read across the window): Confirm at its calibrated spot")
+                    pt := wide, confirmPt := {x: cp.x, y: cp.y}
+                }
+            }
+            if !BiomeItemsTask.PromptIs(pt, BiomeItemsTask.DriveIndex(drive)) {
+                shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
+                if (shot != "")
+                    env.Log("biome items: screen at the Selector's prompt saved to " shot (IsObject(loc) ? " (bar " loc.bar ")" : ""))
+                env.Log("biome items: the Selector's prompt does not name " drive " (read: '" SubStr(Trim(RegExReplace(pt, "\s+", " ")), 1, 60) "'): Cancel, nothing confirmed")
+                if (IsObject(loc) && RegExMatch(pt, BiomeItemsTask.PromptRe)) {
+                    env.Click(this._PromptBtn(loc, "cancel"))
+                    env.Wait(BiomeItemsTask.InvMs, ctx)
+                } else if (IsObject(cp) && RegExMatch(wide, BiomeItemsTask.PromptRe)) {
+                    r := this._SelRect()           ; Cancel: the calibrated Confirm's row, its own x
+                    env.Click({x: Round(r.x + BiomeItemsTask.Geo.cancelDx * r.w), y: cp.y})
+                    env.Wait(BiomeItemsTask.InvMs, ctx)
+                }
+                return this._NoDrive(c, it, drive, ctx)
+            }
+            env.Click(confirmPt)
             this._Used(it)
             if !env.Wait(BiomeItemsTask.UseMs, ctx)
                 return -1
@@ -533,40 +623,166 @@ class BiomeItemsTask {
         return ""
     }
 
-    ; Finds `drive` in selector_list_rect by reading horizontal strips (the
-    ; window bobs, so positions are read, not remembered), re-reads the
-    ; strip, clicks its middle. Not in view: scroll the list down, try again.
+    ; A Drive's key word in an OCR read, through the game-font fold
+    ; (GameText): "abyss" reads 'obyss', "chilling" 'chiIIing', "infernal"
+    ; 'infemal'. The nine keys stay apart folded (tested).
+    static DriveIn(text, key) => GameText.Has(text, key)
+
+    ; Index (1-based) of a Drive name in Drives, else 0.
+    static DriveIndex(name) {
+        for d in BiomeItemsTask.Drives
+            if (StrLower(Trim(String(name))) = StrLower(d))
+                return A_Index
+        return 0
+    }
+
+    ; Drive i's first or second word reads in the text: a pale row loses one
+    ; ('Ab ss Curse' still has "curse"; live 2026-11-21).
+    static RowIs(text, i) {
+        w := StrSplit(BiomeItemsTask.Drives[i], " ")
+        return GameText.Has(text, w[1]) || GameText.Has(text, w[2])
+    }
+
+    ; A read of the list rect shows the Selector: a Drive's row, or its prompt.
+    static ListOrPrompt(t) {
+        for d in BiomeItemsTask.Drives
+            if BiomeItemsTask.RowIs(t, A_Index)
+                return true
+        return RegExMatch(t, BiomeItemsTask.PromptRe) > 0
+    }
+
+    ; The prompt's text names Drive i and no other one.
+    static PromptIs(text, i) {
+        if (i < 1 || !BiomeItemsTask.RowIs(text, i))
+            return false
+        for d in BiomeItemsTask.Drives
+            if (A_Index != i && BiomeItemsTask.RowIs(text, A_Index))
+                return false
+        return true
+    }
+
+    ; Reads selector_list_rect in horizontal strips (the window bobs, so
+    ; places are read, not remembered). -> Map(Drive index -> row middle y)
+    ; for every Drive whose row read, or "" when stopped.
+    _ScanRows(r, ctx) {
+        env := this._env
+        sh := Max(24, r.h // 9)                 ; about one row
+        step := Max(8, sh // 3)
+        hits := Map()
+        y := r.y
+        while (y + sh <= r.y + r.h) {
+            if ctx.ShouldStop()
+                return ""
+            t := (env.ocrFn)(r.x, y, r.w, sh)
+            for d in BiomeItemsTask.Drives
+                if BiomeItemsTask.RowIs(t, A_Index) {
+                    if !hits.Has(A_Index)
+                        hits[A_Index] := []
+                    hits[A_Index].Push(y + sh // 2)
+                }
+            y += step
+        }
+        rows := Map()
+        for i, ys in hits {
+            top := ys[1], bot := ys[1]
+            for h in ys                         ; the first run of hits = the row
+                if (h - bot <= step)
+                    bot := h
+            rows[i] := (top + bot) // 2
+        }
+        return rows
+    }
+
+    ; The first row's middle y from the rows read (each row put back by its
+    ; place in the fixed order). "" when no row read.
+    static Row1(rows, r) {
+        if (!IsObject(rows) || rows.Count = 0)
+            return ""
+        sum := 0
+        for i, y in rows
+            sum += y - (i - 1) * r.h * BiomeItemsTask.Geo.pitch
+        return Round(sum / rows.Count)
+    }
+
+    ; The Drive list's rect: found on screen this run (_FindSelector), else
+    ; the calibrated selector_list_rect. "" = neither.
+    _SelRect() => IsObject(this._selAuto) ? this._selAuto : this._env.cal.Rect("selector_list_rect")
+
+    ; The prompt's Confirm x: the calibrated selector_confirm with the
+    ; calibrated rect, else worked out from the rect found.
+    _ConfirmX(r) {
+        pt := IsObject(this._selAuto) ? "" : this._env.cal.Point("selector_confirm")
+        return IsObject(pt) ? pt.x : AutoCal.SelectorConfirmX(r)
+    }
+
+    ; A Drive's name reads in rect r (one read).
+    _DriveReads(r) {
+        t := (this._env.ocrFn)(r.x, r.y, r.w, r.h)
+        for d in BiomeItemsTask.Drives
+            if BiomeItemsTask.RowIs(t, A_Index)
+                return true
+        return false
+    }
+
+    ; The Selector's list just opened: where is it? The calibrated rect while
+    ; both steps are recorded and a Drive reads in it (as before). Else it is
+    ; FOUND ON SCREEN by its Drives' names (AutoCal.Selector: the whole
+    ; screen at 1x, then its middle at 2x; FindTries looks, the window bobs
+    ; and its rows read differently each time), and used only when a Drive
+    ; reads in the rect found. Nothing found: the calibrated rect stays.
+    ; -> 1 calibrated / found, 0 neither, -1 stopped
+    static FindTries := 3
+    static FindMs := 400
+    static FindBox := {x: 640, y: 300, w: 1280, h: 840}
+    _FindSelector(ctx := "") {
+        env := this._env
+        cal := env.cal.Rect("selector_list_rect")
+        this._selAuto := ""
+        if (IsObject(cal) && IsObject(env.cal.Point("selector_confirm")) && this._DriveReads(cal))
+            return 1
+        Loop BiomeItemsTask.FindTries {
+            for look in [["", 1], [BiomeItemsTask.FindBox, 2]] {
+                r := AutoCal.Selector(env.Lines(look[1], look[2]), BiomeItemsTask.Drives)
+                if (IsObject(r) && this._DriveReads(r)) {
+                    this._selAuto := r
+                    env.Log("biome items: the Biome Selector's Drive list found on screen at " r.x "," r.y " (" r.w "x" r.h ")"
+                        . (IsObject(cal) ? ": no Drive read in the calibrated selector_list_rect" : ": selector_list_rect is not calibrated"))
+                    return 1
+                }
+            }
+            if (IsObject(ctx) && A_Index < BiomeItemsTask.FindTries && !env.Wait(BiomeItemsTask.FindMs, ctx))
+                return -1
+        }
+        return IsObject(cal) ? 1 : 0
+    }
+
+    ; Finds `drive` in the list and clicks its row: by its name, or, when its
+    ; row does not read (pale on a bright sky), by its place in the fixed
+    ; order from the rows that did. Not in view: scroll the list down, try
+    ; again. The prompt it opens is checked before Confirm. Sets
+    ; this._selRow1 (the first row's y at the click).
     ; -> 1 clicked, 0 not found, -1 stopped.
     _PickDrive(drive, ctx) {
         env := this._env
-        key := BiomeItemsTask.DriveKey(drive)
-        r := env.cal.Rect("selector_list_rect")
-        if (key = "" || !IsObject(r))
+        ti := BiomeItemsTask.DriveIndex(drive)
+        r := this._SelRect()
+        this._selRow1 := ""
+        if (!ti || !IsObject(r))
             return 0
-        sh := Max(24, r.h // 9)                 ; about one row
-        step := Max(8, sh // 3)
         Loop 2 {
-            hits := []
-            y := r.y
-            while (y + sh <= r.y + r.h) {
-                if ctx.ShouldStop()
-                    return -1
-                if InStr(StrLower((env.ocrFn)(r.x, y, r.w, sh)), key)
-                    hits.Push(y)
-                y += step
-            }
-            if (hits.Length > 0) {
-                top := hits[1], bot := hits[1]
-                for h in hits                   ; the first run of hits = the row
-                    if (h - bot <= step)
-                        bot := h
-                cy := (top + bot) // 2
-                if InStr(StrLower((env.ocrFn)(r.x, cy, r.w, sh)), key) {
-                    if env.BuyPrompt("biome items")
-                        return 0
-                    env.Click({x: r.x + r.w // 2, y: cy + sh // 2})
-                    return 1
-                }
+            rows := this._ScanRows(r, ctx)
+            if !IsObject(rows)
+                return -1
+            row1 := BiomeItemsTask.Row1(rows, r)
+            cy := rows.Has(ti) ? rows[ti] : (row1 = "" ? "" : Round(row1 + (ti - 1) * r.h * BiomeItemsTask.Geo.pitch))
+            if (cy != "" && cy >= r.y && cy <= r.y + r.h) {
+                if env.BuyPrompt("biome items")
+                    return 0
+                if !rows.Has(ti)
+                    env.Log("biome items: " drive "'s row did not read; clicked by its place in the list")
+                this._selRow1 := row1
+                env.Click({x: r.x + r.w // 2, y: cy})
+                return 1
             }
             if (A_Index = 1) {                  ; below the fold: scroll the list
                 env.io.MoveTo(r.x + r.w // 2, r.y + r.h // 2)
@@ -575,6 +791,148 @@ class BiomeItemsTask {
                     return -1
             }
         }
+        return 0
+    }
+
+    ; Where the Selector window is now: its bottom bar read (1x, then 2x),
+    ; else its rows. -> {bar, row1} (y values) or "".
+    _Locate(ctx) {
+        env := this._env
+        r := this._SelRect()
+        if !IsObject(r)
+            return ""
+        g := BiomeItemsTask.Geo
+        for sc in [1, 2] {
+            sh := Round(Max(40, r.h // 10) * (sc = 1 ? 1 : 1.5))
+            ys := []
+            y := Round(r.y + g.barLo * r.h)
+            while (y <= r.y + g.barHi * r.h) {
+                if ctx.ShouldStop()
+                    return ""
+                if RegExMatch((env.ocrFn)(r.x, y, r.w, sh, sc), BiomeItemsTask.BarRe)
+                    ys.Push(y + sh / 2)
+                y += 10
+            }
+            if ys.Length {
+                sum := 0
+                for v in ys
+                    sum += v
+                bar := Round(sum / ys.Length)
+                return {bar: bar, row1: Round(bar - g.bar * r.h)}
+            }
+        }
+        ; the prompt's Confirm / Cancel row (live 2026-11-21: the pale bar did
+        ; not read on a bright sky, the dark button text did)
+        sh := Max(36, r.h // 10)
+        for sc in [1, 2] {
+            ys := []
+            y := r.y
+            while (y + sh <= r.y + r.h) {
+                if ctx.ShouldStop()
+                    return ""
+                if RegExMatch((env.ocrFn)(r.x, y, r.w, sh, sc), BiomeItemsTask.BtnRe)
+                    ys.Push(y + sh / 2)
+                y += 12
+            }
+            if ys.Length {
+                sum := 0
+                for v in ys
+                    sum += v
+                bar := Round(sum / ys.Length - g.btnDy * r.h)
+                return {bar: bar, row1: Round(bar - g.bar * r.h)}
+            }
+        }
+        rows := this._ScanRows(r, ctx)
+        row1 := BiomeItemsTask.Row1(rows, r)
+        return (row1 = "") ? "" : {bar: Round(row1 + g.bar * r.h), row1: row1}
+    }
+
+    ; The prompt's text ("You have selected [ Drive ] Are you sure?") at loc,
+    ; read at 1x then 2x. -> text ("" when nothing reads)
+    _PromptText(loc) {
+        env := this._env
+        r := this._SelRect()
+        g := BiomeItemsTask.Geo
+        x := Round(r.x + g.promptDx * r.w), y := Round(loc.bar + g.promptTop * r.h)
+        w := Round(g.promptW * r.w), h := Round(g.promptH * r.h)
+        ; 1x, and 2x unless 1x already names exactly one Drive (live 03:21:
+        ; 1x read 'Youzah e selected' without the Drive line): both reads
+        ; together, so the Drive's name has two chances
+        t := String((env.ocrFn)(x, y, w, h, 1))
+        named := 0
+        for d in BiomeItemsTask.Drives
+            named += BiomeItemsTask.RowIs(t, A_Index) ? 1 : 0
+        if (named != 1)
+            t .= "`n" String((env.ocrFn)(x, y, w, h, 2))
+        return t
+    }
+
+    ; The whole Selector window read (the list rect with room for the title
+    ; above and the bottom bar below), 1x and 2x together.
+    _WideText() {
+        r := this._SelRect()
+        if !IsObject(r)
+            return ""
+        y := Max(0, Round(r.y - 0.15 * r.h)), h := Round(1.35 * r.h)
+        return String((this._env.ocrFn)(r.x, y, r.w, h, 1)) "`n" String((this._env.ocrFn)(r.x, y, r.w, h, 2))
+    }
+
+    ; The prompt's Confirm / Cancel button at loc (Confirm: selector_confirm's
+    ; x, the y from the bar: the calibrated y was one moment of the bob).
+    _PromptBtn(loc, which) {
+        env := this._env
+        r := this._SelRect()
+        g := BiomeItemsTask.Geo
+        y := Round(loc.bar + g.btnDy * r.h)
+        if (which = "confirm")
+            return {x: this._ConfirmX(r), y: y}
+        return {x: Round(r.x + g.cancelDx * r.w), y: y}
+    }
+
+    ; Closes the Selector with its X (Esc does not close it: it only opens
+    ; the Roblox menu over it; live 2026-11-21). A prompt still up is
+    ; cancelled first, a Roblox menu left by an Esc is closed. Never clicks
+    ; without the window placed by a read. -> 1 closed, 0 still up / not
+    ; placed, -1 halted
+    _CloseSelectorX(ctx) {
+        env := this._env
+        r := this._SelRect()
+        if !IsObject(r)
+            return 0
+        g := BiomeItemsTask.Geo
+        Loop BiomeItemsTask.CloseTries {
+            if this._MenuUp() {
+                Input.Key("Esc", Input.TapHoldMs, env.io)
+                if !env.Wait(BiomeItemsTask.InvMs, ctx)
+                    return -1
+            }
+            if !this._SelectorUp()
+                return 1
+            loc := this._Locate(ctx)
+            if ctx.ShouldStop()
+                return -1
+            if !IsObject(loc) {
+                env.Log("biome items: the Biome Selector is up but could not be placed (its bar and rows did not read): not clicked")
+                return 0
+            }
+            if env.BuyPrompt("biome items")
+                return 0
+            if RegExMatch(this._PromptText(loc), BiomeItemsTask.PromptRe) {
+                env.Click(this._PromptBtn(loc, "cancel"))
+                if !env.Wait(BiomeItemsTask.InvMs, ctx)
+                    return -1
+                continue                        ; placed again: the window moved meanwhile
+            }
+            xp := {x: Round(r.x + g.closeDx * r.w), y: Round(loc.row1 + g.closeDy * r.h)}
+            this._closeTry := "bar " loc.bar ", X " xp.x "," xp.y
+            env.Click(xp)
+            if !env.Wait(BiomeItemsTask.InvMs, ctx)
+                return -1
+        }
+        if !this._SelectorUp()
+            return 1
+        shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
+        env.Log("biome items: the Biome Selector did not close (" this._closeTry ")" (shot != "" ? "; screen saved to " shot : ""))
         return 0
     }
 
@@ -587,7 +945,7 @@ class BiomeItemsTask {
             this._runeSpent := true             ; one per night; no server cooldown
         else
             this._lastAny := now
-        for m in [this._missing, this._holdMs, this._fails]
+        for m in [this._missing, this._holdMs, this._fails, this._screenTold]
             if m.Has(it.key)
                 m.Delete(it.key)
         this._Save()
@@ -603,8 +961,11 @@ class BiomeItemsTask {
         r := this._CloseSelector(c, it, CleanupCtx(ctx))     ; a preempt still closes what Use opened
         if (r < 0)
             return -1
+        ; not calibrated and not found on screen: it cannot be seen or closed
+        placed := IsObject(this._SelRect())
         env.Report("errors", "Biome Selector: Drive not found", drive " was not read in the list (selector_list_rect); nothing confirmed"
-            . (r ? "; the Selector and the inventory were closed." : ". The Selector is still open: close it yourself."), 0xE74C3C)
+            . (!placed ? ". The Selector's list was not found on screen: if it is still open, close it yourself (recording selector_list_rect on the Calibrate page helps)."
+            : r ? "; the Selector and the inventory were closed." : ". The Selector is still open: close it yourself."), 0xE74C3C)
         return 0
     }
 
@@ -623,7 +984,7 @@ class BiomeItemsTask {
     ; menu. -> 1 closed, 0 the Selector still reads, -1 halted
     _CloseSelector(c, it, cctx) {
         env := this._env
-        if (this._SelectorUp() && this._EscSelector(cctx) < 0)
+        if (this._SelectorUp() && this._CloseSelectorX(cctx) < 0)
             return -1
         if (this._TileIs(this._Read(c.inv_tile1_rect), it) || env.InvOpen(c.inv_items_tab))
             env.CloseInv(c.inv_open, c.inv_items_tab, cctx)
@@ -634,14 +995,27 @@ class BiomeItemsTask {
 
     ; The BIOME SELECTOR list is on screen: a Drive's name reads in it.
     _SelectorUp() {
-        r := this._env.cal.Rect("selector_list_rect")
-        if !IsObject(r)
-            return false
-        t := StrLower((this._env.ocrFn)(r.x, r.y, r.w, r.h))
-        for d in BiomeItemsTask.Drives
-            if InStr(t, BiomeItemsTask.DriveKey(d))
-                return true
-        return false
+        r := this._SelRect()
+        if !IsObject(r) {
+            ; not calibrated and not found yet this run: looked for on screen
+            ; (one read), only with the Selector switched on
+            if !(IsObject(this._env.cfg) && this._env.cfg.Get("BiomeItems.biomeSelector", 0))
+                return false
+            r := AutoCal.Selector(this._env.Lines(), BiomeItemsTask.Drives)
+            if !(IsObject(r) && this._DriveReads(r))
+                return false
+            this._selAuto := r
+            return true
+        }
+        t := (this._env.ocrFn)(r.x, r.y, r.w, r.h)
+        if BiomeItemsTask.ListOrPrompt(t)
+            return true
+        if (StrLen(Trim(t)) >= 8 && BiomeItemsTask.ListOrPrompt((this._env.ocrFn)(r.x, r.y, r.w, r.h, 2)))
+            return true
+        ; the prompt hides the rows: its bottom bar (below the list rect)
+        g := BiomeItemsTask.Geo
+        y := Round(r.y + g.barLo * r.h)
+        return RegExMatch((this._env.ocrFn)(r.x, y, r.w, Round((g.barHi - g.barLo) * r.h) + Max(40, r.h // 10)), BiomeItemsTask.BarRe) > 0
     }
 
     ; The Roblox menu is open (its Resume button reads; Input.ResetChecks).
@@ -655,16 +1029,22 @@ class BiomeItemsTask {
     ; every tick and fishing never ran). Overnight review: owning only the
     ; one-time Randomizer sent an errors webhook every 30 min all night, so
     ; each refusal in a row doubles the hold (up to MissingMaxMin) and only
-    ; the first one sends the webhook; a use starts both over. -> 0
-    _Fail(c, it, why) {
+    ; the first one sends the webhook; a use starts both over. screen: the
+    ; screen stopped the try (a prompt, the inventory, a popup), not the
+    ; item: ScreenRetryMin, the refusals in a row unchanged, the webhook only
+    ; for the first such stop until a use. -> 0
+    _Fail(c, it, why, screen := false) {
         env := this._env
-        n := (this._fails.Has(it.key) ? this._fails[it.key] : 0) + 1
+        n := (this._fails.Has(it.key) ? this._fails[it.key] : 0) + (screen ? 0 : 1)
         this._fails[it.key] := n
-        holdMin := Min(BiomeItemsTask.MissingRetryMin * 2 ** (n - 1), BiomeItemsTask.MissingMaxMin)
+        holdMin := screen ? BiomeItemsTask.ScreenRetryMin : Min(BiomeItemsTask.MissingRetryMin * 2 ** (n - 1), BiomeItemsTask.MissingMaxMin)
         this._missing[it.key] := env.Now()
         this._holdMs[it.key] := holdMin * 60000
         env.Log("biome items: " it.name " not used: " why " (next try in " Round(holdMin) " min)")
-        if (n = 1)
+        first := screen ? !this._screenTold.Has(it.key) : (n = 1)
+        if screen
+            this._screenTold[it.key] := true
+        if first
             env.Report("errors", "Biome item not used", it.name ": " why
                 . ". Tried again later (back-off up to " BiomeItemsTask.MissingMaxMin " min, not reported again until it is used).", 0xE74C3C)
         if !Input.PurchaseUp(env.io, env.ocrFn)       ; a prompt that would not close: no more clicks

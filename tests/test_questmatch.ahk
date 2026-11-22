@@ -375,6 +375,68 @@ Test_QuestMatch_RarityHuntIsTheAuraHunt() {
     AssertEq(QuestMatch.Match("Hunt", q), "", "bare word")
 }
 
+Test_QuestMatch_BoardHashNumbersAreRomanNumerals() {
+    ; live 2026-11-18: the board says "Player Hunt #2", the list "Player Hunt II"
+    q := Config._DefQuests()
+    for pair in [["Player Hunt #1", "Player Hunt I"], ["Player Hunt #2", "Player Hunt II"]
+            , ["Player Hunt #3", "Player Hunt III"], ["Delivery #4", "Delivery IV"]
+            , ["Player Hunt #2`nKill 10 players", "Player Hunt II"], ["Player Hunt #5", ""]] {
+        m := QuestMatch.Match(pair[1], q)
+        AssertEq(IsObject(m) ? m.name : "", pair[2], pair[1])
+    }
+    ; fuzzy misread of the title still lands on the right numeral
+    m := QuestMatch.Match("Ployer Hunt #2", q)
+    AssertEq(IsObject(m) ? m.name : "", "Player Hunt II", "fuzzy title, #2")
+    ; exactness: #1 is never II, #2 never I or III
+    m := QuestMatch.Match("Player Hunt #1", q)
+    AssertTrue(!IsObject(m) || m.name != "Player Hunt II", "#1 is not II")
+    m := QuestMatch.Match("Player Hunt #2", q)
+    AssertTrue(!IsObject(m) || (m.name != "Player Hunt I" && m.name != "Player Hunt III"), "#2 is not I/III")
+}
+
+Test_QuestMatch_SymbolOfLuckIsLuckyClover() {
+    q := Config._DefQuests()
+    for t in ["A Symbol of Luck #1", "A Symbol of Luck #2", "A Symbol of Luck`nCollect 3 Lucky Clovers"] {
+        m := QuestMatch.Match(t, q)
+        AssertEq(IsObject(m) ? m.name : "", "Lucky Clover", t)
+    }
+}
+
+Test_QuestMatch_NewBoardQuests() {
+    q := Config._DefQuests()
+    m := QuestMatch.Match("To the Temple`nComplete the obby", q)
+    AssertEq(IsObject(m) ? m.name : "", "To the Temple", "temple")
+    AssertTrue(IsObject(m) && m.enabled, "temple enabled")
+    m := QuestMatch.Match("Your First Gear`nVisit Jake", q)
+    AssertEq(IsObject(m) ? m.name : "", "Your First Gear", "gear")
+    AssertTrue(IsObject(m) && !m.enabled, "gear disabled (cannot craft)")
+    ; the old matches still hold
+    AssertEq(QuestMatch.Match("Epic Hunt", q).name, "Epic Aura Hunt", "epic hunt")
+    AssertEq(QuestMatch.Match("Storfoll Breakthrough", q).name, "Breakthroughs", "breakthrough")
+    AssertEq(QuestMatch.Match("Delivery II", q).name, "Delivery II", "delivery ii")
+}
+
+Test_QuestMatch_OldQuestsFileGetsNewQuestsDisabled() {
+    ; a quests.json from before 2026-11-18 lacks To the Temple / Your First Gear
+    d := A_Temp "\qm_cfg_" A_TickCount
+    DirCreate(d "\data")
+    FileAppend('{"types":[{"name":"Obby","enabled":true,"quests":[]},{"name":"Delivery","enabled":true,"quests":[{"name":"Delivery I","enabled":false}]}]}', d "\data\quests.json", "UTF-8")
+    cfg := Config.Load(d)
+    data := cfg.Data("quests")
+    m := QuestMatch.Match("To the Temple", data)
+    AssertEq(IsObject(m) ? m.name : "", "To the Temple", "temple appended")
+    AssertTrue(IsObject(m) && !m.enabled, "appended disabled")
+    m := QuestMatch.Match("Your First Gear", data)
+    AssertTrue(IsObject(m) && !m.enabled, "gear appended disabled")
+    m := QuestMatch.Match("Delivery I", data)
+    AssertTrue(IsObject(m) && !m.enabled, "user's own setting kept")
+    n := 0
+    for ty in data["types"]
+        n += (ty["name"] = "Obby") ? 1 : 0
+    AssertEq(n, 1, "existing type reused")
+    DirDelete(d, true)
+}
+
 ; ---- QuestsTask ------------------------------------------------------------
 
 ; Fake quest board, like the 2026 UI: a carousel showing one quest. Accept
@@ -523,13 +585,16 @@ Test_Quests_MissingCalibrationSkipsWithoutClicking() {
     })
     AssertEq(t.name, "quests", "name")
     AssertEq(t.priority, 5, "priority")
-    AssertEq(t.CanRun(SchedState()), false, "board not calibrated -> not eligible (never interrupts sell/fishing)")
+    ; the board's steps need no calibration: they are found on screen once
+    ; the board is open (tests\test_autocal.ahk). Nothing found here (no
+    ; screen read in this test): the walk and E, then no click at all
+    AssertEq(t.CanRun(SchedState()), true, "board not calibrated: still eligible (found on screen)")
     AssertEq(t.Run(SchedCtx()), 0, "no actions")
-    AssertEq(io.log.Length, 0, "no key, move or click at all")
-    AssertEq(wh.Count("errors"), 1, "errors webhook once")
-    t.Run(SchedCtx())
-    AssertEq(wh.Count("errors"), 1, "errors webhook not repeated")
-    AssertEq(logs.Length, 1, "missing step logged once, not on every run")
+    AssertTrue(QmCountLog(io, "down e") >= 1, "walked there and pressed E")
+    AssertTrue(QmSaid(logs, "did not open"), "the board was not found: said so")
+    for e in io.log
+        AssertTrue(!RegExMatch(e, "^move (100,200|300,400|700,800|900,950)$"), "no board button clicked (" e ")")
+    AssertEq(wh.Count("errors"), 0, "a board step that is not recorded is no error")
     ; board rect present but route missing: still no input
     wh2 := QmWh()
     io2 := QmIO()
@@ -645,7 +710,7 @@ Test_Quests_MissingAcceptSkipsOnlyThatAction() {
     m := QmBoardTask(board, Map("quests.dismissDisabled", 1), cal)
     AssertEq(m.t.Run(SchedCtx()), 0, "no action without the accept point")
     AssertTrue(!m.io.Moved(300, 400), "dismiss not clicked blind")
-    AssertEq(m.wh.Count("errors"), 1, "accept missing reported once")
+    AssertEq(m.wh.Count("errors"), 0, "a step found on screen when it can be: not an error")
     AssertEq(board.q.Length, 2, "nothing abandoned")
     AssertTrue(m.io.Moved(700, 800), "board still exited")
 }
@@ -741,10 +806,10 @@ Test_Quests_EmptyBoardNotificationClicksNothing() {
     AssertEq(m2.t.Run(SchedCtx()), 0, "no actions")
     AssertTrue(!m2.io.Moved(100, 200) && !m2.io.Moved(300, 400) && !m2.io.Moved(700, 800), "no board button clicked")
     AssertTrue(InStr(m2.logs[m2.logs.Length], "did not open"), "says the board did not open")
-    ; exit button not calibrated: not eligible
+    ; exit button not calibrated: still eligible (Exit is found by its word)
     cal := QmCal(Map("quest_accept", {x: 100, y: 200, color: 0}), Map("quest_board_rect", {x: 1000, y: 300, w: 400, h: 500}))
     t3 := QuestsTask({cfg: QmCfg(, Map("quests", QmQuestsCfg(), "routes", QmRoutesData())), io: QmIO(), webhook: QmWh(), cal: cal, ocr: (*) => ""})
-    AssertEq(t3.CanRun(SchedState()), false, "no exit button -> not eligible")
+    AssertEq(t3.CanRun(SchedState()), true, "no exit button: still eligible")
 }
 
 Test_Quests_PanelIncludesTheTitle() {
@@ -1729,4 +1794,180 @@ Test_Quests_ButtonColourDecidesWhenTheWordsDoNot() {
     m3 := QmBoardTask(board3, Map("quests.dismissDisabled", 1))
     AssertEq(m3.t.Run(SchedCtx()), 0, "left alone")
     AssertTrue(!m3.io.Moved(300, 400), "never dismissed blind")
+}
+
+; ---- 2026-11-21: Claim Rewards on a quest not finished (tester log v1.6.1) ----
+
+; Clicks on the Accept / Claim Rewards spot, counted
+QmSpotClicks(board) {
+    c := {n: 0}
+    board.onClick := (x, y) => (c.n += (x = 100 && y = 200) ? 1 : 0)
+    return c
+}
+QmLogged(logs, text) {
+    for l in logs
+        if InStr(l, text)
+            return true
+    return false
+}
+; A board whose Claim Rewards does nothing until .finished is set
+class QmBoardBounce extends QmBoard {
+    finished := false
+    Click(x, y) {
+        if (x = 100 && y = 200 && !this.finished) {
+            if IsObject(this.onClick)
+                this.onClick.Call(x, y)
+            return
+        }
+        super.Click(x, y)
+    }
+}
+; A board whose unread button is Claim Rewards on a finished quest: the click removes it
+class QmBoardHiddenClaim extends QmBoard {
+    Click(x, y) {
+        if (x = 100 && y = 200 && IsObject(this.Cur())) {
+            this.q.RemoveAt(this.i)
+            this._Clamp()
+            return
+        }
+        super.Click(x, y)
+    }
+}
+
+Test_Quests_ClaimButtonShowsOnUnfinishedQuestsRealFrame() {
+    ; the game shows a lit Claim Rewards on every accepted quest: this frame
+    ; is a quest accepted a second ago (the "Quest Accepted" toast under it)
+    ; and reads / colours exactly like quest_button_claim_1440. The button
+    ; cannot tell a finished quest: only the click does (the quest leaves).
+    pt := {x: 2169, y: 1081}
+    b := QuestsTask.Button
+    box := {x: pt.x + b.dx, y: pt.y + b.dy, w: b.w, h: b.h}
+    ; (the toast's grey words are too faint for the OCR; they show in the frame)
+    AssertEq(QuestsTask.WordOf(ScrCropRead("quest_button_claim_toast_1440", box, 2000, 1000)), "claim", "its button reads Claim Rewards")
+    AssertEq(QmColourOf("quest_button_claim_toast_1440"), "claim", "and is yellow")
+    AssertEq(QmColourOf("quest_button_claim_1440"), "claim", "like any Claim Rewards")
+}
+
+Test_Quests_BouncedClaimBacksOff() {
+    board := QmBoardBounce([["Finding o person`nObjects`n- Find the person", "Claim Rewards"]])
+    cfgQ := QmQuestsCfg()
+    cfgQ["types"].Push(Map("name", "Other", "enabled", 1, "quests", [Map("name", "Finding a Person", "enabled", 1)]))
+    io := QmBoardIO(board)
+    wh := QmWh()
+    lg := []
+    t := QuestsTask({
+        cfg: QmCfg("", Map("quests", cfgQ, "routes", QmRoutesData())),
+        io: io, webhook: wh, cal: QmBoardCal(), log: (s) => lg.Push(s),
+        ocr: (x, y, w, h, scale := 1) => board.Read(x, y, w, h)
+    })
+    c := QmSpotClicks(board)
+    AssertEq(t.Run(SchedCtx()), 0, "visit 1: nothing reported")
+    AssertEq(c.n, 1, "visit 1: Claim Rewards pressed once")
+    AssertTrue(QmLogged(lg, "pressed Claim Rewards for Finding a Person"), "logged as pressed, not as claimed")
+    AssertTrue(!QmLogged(lg, "claimed rewards for"), "never logged as claimed")
+    AssertTrue(QmLogged(lg, "not finished yet") && QmLogged(lg, "next try in 60 min"), "said when it is tried again")
+    AssertEq(wh.Count("quests"), 0, "no webhook for a claim that did nothing")
+    ; the next visits: left alone
+    Loop 2 {
+        board.closed := false
+        AssertEq(t.Run(SchedCtx()), 0, "later visit: nothing")
+    }
+    AssertEq(c.n, 1, "not pressed again on the next visits")
+    AssertTrue(QmLogged(lg, "left Finding a Person alone (accepted, not finished at the last try"), "said why")
+    AssertTrue(io.Moved(700, 800), "the board was closed")
+    ; the wait is over: tried again, then a longer wait
+    key := QuestsTask.Key("Finding a Person")
+    AssertEq(QuestsTask.Key("Finding o person"), key, "the title's a / o is one quest")
+    t._held[key].until := 0
+    board.closed := false
+    t.Run(SchedCtx())
+    AssertEq(c.n, 2, "tried again after the wait")
+    AssertTrue(QmLogged(lg, "next try in 120 min"), "the wait doubles")
+    ; finished now: claimed, reported, the wait forgotten
+    t._held[key].until := 0
+    board.closed := false
+    board.finished := true
+    AssertEq(t.Run(SchedCtx()), 1, "claimed once finished")
+    AssertTrue(InStr(wh.sent[1].desc, "claimed rewards for Finding a Person"), "reported as claimed")
+    AssertTrue(QmLogged(lg, "quests: claimed rewards for Finding a Person"), "logged as claimed")
+    AssertTrue(!t._held.Has(key), "no wait kept after a claim")
+}
+
+Test_Quests_BounceSaysWhatTheGameSaid() {
+    lg := []
+    board := QmBoardBounce([["Delivery II`nBring 3 crates", "Claim Rewards"]])
+    board.notify := "Quest is not  completed yet"
+    m := QmBoardTask(board, , , lg)
+    m.t.Run(SchedCtx())
+    AssertTrue(QmLogged(lg, "the game says 'Quest is not completed yet'"), "the notification is in the log")
+    lg2 := []
+    board2 := QmBoardBounce([["Delivery II`nBring 3 crates", "Claim Rewards"]])
+    board2.notify := "Taunt Darkmatter Barrage"
+    m2 := QmBoardTask(board2, , , lg2)
+    m2.t.Run(SchedCtx())
+    AssertTrue(QmLogged(lg2, "not finished yet") && !QmLogged(lg2, "the game says"), "the skill list is no notification")
+}
+
+Test_Quests_SameQuestReadTwoWaysIsOneQuest() {
+    ; live 2026-11-20: [1] 'Minnow Rookie' and [2] 'Minnow Rool<ie' on one
+    ; board, Claim Rewards pressed on each
+    AssertEq(QuestsTask.Key("Minnow Rool<ie"), QuestsTask.Key("Minnow Rookie"), "l< is k")
+    AssertEq(QuestsTask.Key("Bosic Hunt"), QuestsTask.Key("Basic Hunt"), "the font's a / o")
+    AssertTrue(QuestsTask.Key("Delivery II") != QuestsTask.Key("Resonance"), "other quests differ")
+    board := QmBoardBounce([["Minnow Rookie`nCatch fish", "Claim Rewards"]])
+    cfgQ := QmQuestsCfg()
+    cfgQ["types"].Push(Map("name", "Fish", "enabled", 1, "quests", [Map("name", "Minnow Rookie", "enabled", 1)]))
+    flip := {n: 0}
+    t := QuestsTask({
+        cfg: QmCfg("", Map("quests", cfgQ, "routes", QmRoutesData())),
+        io: QmBoardIO(board), webhook: QmWh(), cal: QmBoardCal(), log: (s) => 0,
+        ocr: (x, y, w, h, scale := 1) => ((x "," y "," w "," h = board.panel && !board.closed)
+            ? (Mod(++flip.n, 2) ? "Minnow Rookie" : "Minnow Rool<ie") "`nCatch fish" : board.Read(x, y, w, h))
+    })
+    c := QmSpotClicks(board)
+    t.Run(SchedCtx())
+    AssertEq(c.n, 1, "one press, not one per way the title reads")
+}
+
+Test_Quests_BlindPressIsNotRepeatedEveryVisit() {
+    ; 5 "accepted X (button unread ...)" in 24 h: an unread button that
+    ; changed nothing waits like a bounced claim
+    lg := []
+    board := QmBoard([["Delivery II`nBring 3 crates", ""]])
+    board.keepAccept := true            ; the button never reads
+    m := QmBoardTask(board, , , lg)
+    c := QmSpotClicks(board)
+    m.t.Run(SchedCtx())
+    AssertEq(c.n, 1, "visit 1: the spot pressed once")
+    board.closed := false
+    AssertEq(m.t.Run(SchedCtx()), 0, "visit 2: nothing")
+    AssertEq(c.n, 1, "visit 2: not pressed blind again")
+    ; the word reads Accept again: a new quest of that title, accepted at once
+    board.closed := false
+    board.q[1].button := "Accept"
+    AssertEq(m.t.Run(SchedCtx()), 1, "a readable Accept is taken")
+    AssertEq(c.n, 2, "pressed")
+    ; an unread button whose click removed the quest was Claim Rewards
+    board2 := QmBoardHiddenClaim([["Delivery II`nBring 3 crates", ""], ["Resonance`nReach it", "Accepted"]])
+    m2 := QmBoardTask(board2)
+    AssertEq(m2.t.Run(SchedCtx()), 1, "one action")
+    AssertTrue(InStr(m2.wh.sent[1].desc, "claimed rewards for Delivery II") && !InStr(m2.wh.sent[1].desc, "accepted"), "reported as claimed, not accepted")
+}
+
+; live 2026-11-21 01:17:34 (2560x1440, crop x 2000.., y 300..): 'Null
+; Breakthrough', NOT finished (Claim Rewards was pressed on it and it stayed,
+; twice that night). Its panel shows nothing a finished quest would not: a
+; lit yellow Claim Rewards, no count and no "completed" in the Objects text.
+Test_Quests_UnfinishedQuestPanelRealFrame() {
+    f := "quest_claim_unfinished_1440"
+    pt := {x: 2169, y: 1081}
+    b := QuestsTask.Button
+    box := {x: pt.x + b.dx, y: pt.y + b.dy, w: b.w, h: b.h}
+    AssertEq(QuestsTask.WordOf(ScrCropRead(f, box, 2000, 300)), "claim", "the unfinished quest's button reads Claim Rewards")
+    AssertEq(QmColourOf(f, 2000, 300), "claim", "and is yellow")
+    panel := Ocr.ReadFile(A_ScriptDir "\screens\" f ".jpg", 0, 0, 560, 740)
+    AssertEq(QuestsTask.Key(panel), QuestsTask.Key("Null Breakthrough"), "the title reads: '" QuestsTask.Title(panel) "'")
+    AssertTrue(QuestsTask.PanelUp(panel), "the panel is up")
+    AssertTrue(!QuestMatch.IsComplete(panel), "no turn-in wording in the panel")
+    AssertTrue(!RegExMatch(panel, "\d\s*/\s*\d"), "no x/y progress count in the panel")
 }

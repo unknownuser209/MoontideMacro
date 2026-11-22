@@ -26,8 +26,14 @@
 ;     bar: dark "300 / 300" on yellow / orange / red, 5 px tall, that the
 ;     plain read never reads): every pixel with red under `ink` black, the
 ;     rest white, upscaled by `scale` with no smoothing (1..8) and InkPad px
-;     of white around. Same "" on any failure.
-;   Ocr.FindText(x, y, w, h, re, scale := 1) -> {x, y, text} or ""
+;     of white around. Same "" on any failure. ink "g" / "r": green / red
+;     text (a channel above the other two by GreenInkDiff / RedInkDiff)
+;     black, the rest white; "w": white text re-laid with gaps.
+;   Ocr.FindText(x, y, w, h, re, scale := 1) -> {x, y, text, l, t, r, b} or ""
+;     (l, t, r, b = the line's box)
+;   Ocr.Lines(x, y, w, h, scale := 1, re := ".") -> Array of those, one per
+;     line read (design px at any client size; the whole client in one read
+;     is ~125 ms at 2560x1440). Ocr.LinesFile(path, ...) on a saved frame.
 ;   Ocr.ReadFile(path, x, y, w, h, scale := 1, ink := 0) -> String
 ;     The same read on a saved 2560x1440 frame (PNG / JPG) instead of the
 ;     screen: the same blit, scaling and recognizer. Used by the screen
@@ -55,6 +61,7 @@ class Ocr {
     static InkMaxScale := 8      ; ReadInk: no smoothing, a bigger upscale is cheap
     static WhiteInkMin := 200   ; ReadInk "w": every channel at least this
     static WhiteGap := 0.18     ; ReadInk "w": gap between re-laid glyphs, a share of the box height
+    static RedInkDiff := 60     ; ReadInk "r": red above green and blue by this (Memory Match's red Close over a bright sky, 2026-11-20)
     static GreenInkDiff := 25   ; ReadInk "g": green above red and blue by this (25: 'Accevi' through Eden's skill list)
     static InkPad := 24          ; ReadInk: white px around (the recognizer needs a margin)
     static TimeoutMs := 5000
@@ -122,7 +129,7 @@ class Ocr {
     static ReadInk(x, y, w, h, scale, ink) {
         Prof.Begin("ocr")
         try {
-            return ((IsNumber(ink) && ink > 0) || ink == "g" || ink == "w") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
+            return ((IsNumber(ink) && ink > 0) || ink == "g" || ink == "w" || ink == "r") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
         } catch Any {
             return ""
         } finally {
@@ -137,6 +144,33 @@ class Ocr {
         } catch Any {
             return ""
         }
+    }
+
+    ; Every line of the read with its place: Array of {text, x, y (centre),
+    ; l, t, r, b (the line's box)}, all DESIGN px; [] when nothing reads.
+    ; `re` keeps only the lines matching it. For finding a window's parts
+    ; by their text (lib\AutoCal.ahk).
+    static _all := ""
+    static Lines(x, y, w, h, scale := 1, re := ".") {
+        Ocr._all := []
+        try {
+            r := Ocr._Read(x, y, w, h, scale, re)
+            return (r is Array) ? r : []
+        } catch Any {
+            return []
+        } finally {
+            Ocr._all := ""
+        }
+    }
+    ; ... the same on a saved 2560x1440 frame (tests)
+    static LinesFile(path, x, y, w, h, scale := 1, re := ".") {
+        if !FileExist(path)
+            return []
+        Ocr._srcFile := path
+        try
+            return Ocr.Lines(x, y, w, h, scale, re)
+        finally
+            Ocr._srcFile := ""
     }
 
     ; FindText, but {x, y} is the centre of the words matching wordRe in that
@@ -177,6 +211,8 @@ class Ocr {
             if tried.Has(key)
                 continue
             tried[key] := 1
+            if IsObject(Ocr._all)                    ; Ocr.Lines: each variant's lines on their own
+                Ocr._all := []
             try
                 got := Ocr._Once(x, y, w, h, scale, find, 0, k, v)
             catch Any
@@ -317,6 +353,21 @@ class Ocr {
 
             ComCall(6, pRes, "Ptr*", &pLines := 0)                      ; get_Lines
             objs.Push(pLines)
+            ; The recognizer turns a picture whose text it finds tilted (the
+            ; quest board's slanted poster: -4.8 degrees, live frame
+            ; 2026-11-21) and gives every word's box in the TURNED picture:
+            ; "Exit" came back 45 px right, "Objects" 80 px up. The boxes
+            ; are turned back about the picture's middle (Ocr.Turn).
+            ang := 0
+            if (find != "") {
+                try {
+                    ComCall(7, pRes, "Ptr*", &pAng := 0)                ; get_TextAngle (IReference<double>, null = none)
+                    if pAng {
+                        objs.Push(pAng)
+                        ComCall(6, pAng, "Double*", &ang)               ; get_Value
+                    }
+                }
+            }
             ComCall(7, pLines, "UInt*", &n := 0)                        ; IVectorView.get_Size
             out := ""
             Loop n {
@@ -328,18 +379,30 @@ class Ocr {
                 if (find != "") {
                     if RegExMatch(text, find) {
                         b := Ocr._LineBox(pLine, objs)
+                        if (IsObject(b) && ang) {
+                            m := Ocr.Turn((b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2, sw / 2, sh / 2, ang * Ocr.TurnSign)
+                            hw := (b.x2 - b.x1) / 2, hh := (b.y2 - b.y1) / 2
+                            b := {x1: m.x - hw, y1: m.y - hh, x2: m.x + hw, y2: m.y + hh}
+                        }
                         if IsObject(b) {
                             cx := x + Round((b.x1 + b.x2) / 2 / s), cy := y + Round((b.y1 + b.y2) / 2 / s)
-                            if (k != 1)                                 ; back to design px for the click
+                            bl := x + Round(b.x1 / s), bt := y + Round(b.y1 / s), br := x + Round(b.x2 / s), bb := y + Round(b.y2 / s)
+                            if (k != 1) {                               ; back to design px for the click
                                 d := Screen.Inv(cx, cy), cx := d.x, cy := d.y
-                            return {x: cx, y: cy, text: text}
+                                d := Screen.Inv(bl, bt), bl := d.x, bt := d.y
+                                d := Screen.Inv(br, bb), br := d.x, bb := d.y
+                            }
+                            hit := {x: cx, y: cy, text: text, l: bl, t: bt, r: br, b: bb}
+                            if !IsObject(Ocr._all)
+                                return hit
+                            Ocr._all.Push(hit)                          ; Ocr.Lines: every matching line
                         }
                     }
                     continue
                 }
                 out .= (A_Index > 1 ? "`n" : "") text
             }
-            return (find != "") ? "" : out
+            return (find != "") ? ((IsObject(Ocr._all) && Ocr._all.Length) ? Ocr._all : "") : out
         } finally {
             if IsObject(gdi)
                 Ocr._FreeCapture(gdi)
@@ -352,6 +415,14 @@ class Ocr {
                 if hs
                     DllCall("combase\WindowsDeleteString", "Ptr", hs)
         }
+    }
+
+    ; Pure: point x, y turned by deg degrees about cx, cy (y grows down).
+    static TurnSign := 1
+    static Turn(x, y, cx, cy, deg) {
+        a := deg * 0.017453292519943295
+        dx := x - cx, dy := y - cy
+        return {x: cx + dx * Cos(a) - dy * Sin(a), y: cy + dx * Sin(a) + dy * Cos(a)}
     }
 
     ; Bounding box (image px) of an IOcrLine's words, or "".
@@ -627,6 +698,15 @@ class Ocr {
                 Loop w * h {
                     bl := NumGet(p, 0, "UChar"), gr := NumGet(p, 1, "UChar"), rd := NumGet(p, 2, "UChar")
                     NumPut("UInt", (gr - Max(rd, bl) > Ocr.GreenInkDiff) ? 0xFF000000 : 0xFFFFFFFF, p)
+                    p += 4
+                }
+            } else if (ink == "r") {
+                ; red ink: Memory Match's Close (0xFF375C) on the see-through
+                ; board over a bright Snowy / Heaven sky reads nothing plain
+                ; (grey 0x919D9F behind it: too little contrast in grey)
+                Loop w * h {
+                    bl := NumGet(p, 0, "UChar"), gr := NumGet(p, 1, "UChar"), rd := NumGet(p, 2, "UChar")
+                    NumPut("UInt", (rd - Max(gr, bl) > Ocr.RedInkDiff) ? 0xFF000000 : 0xFFFFFFFF, p)
                     p += 4
                 }
             } else {

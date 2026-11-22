@@ -46,6 +46,7 @@ ScProbes(over := "") {
         "hdr", () => 0,
         "logAge", () => 30,
         "calMissing", () => [],
+        "calPreset", () => "",
         "procs", (n) => false,
         "ahkVersion", () => "2.0.19",
         "front", () => 1,
@@ -173,15 +174,15 @@ Test_SetupCheck_Calibration() {
     res := SetupCheck.Run(ScGoodCfg(), ScProbes(Map("calMissing", () => miss)))
     r := ScFind(res, "calibration")
     AssertEq(r.level, "warn", "needed points missing warns")
-    AssertTrue(InStr(r.detail, "2 calibration points"), "only the needed ones counted: " r.detail)
-    AssertTrue(InStr(r.detail, "fisher_buy_button") && InStr(r.detail, "quest_accept"), "names them")
+    AssertTrue(InStr(r.detail, "3 calibration points"), "only the needed ones counted: " r.detail)
+    AssertTrue(InStr(r.detail, "fisher_buy_button") && InStr(r.detail, "quest_accept") && InStr(r.detail, "chat_rect"), "names them (the chat for merchants / boss alerts)")
     AssertTrue(!InStr(r.detail, "selector_confirm") && !InStr(r.detail, "obby_blessing"), "features that are off are not listed")
     ; BiomeItems on too
     cfg := ScCfg(ScLink(), [], Map("BiomeItems.enabled", 1, "Obby.enabled", 1))
     r := ScFind(SetupCheck.Run(cfg, ScProbes(Map("calMissing", () => miss))), "calibration")
-    AssertTrue(InStr(r.detail, "4 calibration points"), "BiomeItems and Obby add theirs: " r.detail)
+    AssertTrue(InStr(r.detail, "5 calibration points"), "BiomeItems and Obby add theirs: " r.detail)
     ; everything needed is there: the rest is only counted
-    cfg := ScCfg(ScLink(), [], Map("Craft.enabled", 0, "quests.enabled", 0))
+    cfg := ScCfg(ScLink(), [], Map("Craft.enabled", 0, "quests.enabled", 0, "merchant.enabled", 0, "Limited.bossAlert", 0))
     r := ScFind(SetupCheck.Run(cfg, ScProbes(Map("calMissing", () => miss))), "calibration")
     AssertEq(r.level, "info", "nothing needed missing is info")
     AssertTrue(InStr(r.detail, "6 calibration points"), "counts all: " r.detail)
@@ -189,6 +190,45 @@ Test_SetupCheck_Calibration() {
     r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("calMissing", () => ["stella_dialog", "fisher_leave", "cauldron_result_2"]))), "calibration")
     AssertEq(r.level, "info", "optional steps do not warn")
     AssertEq(ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes()), "calibration").level, "ok", "none missing")
+}
+
+; audit 2026-11-20: the inventory (Limbo, merchants, potions, biome items,
+; Cursed Rune), aura storage (obby, hunting) and chat steps count as needed
+Test_SetupCheck_InventoryAuraChatNeeded() {
+    off := Map("Craft.enabled", 0, "quests.enabled", 0, "merchant.enabled", 0, "Limited.bossAlert", 0)
+    miss := ["inv_open", "inv_desc_rect", "aura_equip", "chat_rect", "inv_tile2_rect", "inv_count_rect"]
+    lvl := (extra) => ScFind(SetupCheck.Run(ScCfg(ScLink(), [], ScMerge(off, extra)), ScProbes(Map("calMissing", () => miss))), "calibration")
+    r := lvl(Map())
+    AssertEq(r.level, "info", "every feature off: only counted (" r.detail ")")
+    for k in ["Limbo.enabled", "BiomeItems.enabled", "Limited.cursedRune", "merchant.enabled", "DailyQuests.usePotions"] {
+        r := lvl(Map(k, 1))
+        AssertEq(r.level, "warn", k ": the inventory steps are needed")
+        AssertTrue(InStr(r.detail, "inv_open") && InStr(r.detail, "inv_desc_rect") && !InStr(r.detail, "inv_tile2_rect"), k ": " r.detail)
+    }
+    for k in ["Obby.enabled", "Minions.enabled"] {
+        r := lvl(Map(k, 1))
+        AssertTrue(r.level = "warn" && InStr(r.detail, "aura_equip"), k ": the aura storage steps (" r.detail ")")
+    }
+    r := lvl(Map("Limited.bossAlert", 1))
+    AssertTrue(r.level = "warn" && InStr(r.detail, "chat_rect") && !InStr(r.detail, "inv_open"), "boss alert: the chat only (" r.detail ")")
+    ; defaults (merchants and the boss alert on): inventory + chat
+    r := ScFind(SetupCheck.Run(ScCfg(ScLink()), ScProbes(Map("calMissing", () => miss))), "calibration")
+    AssertTrue(InStr(r.detail, "inv_open") && InStr(r.detail, "chat_rect") && !InStr(r.detail, "aura_equip"), "defaults: " r.detail)
+    ; the preset row: only when the nearest preset is in use
+    AssertTrue(!IsObject(ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes()), "preset")), "no row by default")
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("calPreset", () => {fit: "aspect", label: "2560x1440", display: "3440x1440"}))), "preset")
+    AssertTrue(IsObject(r) && r.level = "warn" && InStr(r.detail, "3440x1440"), "another shape warns")
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("calPreset", () => {fit: "scaled", label: "2560x1440", display: "3840x2160"}))), "preset")
+    AssertTrue(IsObject(r) && r.level = "info", "the same shape is info")
+}
+
+ScMerge(a, b) {
+    m := Map()
+    for k, v in a
+        m[k] := v
+    for k, v in b
+        m[k] := v
+    return m
 }
 
 Test_SetupCheck_FocusStealers() {

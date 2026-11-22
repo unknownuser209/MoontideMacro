@@ -306,7 +306,7 @@ Test_AuraClip_F6FreeForMedal() {
         try DirDelete(dir, true)
 }
 
-; ---- Dashboard Settings > Medal ----------------------------------------------
+; ---- Dashboard Discord & Clips > Clips ----------------------------------------------
 ; Builds the real Dashboard hidden (never shown, no focus change).
 
 AcDashClose(g) {
@@ -361,7 +361,7 @@ Test_AuraClip_DashboardMedalFields() {
     }
 }
 
-; Medal controls (Alerts > Clips tab) sit inside the "Medal clips" panel
+; Medal controls (Discord & Clips > Clips tab) sit inside the "Medal clips" panel
 ; (below its title), never overlap each other or a "?" help tip.
 Test_AuraClip_DashboardMedalLayout() {
     dir := AcTmpDir()
@@ -661,5 +661,144 @@ Test_AuraAlert_TestToOneWebhook() {
         AssertTrue(InStr(tos[2].title, "Gargantua"), "a named aura")
     } finally {
         r.Done()
+    }
+}
+
+; ---- the game's roll event (2026-11-18 Pixelation) ----------------------------
+; The roll event comes at the roll; the Equipped line can come a minute later.
+; A roll clips the game's captureDelayMs after it (the cutscene is over then,
+; still in the clip app's buffer), whatever [Medal] delaySec says.
+
+class AcRollRig extends AcRig {
+    __New() {
+        super.__New()
+        this.delays := []
+        this.clip := {Trigger: (self, r, ms := "") => (this.clips.Push(r), this.delays.Push(ms))}
+        this.be := BiomeEvents(Map("cfg", this.cfg, "state", this.state,
+            "log", (t) => this.logs.Push(t), "clip", this.clip,
+            "shotFn", () => "", "soundFn", (s) => 0))
+    }
+    Roll(name, ms := 15000) {
+        this.be.Handle(Map("type", "roll", "name", name, "ts", "2026-11-18T10:49:44.625Z", "live", 1, "delayMs", ms))
+    }
+}
+
+Test_AuraClip_RollClipsAtTheRoll() {
+    r := AcRollRig()
+    try {
+        r.cfg.Set("Medal.delaySec", 40)
+        r.Roll("Equinox")
+        AssertEq(r.clips.Length, 1, "a rare roll clips at once")
+        AssertEq(r.clips.Length ? r.clips[1] : "", "aura:Equinox", "reason")
+        AssertEq(r.delays.Length ? r.delays[1] : "", 15000, "the game's capture delay, not delaySec")
+        ; the Equipped line a minute later: no second clip
+        r.Aura("Equinox")
+        AssertEq(r.clips.Length, 1, "the late Equipped line does not clip again")
+        AssertEq(AcCount(r.logs, "clipped at the roll"), 1, "logged why")
+        ; a common roll never clips
+        r.Roll("Common")
+        AssertEq(r.clips.Length, 1, "common roll: no clip")
+    } finally {
+        r.Done()
+    }
+}
+
+Test_AuraClip_RollClipsEvenWhenHadOrDuringASwap() {
+    r := AcRollRig()
+    try {
+        f := r.dir "\auras_had.txt"
+        r.be := AcHadBe(r, f)
+        r.Aura("Equinox")                          ; owned and equipped before
+        AssertEq(r.clips.Length, 1, "first equip clipped")
+        r.Roll("Equinox")                          ; rolled again: a real roll
+        AssertEq(r.clips.Length, 2, "a second roll of an owned aura still clips")
+        Auras.QuietUntil := A_TickCount + 60000    ; the macro is swapping auras
+        r.Roll("Gargantua")
+        AssertEq(r.clips.Length, 3, "a roll during a macro swap still clips")
+        Auras.QuietUntil := 0
+        r.Aura("Gargantua")
+        AssertEq(r.clips.Length, 3, "its Equipped line does not")
+    } finally {
+        Auras.QuietUntil := 0
+        r.Done()
+    }
+}
+
+Test_AuraClip_RollOffAndNotLive() {
+    r := AcRollRig()
+    try {
+        r.cfg.Set("Medal.onRareAura", 0)
+        r.Roll("Equinox")
+        AssertEq(r.clips.Length, 0, "clips off: nothing")
+        r.cfg.Set("Medal.onRareAura", 1)
+        r.be.Handle(Map("type", "roll", "name", "Equinox", "ts", "x", "live", 0, "delayMs", 15000))
+        AssertEq(r.clips.Length, 0, "not live: nothing")
+    } finally {
+        r.Done()
+    }
+}
+
+Test_AuraClip_AppRoutesRollEvents() {
+    t := AppTestMake()
+    got := []
+    t.app.be := {Handle: (self, ev) => got.Push(ev["type"])}
+    t.app.RouteEvent(AppTestEv("roll", "Pixelation", "2026-11-18T10:49:44.625Z", true))
+    AssertEq(got.Length, 1, "a roll event goes to BiomeEvents")
+    AssertEq(got.Length ? got[1] : "", "roll", "as a roll")
+}
+
+; 2026-11-20: a user set clips to 1 in 500m (Clips page) and was pinged on
+; Discord for Chillsear (1 in 375m): the ping is the rare aura alert's own
+; threshold (Discord page, 50m then). Each card now says the other's number,
+; live as either field is typed, and nothing saved changes.
+Test_AuraClip_ClipAndPingThresholdsSideBySide() {
+    dir := AcTmpDir()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        cfg.Set("Medal.auraMinRarity", "500000000")
+        cfg.Set("AuraAlert.minRarity", "50000000")
+        d := Dashboard(cfg)
+        d.SelectPage(Dashboard.PageIndex("Clips"))
+        cn := d.Ctrl("clipPingNote"), an := d.Ctrl("alertClipNote")
+        AssertTrue(IsObject(cn) && IsObject(an), "both notes exist")
+        AssertEq(cn.Text, "Discord pings use their own limit: 1 in 50,000,000 (Discord page)", "Clips card: the ping's limit")
+        AssertEq(an.Text, "Clips use 1 in 500,000,000 (Clips page)", "rare aura alert card: the clips' limit")
+        AssertEq(d.PageOf(cn), "Clips", "on the Clips page")
+        AssertEq(d.PageOf(an), "Webhooks", "on the Discord page")
+        ; typed, not saved: both notes follow the fields
+        d.Ctrl("AuraAlert.minRarity").Value := "1b"
+        d._RarityNotes()
+        AssertEq(cn.Text, "Discord pings use their own limit: 1 in 1,000,000,000 (Discord page)", "ping field typed")
+        d.Ctrl("Medal.auraMinRarity").Value := "250m"
+        d._RarityNotes()
+        AssertEq(an.Text, "Clips use 1 in 250,000,000 (Clips page)", "clips field typed")
+        ; a half-typed number: the saved one
+        d.Ctrl("Medal.auraMinRarity").Value := "25x"
+        d._RarityNotes()
+        AssertEq(an.Text, "Clips use 1 in 500,000,000 (Clips page)", "unreadable: the saved value")
+        ; nobody's saved values change
+        AssertEq(cfg.Get("Medal.auraMinRarity", ""), "500000000", "clips value untouched")
+        AssertEq(cfg.Get("AuraAlert.minRarity", ""), "50000000", "ping value untouched")
+        ; Revert puts the saved numbers back in the notes
+        d.RevertPage("Webhooks")
+        AssertEq(cn.Text, "Discord pings use their own limit: 1 in 50,000,000 (Discord page)", "reverted")
+        ; the notes sit inside their cards
+        for pair in [[cn, "panel:Clips:Clips"], [an, "panel:Webhooks:Rare aura alert"]] {
+            pair[1].GetPos(&x, &y, &w, &h)
+            d.Ctrl(pair[2]).GetPos(&px, &py, &pw, &ph)
+            AssertTrue(x >= px && y >= py && x + w <= px + pw && y + h <= py + ph, pair[2] ": note inside its card")
+        }
+        ; translated in every language
+        for code in I18n.Codes {
+            if (code = "en")
+                continue
+            m := I18n.LoadFile(code)
+            for k in ["Discord pings use their own limit: 1 in {1} (Discord page)", "Clips use 1 in {1} (Clips page)"]
+                AssertTrue(m.Has(k) && InStr(m[k], "{1}"), code ": " k)
+        }
+    } finally {
+        AcDashClose(d)
+        try DirDelete(dir, true)
     }
 }

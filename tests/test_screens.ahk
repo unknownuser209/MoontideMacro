@@ -172,6 +172,7 @@ Test_Screens_AuraNameVerdictIsExact() {
 ; face up; mm_matched: one green pair; mm_end: every tile shown, Close.
 
 ScrVision(name) => MatchVision(MatchFileGrab(ScrPath(name)))
+ScrPng(name) => A_ScriptDir "\screens\" name ".png"
 
 Test_Screens_MemoryMatchPrompt() {
     L := MemoryMatchTask.Layout
@@ -263,6 +264,54 @@ Test_Screens_MemoryMatchFlipNotSettled() {
     AssertTrue(!MatchVision.Same(mid.Sig(11), fin.Sig(11)), "mid-flip picture differs")
     AssertEq(mid.State(16), "open", "tile 16 face up")
     AssertTrue(MatchVision.Same(mid.Sig(16), fin.Sig(16)), "tile 16 already its final picture")
+}
+
+; live 2026-11-20 02:35 (the board a Memory Match round left open at 00:11,
+; Snowy, HDR on): 0 chances, every tile shown, a red Close over the bright
+; sky that the plain read never reads. The macro took a white and a cream
+; x100 potion (tiles 2 / 3, partners 17 / 18) for one picture.
+Test_Screens_MemoryMatchLiveBoardPairs() {
+    v := MatchVision(MatchFileGrab(ScrPng("mm_end_live_snowy_1440")))
+    sigs := [], bad := ""
+    Loop 20 {
+        sigs.Push(v.Sig(A_Index))
+        if (v.State(A_Index) != "open")
+            bad .= A_Index ":" v.State(A_Index) " "
+    }
+    AssertEq(bad, "", "every tile face up")
+    found := ""
+    Loop 20 {
+        i := A_Index
+        Loop 20 {
+            j := A_Index
+            if (j > i && MatchVision.Same(sigs[i], sigs[j]))
+                found .= i "-" j " "
+        }
+    }
+    AssertEq(found, "1-4 2-17 3-18 5-11 6-10 7-20 8-9 12-15 13-14 16-19 ", "the 10 real pairs only")
+    AssertTrue(MatchVision.TintDiff(sigs[2].icon, sigs[3].icon) > MatchVision.TintMax, "white vs cream potion: tinted apart")
+    ; the clip's pairs are unchanged by the tint check (Test_Screens_MemoryMatchPairsByPicture)
+    e := ScrVision("mm_end")
+    AssertTrue(MatchVision.TintDiff(e.Sig(1).icon, e.Sig(19).icon) <= MatchVision.TintMax, "clip pair 1-19 same tint")
+}
+
+Test_Screens_MemoryMatchCloseInAnyLight() {
+    L := MemoryMatchTask.Layout
+    live := ScrPng("mm_end_live_snowy_1440")      ; the macro's own screenshot (lossless: JPEG blurs the red ink)
+    AssertTrue(RegExMatch(Ocr.ReadFile(live, L.title.x, L.title.y, L.title.w, L.title.h), MemoryMatchTask.TitleRe), "board title")
+    AssertTrue(!RegExMatch(Ocr.ReadFile(live, L.closeBox.x, L.closeBox.y, L.closeBox.w, L.closeBox.h), MemoryMatchTask.CloseRe), "the plain read misses Close (why the board was left open)")
+    ink := (p) => Ocr.ReadFile(p, L.closeBox.x, L.closeBox.y, L.closeBox.w, L.closeBox.h, MemoryMatchTask.CloseInkScale, "r")
+    AssertTrue(RegExMatch(ink(live), MemoryMatchTask.InkCloseRe), "red ink: Close over the bright sky")
+    AssertTrue(RegExMatch(ink(ScrPath("mm_end")), MemoryMatchTask.InkCloseRe), "red ink: Close on the clip")
+    ; no red-ink Close and no board title on any other frame (mid-round too)
+    Loop Files A_ScriptDir "\screens\*.*" {
+        if RegExMatch(A_LoopFileName, "i)^mm_end")
+            continue
+        f := A_LoopFileFullPath
+        AssertTrue(!RegExMatch(Ocr.ReadFile(f, L.closeBox.x, L.closeBox.y, L.closeBox.w, L.closeBox.h, MemoryMatchTask.CloseInkScale, "r"), MemoryMatchTask.InkCloseRe), A_LoopFileName ": no red Close")
+        if !RegExMatch(A_LoopFileName, "i)^mm_|mmboard")
+            AssertTrue(!RegExMatch(Ocr.ReadFile(f, L.title.x, L.title.y, L.title.w, L.title.h), MemoryMatchTask.TitleRe), A_LoopFileName ": no Memory Match title (the tidy's check)")
+    }
 }
 
 ; ---- no blind clicks in the aura storage (live 2026-11-02 09:20) ------------

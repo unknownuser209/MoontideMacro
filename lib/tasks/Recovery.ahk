@@ -122,6 +122,7 @@ class RecoveryTask {
             this._closeFn := () => RecoveryTask._CloseRoblox()
         this._discAt := ""          ; env.Now() of the last disconnect-screen read
         this._discSeen := false     ; disconnect screen seen, not yet handled
+        this._discFake := false     ; that one came from Dev tools (FakeDisconnect)
         this._ghostTold := false    ; the ghost server webhook was sent for this ghost
         this._state := ""
         this._seen := false
@@ -135,6 +136,29 @@ class RecoveryTask {
         this._leaving := false      ; ReturnToIsland: close the healthy client too
         this._ghosting := false     ; rejoining out of a ghost server: close its client too
         this._unlock := false       ; App: the mouse stays locked (stacked game windows): rejoin
+        this._leftSpot := false     ; the last Run respawned (stuck reset, rejoin): not at the fishing spot
+    }
+
+    ; The last Run left the player at spawn (a stuck reset or a rejoin): the
+    ; App then runs the sell trip next (it walks to the fishing spot),
+    ; instead of fishing failing to find its panel first.
+    LeftSpot() => this._leftSpot
+
+    ; App.Start: nothing from the last run carries over (2026-11-20 audit
+    ; H3: a disconnect seen then, the rejoin limit or a hold kept the next
+    ; run "Waiting to rejoin" and then closed a client already rejoined).
+    Reset() {
+        this._discSeen := false, this._discFake := false, this._discAt := ""
+        this._unlock := false, this._ghostTold := false
+        this._attempts := [], this._holdUntil := 0, this._limitTold := false
+    }
+
+    ; App, on a join seen live: a fresh client, so a disconnect screen seen
+    ; before it is gone (the user rejoined by hand).
+    OnJoin() {
+        if this._discSeen
+            this._env.Log("recovery: Roblox joined a server: the disconnect seen before is over")
+        this._discSeen := false, this._discFake := false, this._discAt := ""
     }
 
     ; App, after task after task was skipped because the mouse stayed locked
@@ -174,21 +198,24 @@ class RecoveryTask {
             return false
         if !RecoveryTask.LinkOk(this._Link())
             return false
-        this._discSeen := true
+        this._discSeen := true, this._discFake := true     ; no screen re-read before the close
         this._holdUntil := 0
         env.Log("recovery: TEST disconnect from Dev tools: closing Roblox and rejoining")
         return true
     }
 
     ; A LogWatch join kind ("private" | "other") -> "ghost" | "clear" | ""
-    ; (no change). Off with Recovery.antiGhost=0; never while Limbo is on or
-    ; the player is in THE LIMBO (the Portable Crack is a teleport too).
+    ; (no change). Off with Recovery.antiGhost=0, and while the player is in
+    ; THE LIMBO. With Limbo on it applies too: the Portable Crack stays in
+    ; the same server (no join in the Roblox log, live 2026-11-20), so a
+    ; non-private join is a ghost server, never Limbo (audit H1: it was
+    ; taken for Limbo and E was pressed on the island for good).
     static GhostDecision(kind, state, cfg) {
         if (kind = "private")
             return "clear"
         if (kind != "other")
             return ""
-        if IsObject(cfg) && (!cfg.Get("recovery.antiGhost", 1) || cfg.Get("Limbo.enabled", 0))
+        if IsObject(cfg) && !cfg.Get("recovery.antiGhost", 1)
             return ""
         if (IsObject(state) && HasProp(state, "inLimbo") && state.inLimbo)
             return ""
@@ -266,6 +293,7 @@ class RecoveryTask {
         env := this._env
         state := this._state
         now := env.Now()
+        this._leftSpot := false
         if this._Disconnected() {
             ok := this._Rejoin(ctx)
             if ok
@@ -309,6 +337,7 @@ class RecoveryTask {
                 return 0
             }
             env.Report("errors", "Recovery: stuck", msg)
+            this._leftSpot := true
             state.progressAt := env.Now()
             this._afkAt := env.Now()
             return 1
@@ -485,6 +514,18 @@ class RecoveryTask {
             return false
         }
 
+        ; a disconnect seen a while ago (the rejoin waited for its limit or a
+        ; hold): read the screen again before closing a client that may be
+        ; healthy now (audit H3)
+        if (this._discSeen && !this._discFake && !this._leaving && !this._ghosting && !this._unlock && (this._hwndFn)()) {
+            b := RecoveryTask.DiscBox, t := ""
+            try t := (env.ocrFn)(b.x, b.y, b.w, b.h)
+            if !RegExMatch(t, RecoveryTask.DiscRe) {
+                this._discSeen := false
+                env.Log("recovery: the disconnect screen is gone: the client is kept, no rejoin")
+                return false
+            }
+        }
         this._attempts.Push(now)
         if ((this._discSeen || this._leaving || this._ghosting || this._unlock) && (this._hwndFn)()) {
             env.Log(this._leaving ? "recovery: closing Roblox to leave Limbo"
@@ -504,7 +545,7 @@ class RecoveryTask {
                     return false
             }
         }
-        this._discSeen := false
+        this._discSeen := false, this._discFake := false
         env.Log("recovery: rejoining private server")
         ; the new client's first "Equipped" line is the aura you wear, not a
         ; roll (2026-10-31: a Medal clip after every rejoin): quiet from the
@@ -575,6 +616,7 @@ class RecoveryTask {
                 env.Log("recovery: reset to spawn after the rejoin failed (" Input.LastResetError ")")
             return false
         }
+        this._leftSpot := true
         if IsObject(this._state)
             this._state.progressAt := env.Now()
         this._afkAt := env.Now()

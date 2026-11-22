@@ -223,6 +223,28 @@ Test_App_TasksThatWalkAwayGoBackThroughTheFisher() {
     AssertEq(t.app.state.needRepath, false, "biome items: no trip")
 }
 
+class AppLeftSpotTask extends AppFakeTask {
+    left := false
+    LeftSpot() => this.left
+}
+
+Test_App_TasksThatSayTheyLeftTheSpotGoBackThroughTheFisher() {
+    ; craft (the cauldron ends with a respawn) and recovery (stuck reset,
+    ; rejoin) leave the fishing spot only sometimes: LeftSpot says when
+    ; (live 2026-11-20: 11 of 17 "no fishing panel" re-paths followed them)
+    for name in ["craft", "recovery"] {
+        task := AppLeftSpotTask(name, 4)
+        t := AppTestMake(Map("tasks", Map("sell", AppFakeTask("sell", 6), name, task, "fishing", AppFakeTask("fishing", 99))))
+        t.app.Start()
+        t.app.state.needRepath := false
+        t.app._RunTask(task)
+        AssertEq(t.app.state.needRepath, false, name ": stayed at the spot: no trip")
+        task.left := true
+        t.app._RunTask(task)
+        AssertEq(t.app.state.needRepath, true, name ": left the spot: the sell trip is next")
+    }
+}
+
 Test_App_TestRouteWalksAndPressesTheKey() {
     walks := []
     t := AppTestMake(Map("walkRoute", (steps, key, ctx) => (walks.Push({n: steps.Length, key: key, ctx: ctx}), "")))
@@ -715,6 +737,8 @@ Test_App_V17_NextUp() {
     t.app.state.questIntervalMs := 150 * 60000
     t.app.state.lastRun["quests"] := t.app.Now()
     AssertEq(t.app.NextUp(), "Quests in 2h 30m", "hours")
+    t.app.cfg.vals.Delete("quests.enabled")
+    AssertEq(t.app.NextUp(), "Quests in 2h 30m", "no key: on, as the task reads it")
     t.app.cfg.Set("quests.enabled", 0)
     AssertEq(t.app.NextUp(), "", "nothing on")
     t.app.Stop("test")

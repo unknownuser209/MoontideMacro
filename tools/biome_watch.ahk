@@ -43,7 +43,7 @@ while (A_TickCount < deadline) {
     try {
         for ev in lw.Poll() {
             t := ev["type"]
-            if (t = "biome" || t = "aura")
+            if (t = "biome" || t = "aura" || t = "roll")
                 be.Handle(ev)
         }
     } catch Any as e {

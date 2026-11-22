@@ -280,7 +280,7 @@ class DiscordRemote {
             this._holdUntil := now + DiscordRemote.ForbiddenRetryMs
             if !this._forbidLogged {
                 this._forbidLogged := true
-                this._Problem("Remote: the bot cannot see that channel (Discord: Missing Access). Press Test on Alerts > Remote to see why (usually: the bot was never invited to your server). Trying again every 2 min.")
+                this._Problem("Remote: the bot cannot see that channel (Discord: Missing Access). Press Test on Discord & Clips > Remote to see why (usually: the bot was never invited to your server). Trying again every 2 min.")
             }
             return
         }

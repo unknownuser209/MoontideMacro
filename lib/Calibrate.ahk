@@ -4,6 +4,7 @@
 #Include %A_LineFile%\..\Pixel.ahk
 #Include %A_LineFile%\..\GameLists.ahk
 #Include %A_LineFile%\..\Roblox.ahk
+#Include %A_LineFile%\..\AutoCal.ahk
 ; ---------------------------------------------------------------------------
 ; Calibrate: guided click-recording wizard + the store tasks read from.
 ;
@@ -23,14 +24,38 @@
 ;   CALLERS MUST treat "" as "uncalibrated": skip the action and log it.
 ;   Coordinates are never invented or defaulted.
 ;
-;   Calibrate.Run(stepIds := "all")  show the wizard; stepIds = "all", an
+;   Calibrate.Run(stepIds := "all")  show the wizard; stepIds = "all", "hand"
+;                           (every step that needs hovering: all but the
+;                           ones found on screen), an
 ;                           Array of ids or a comma list. Re-record a single
 ;                           step with Run("inv_open"). Blocks (pumping GUI
 ;                           events) until finished/cancelled. -> count recorded.
 ;                           Each recorded step is saved immediately, so Cancel
 ;                           keeps earlier results. Unknown id -> ValueError
 ;                           before any UI is shown.
-;   Calibrate.Steps()    -> Array of Map {id, kind "point"|"rect"|"sig", prompt}
+;   Calibrate.Steps()    -> Array of Map {id, kind "point"|"rect"|"sig", prompt,
+;                           auto}. auto = the step is FOUND ON SCREEN by the
+;                           macro (lib\AutoCal.ahk: the Fisher shop tiles,
+;                           Stella's Workshop, the Biome Selector's list), so
+;                           it needs no recording: "missing" does not apply
+;                           to it and Run("hand") leaves it out. Recording
+;                           it anyway (Run with its id) is the by-hand
+;                           override: a recorded step is used while its own
+;                           check reads right.
+;   Calibrate.IsAuto(id) / Calibrate.Ready(id)  found on screen / recorded or
+;                           found on screen
+;   FOUND THIS RUN (never saved): Calibrate.SetFound(id, value [, wins])
+;                           keeps a place the macro found on screen (the
+;                           inventory's parts, lib\tasks\InvFind.ahk). Point
+;                           / Rect give it only for a step that is NOT
+;                           recorded; wins = true (a recording that failed
+;                           its own read on screen) puts it before the
+;                           recording until the next load. Loading the file
+;                           (every Start, a calibration change) and
+;                           recording the step drop it.
+;   Calibrate.Stored(id)    the step is recorded in the file (found ones
+;                           are not)
+;   Calibrate.Found(id)     the value found this run, or ""
 ;   Calibrate.Use(path := "", cfg := "")  choose the store file (default
 ;                           <repo>\data\calibration.json) and the Config used
 ;                           for the potion list; reloads from disk.
@@ -95,6 +120,12 @@ class Calibrate {
     static Point(id) {
         Calibrate._Ensure()
         e := Calibrate._store.Has(id) ? Calibrate._store[id] : ""
+        ; found on screen this run: for a step that is not recorded, or
+        ; whose recording failed its own read (SetFound ... wins)
+        if (Calibrate._found.Has(id) && (!IsObject(e) || Calibrate._foundWins.Has(id))) {
+            f := Calibrate._found[id]
+            return f.HasProp("w") ? "" : {x: f.x, y: f.y, color: 0}
+        }
         if (!IsObject(e) || e.Has("w"))
             return ""
         return {x: e["x"], y: e["y"], color: e["color"]}
@@ -103,9 +134,49 @@ class Calibrate {
     static Rect(id) {
         Calibrate._Ensure()
         e := Calibrate._store.Has(id) ? Calibrate._store[id] : ""
+        if (Calibrate._found.Has(id) && (!IsObject(e) || Calibrate._foundWins.Has(id))) {
+            f := Calibrate._found[id]
+            return f.HasProp("w") ? {x: f.x, y: f.y, w: f.w, h: f.h} : ""
+        }
         if (!IsObject(e) || !e.Has("w") || e.Has("sig"))
             return ""
         return {x: e["x"], y: e["y"], w: e["w"], h: e["h"]}
+    }
+
+    ; ---- found on screen this run (in memory only) ---------------------------
+
+    static _found := Map()
+    static _foundWins := Map()
+
+    ; value {x, y} (a point) or {x, y, w, h} (a rect), design px
+    static SetFound(id, value, wins := false) {
+        Calibrate._Ensure()
+        if !(IsObject(value) && value.HasProp("x") && value.HasProp("y"))
+            throw ValueError("Calibrate: a found place needs x and y")
+        Calibrate._found[id] := value.HasProp("w")
+            ? {x: Integer(value.x), y: Integer(value.y), w: Integer(value.w), h: Integer(value.h)}
+            : {x: Integer(value.x), y: Integer(value.y)}
+        if wins
+            Calibrate._foundWins[id] := true
+        else if Calibrate._foundWins.Has(id)
+            Calibrate._foundWins.Delete(id)
+    }
+
+    static Found(id) => Calibrate._found.Has(id) ? Calibrate._found[id] : ""
+
+    static Stored(id) {
+        Calibrate._Ensure()
+        return Calibrate._store.Has(id)
+    }
+
+    static _DropFound(id := "") {
+        if (id = "") {
+            Calibrate._found := Map(), Calibrate._foundWins := Map()
+            return
+        }
+        for m in [Calibrate._found, Calibrate._foundWins]
+            if m.Has(id)
+                m.Delete(id)
     }
 
     static Sig(id) {
@@ -225,6 +296,7 @@ class Calibrate {
     static SetPoint(id, x, y, color) {
         Calibrate._Ensure()
         Calibrate._store[id] := Map("x", Integer(x), "y", Integer(y), "color", Pixel.ToRgb(color))
+        Calibrate._DropFound(id)
         Calibrate._Save()
     }
 
@@ -236,6 +308,7 @@ class Calibrate {
         if (w < 1 || h < 1)
             throw ValueError("Calibrate: rectangle needs non-zero width and height")
         Calibrate._store[id] := Map("x", Min(x1, x2), "y", Min(y1, y2), "w", w, "h", h)
+        Calibrate._DropFound(id)
         Calibrate._Save()
     }
 
@@ -309,11 +382,15 @@ class Calibrate {
 
     static Steps() {
         out := []
-        add := (id, kind, prompt) => out.Push(Map("id", id, "kind", kind, "prompt", prompt))
+        ; fmt / arg: a prompt built from a name keeps its pattern too, so the
+        ; dashboard can show it translated (I18n.F(fmt, arg))
+        add := (id, kind, prompt, fmt := "", arg := "") => out.Push(Map("id", id, "kind", kind, "prompt", prompt, "fmt", fmt, "arg", arg
+            , "auto", AutoCal.IsAuto(id)))
         add("notify_rect", "rect", "Wait for an in-game notification (let auto craft make something, or press E at an EMPTY quest board). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the area where notification text shows (make it a bit bigger than one notification).")
         add("fisher_open_shop", "point", "Talk to Captain Flarg so his two buttons show. Hover the Open Shop button (not Sell Fish).")
         for name in Calibrate.Potions()
-            add(Calibrate.PotionId(name), "point", "Fisher shop open (Open Shop). Hover the " name " tile in the shop list (the tile that picks it).")
+            add(Calibrate.PotionId(name), "point", "Fisher shop open (Open Shop). Hover the " name " tile in the shop list (the tile that picks it)."
+                , "Fisher shop open (Open Shop). Hover the {1} tile in the shop list (the tile that picks it).", name)
         add("fisher_buy_button", "point", "Fisher shop open, a potion picked. Hover the Buy button (the same spot for every potion).")
         add("fisher_picked_name", "rect", "Fisher shop open, a potion picked. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the picked item's big NAME in the left panel (make it wide enough for the longest name, e.g. 'Fortune Potion III'). The macro reads it so it never buys the wrong item.")
         add("fisher_qty", "point", "Stand at the Fisher shop with a potion selected. Hover the quantity box.")
@@ -359,12 +436,26 @@ class Calibrate {
         return out
     }
 
-    ; "all" | Array of ids | comma list -> Array of step Maps (list order kept
-    ; for "all", requested order otherwise). Unknown id -> ValueError.
+    ; The step is found on screen by the macro: it needs no recording.
+    static IsAuto(id) => AutoCal.IsAuto(id)
+
+    ; The step is recorded, or needs no recording.
+    static Ready(id) => Calibrate.Stored(id) || AutoCal.IsAuto(id)
+
+    ; "all" | "hand" (all but the steps found on screen) | Array of ids |
+    ; comma list -> Array of step Maps (list order kept for "all" / "hand",
+    ; requested order otherwise). Unknown id -> ValueError.
     static ResolveIds(stepIds := "all") {
         steps := Calibrate.Steps()
         if (!IsObject(stepIds) && StrLower(Trim(String(stepIds))) = "all")
             return steps
+        if (!IsObject(stepIds) && StrLower(Trim(String(stepIds))) = "hand") {
+            hand := []
+            for s in steps
+                if !s["auto"]
+                    hand.Push(s)
+            return hand
+        }
         want := []
         if IsObject(stepIds) {
             for id in stepIds
@@ -620,6 +711,7 @@ class Calibrate {
             Calibrate._path := Calibrate._DefaultPath()
         Calibrate._loaded := true
         Calibrate._store := Map()
+        Calibrate._DropFound()                  ; found on screen: per run
         path := Calibrate._path
         ; no calibration yet (no file, or the shipped one with no steps): start
         ; from the preset made at THIS system's display (resolution + Windows
@@ -628,8 +720,12 @@ class Calibrate {
         ; recorded (then it holds the preset + the new step)
         src := path
         Calibrate.AutoNote := ""
+        Calibrate.PresetFit := ""
+        Calibrate.UseCount++
         if Calibrate._NoSteps(path) {
-            pp := Calibrate.PresetPath(path)
+            ; no preset made at this display (4K, ultrawide, 2560x1600, a
+            ; window): the nearest one (audit 2026-11-20: these got none)
+            pp := Calibrate._NearestFill(path)
             if (pp != "" && FileExist(pp))
                 src := pp
         } else {
@@ -722,6 +818,75 @@ class Calibrate {
             if (p.w = sys.w && p.h = sys.h)
                 return p
         return ""
+    }
+
+    ; The preset to use for display sys when none is made at its size:
+    ; -> {p, fit} or "". fit "exact" (MatchPreset), "scaled" (the same shape,
+    ; another size: every step is in 2560x1440 design space, so a 16:9
+    ; preset maps to 3840x2160 as it maps to 1920x1080) or "aspect" (no
+    ; preset of that shape: the closest shape, then the closest size; may
+    ; need a step re-recorded). The shipped presets differ only in
+    ; chat_rect (the chat keeps its size in screen px), so the closest size
+    ; is the better pick within one shape. Shapes within AspectTol (log of
+    ; the ratio) are the same: 1366x768 counts as 16:9.
+    static AspectTol := 0.02
+    static NearestPreset(list, sys) {
+        if !(IsObject(sys) && sys.w > 0 && sys.h > 0 && list is Array && list.Length)
+            return ""
+        p := Calibrate.MatchPreset(list, sys)
+        if IsObject(p)
+            return {p: p, fit: "exact"}
+        shape := (q) => Abs(Ln((sys.w / sys.h) / (q.w / q.h)))
+        size := (q) => Abs(Ln(Sqrt(sys.w * sys.h) / Sqrt(q.w * q.h)))
+        best := ""
+        for q in list
+            if (q.w > 0 && q.h > 0 && (!IsObject(best) || shape(q) < shape(best)))
+                best := q
+        if !IsObject(best)
+            return ""
+        lim := shape(best) + Calibrate.AspectTol
+        pick := ""
+        for q in list {
+            if !(q.w > 0 && q.h > 0) || shape(q) > lim
+                continue
+            if (!IsObject(pick) || size(q) < size(pick) - 0.000001
+                || (Abs(size(q) - size(pick)) <= 0.000001 && pick.scale != sys.scale && (q.scale = sys.scale || (q.scale = 100 && pick.scale != 100))))
+                pick := q
+        }
+        return {p: pick, fit: (shape(pick) <= Calibrate.AspectTol) ? "scaled" : "aspect"}
+    }
+
+    ; What the first run (no calibration yet) took when no preset is made
+    ; at this display: "" (none taken, or the exact one), else {fit, label,
+    ; display}: Check & help and the log say so.
+    static PresetFit := ""
+    ; one more each load (each Start and calibration change): TaskEnv tells
+    ; about a missing step again after it (once per run, not per app launch)
+    static UseCount := 0
+
+    ; first run: the exact preset, else the nearest (PresetFit, AutoNote)
+    static _NearestFill(path) {
+        n := "", sys := ""
+        try {
+            sys := Calibrate.System()
+            n := Calibrate.NearestPreset(Calibrate.Presets(path), sys)
+        }
+        if !IsObject(n)
+            return ""
+        if (n.fit != "exact") {
+            Calibrate.PresetFit := {fit: n.fit, label: n.p.label, display: sys.w "x" sys.h}
+            Calibrate.AutoNote := Calibrate.FitNote(Calibrate.PresetFit)
+        }
+        return n.p.path
+    }
+
+    ; the log line / Check & help detail for a PresetFit
+    static FitNote(f) {
+        if !IsObject(f)
+            return ""
+        return "no preset is made for " f.display "; using the nearest one, " f.label
+            . (f.fit = "scaled" ? " (the same shape, scaled to your size)"
+            : " (a different shape: if a click misses or a read fails, record that step again on the Calibrate page)")
     }
 
     ; () -> {w, h, scale}: this system's display. Tests swap it.

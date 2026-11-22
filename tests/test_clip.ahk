@@ -194,7 +194,7 @@ Test_Clip_HotkeyMustNotClashWithMacroKeys() {
         try DirDelete(dir, true)
         Clip.Reset()
     }
-    ; the Dashboard's Alerts > Clips tab refuses the same keys on Save
+    ; the Dashboard's Discord & Clips > Clips tab refuses the same keys on Save
     dir := UiDashTmp()
     d := ""
     try {
@@ -394,6 +394,23 @@ Test_Clip_OtherAppAndDefaultKey() {
         env.io.log := []
         env.RunTimers()
         AssertEq(ClCount(env.io.log, "down F10"), 1, "no hotkey typed: the app's default Alt+F10")
+    } finally {
+        try DirDelete(dir, true)
+        Clip.Reset()
+    }
+}
+
+Test_Clip_TriggerDelayOverride() {
+    env := ClEnv()
+    cfg := ClSetup(env, &dir)
+    try {
+        cfg.Set("Medal.delaySec", 40)
+        AssertEq(Clip.Trigger("aura:Pixelation", 15000), "scheduled", "scheduled")
+        AssertEq(env.timers.Length ? env.timers[1].ms : "", 15000, "the given delay wins over delaySec")
+        env.RunTimers()
+        env.now += 60000
+        AssertEq(Clip.Trigger("rare"), "scheduled", "no delay given")
+        AssertEq(env.timers.Length ? env.timers[1].ms : "", 40000, "delaySec")
     } finally {
         try DirDelete(dir, true)
         Clip.Reset()

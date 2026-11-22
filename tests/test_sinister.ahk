@@ -145,30 +145,55 @@ Test_Sinister_SpawnMessageText() {
     AssertTrue(SnHas(r.wh.posts[1].content, "## Boss Spawned - Sinister S.") && SnHas(r.wh.posts[1].content, "[Join Server](" SnLink() ")"), "the user's text")
 }
 
-Test_Sinister_NoSendInAGhostServerOrWithoutALink() {
+; audit 2026-11-20: with Join link on (the default) and no private link, or
+; in a public / ghost server, NO boss card was sent while the biome cards
+; were. Now the card goes without the link and its button, as theirs do.
+SnNoLink(wh, what) {
+    AssertEq(wh.posts.Length, 1, what ": the card is sent")
+    c := wh.posts[1].content
+    AssertTrue(SnHas(c, "Boss Spawned - Sinister S."), what ": the boss named")
+    AssertTrue(!InStr(c.desc, "roblox.com") && !InStr(c.desc, "Join Server") && !IsObject(c.buttons), what ": no link, no button")
+}
+
+Test_Sinister_NoLinkInAGhostServerOrWithoutALink() {
     r := SnRep(, () => true)
     r.rep.Spawn("k")
-    AssertEq(r.wh.posts.Length, 0, "ghost server: no send")
+    SnNoLink(r.wh, "ghost server")
+    AssertTrue(SnLogged(r.logs, "without the Join Server link"), "logged why")
     r := SnRep(, "")
     r.rep.Spawn("k")
-    AssertEq(r.wh.posts.Length, 0, "ghost not known: no send")
+    SnNoLink(r.wh, "ghost not known")
     r := SnRep(, () => (1 / 0))
     r.rep.Spawn("k")
-    AssertEq(r.wh.posts.Length, 0, "ghost dep failing: no send")
+    SnNoLink(r.wh, "ghost dep failing")
     for link in ["   ", "not a link", "https://evil.example/x", "https://www.roblox.com/share?code=a b"] {
-        wh := SnFakeWh()
-        rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", link)), ghost: () => false})
+        wh := SnFakeWh(), logs := []
+        rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", link)), ghost: () => false, log: (t) => logs.Push(t)})
         rep.Spawn("k")
-        AssertEq(wh.posts.Length, 0, "unusable link: no send (" A_Index ")")
+        SnNoLink(wh, "unusable link " A_Index)
+        AssertTrue(SnLogged(logs, "no usable private server link"), "logged why " A_Index)
     }
-    ; ghost later: still nothing for this spawn, and no edit
+    ; a link pasted without https:// is made clickable (as the biome cards)
+    wh := SnFakeWh()
+    rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", "roblox.com/share?code=abc&type=Server")), ghost: () => false})
+    rep.Spawn("k")
+    AssertTrue(InStr(wh.posts[1].content.desc, "[Join Server](https://www.roblox.com/share?code=abc&type=Server)"), "the link fixed up")
+    ; posted without the link: the kill edit has none either
     r := SnRep(, () => true)
     r.rep.Spawn("k"), r.rep.Killed("toast")
-    AssertEq(r.wh.edits.Length, 0, "nothing posted: nothing edited")
+    AssertEq(r.wh.edits.Length, 1, "edited to dead")
+    AssertTrue(!IsObject(r.wh.edits[1].content.buttons) && !InStr(r.wh.edits[1].content.desc, "roblox.com"), "the dead card has no link")
+}
+
+SnLogged(logs, s) {
+    for l in logs
+        if InStr(l, s)
+            return true
+    return false
 }
 
 ; General.joinButton off: the boss card goes out without the private server
-; link or its button (as the biome cards); still nothing in a ghost server
+; link or its button (as the biome cards); in a ghost server too
 Test_Sinister_JoinButtonOffSendsNoLink() {
     wh := SnFakeWh()
     rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => false})
@@ -183,7 +208,7 @@ Test_Sinister_JoinButtonOffSendsNoLink() {
     wh2 := SnFakeWh()
     rep2 := SinisterReport({webhook: wh2, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => true})
     rep2.Spawn("k")
-    AssertEq(wh2.posts.Length, 0, "ghost server: nothing")
+    SnNoLink(wh2, "ghost server")
 }
 
 Test_Sinister_OneMessagePerSpawn() {
@@ -336,13 +361,13 @@ Test_Sinister_MinionsDespawnLeavesTheMessage() {
     m.t.Run(SchedCtx())
     AssertTrue(MnLogged(m, "the biome changed (GRAVEYARD -> NORMAL)"), "the biome ended")
     AssertEq(m.sw.posts.Length "/" m.sw.edits.Length, "1/0", "despawn with the biome: no edit")
-    ; no ghost dep (the default from deps): never posts
+    ; no ghost dep (the default from deps): never the link
     m := MnBoss(, Map("General.privateServer", SnLink()))
     m.s.logName := "Eden"
     m.t._scanFn := () => (MnSkills(m.io) < 4) ? [{x: 1280, y: 680, w: 200}] : []
     AssertTrue(m.t._sin is SinisterReport, "built from the deps")
     m.t.Run(SchedCtx())
-    AssertEq(m.t._sin.msg, "", "no ghost dep: nothing posted")
+    AssertEq(m.t._sin._link, "", "no ghost dep: no link")
 }
 
 

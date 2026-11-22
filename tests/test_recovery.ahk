@@ -245,6 +245,9 @@ Test_Recovery_Stuck_RunResetsToSpawn() {
     AssertEq(rig.runs.Length, 0, "no rejoin when window exists")
     AssertEq(rig.task.CanRun(rig.state), false, "clock restarted after reset")
     AssertTrue(InStr(rig.hook.Text(), "errors|Recovery: stuck"), "errors webhook")
+    AssertEq(rig.task.LeftSpot(), true, "at spawn now: the App walks back to the fishing spot")
+    rig.task.Run(rig.Ctx())
+    AssertEq(rig.task.LeftSpot(), false, "a run that did not respawn: stayed put")
 }
 
 Test_Recovery_Rejoin_WaitsAndSucceeds() {
@@ -259,6 +262,7 @@ Test_Recovery_Rejoin_WaitsAndSucceeds() {
     AssertTrue(el >= 5000 + 20000, "waited for window + load, elapsed " el)
     AssertEq(rig.io.Count("d:Esc"), 1, "reset to spawn after load")
     AssertEq(rig.state.progressAt, rig.clock.t, "progress clock restarted")
+    AssertEq(rig.task.LeftSpot(), true, "rejoined at spawn: the App walks back to the fishing spot")
     AssertTrue(InStr(rig.hook.Text(), "errors|Recovery: rejoined"), "errors webhook")
     AssertTrue(!InStr(rig.AllText(), "SECRET123"), "link never logged or sent")
     AssertTrue(!InStr(rig.AllText(), "roblox.com"), "no url fragment logged or sent")

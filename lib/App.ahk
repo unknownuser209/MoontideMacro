@@ -19,6 +19,7 @@
 #Include %A_LineFile%\..\tasks\Quests.ahk
 #Include %A_LineFile%\..\tasks\DailyQuests.ahk
 #Include %A_LineFile%\..\tasks\BiomeItems.ahk
+#Include %A_LineFile%\..\tasks\InvFind.ahk
 #Include %A_LineFile%\..\tasks\Obby.ahk
 #Include %A_LineFile%\..\tasks\Minions.ahk
 #Include %A_LineFile%\..\tasks\MemoryMatch.ahk
@@ -197,13 +198,14 @@ class App {
     ; to the spot through the Fisher) runs next when fishing is on
     static MovesAway := Map("quests", 1, "obby", 1, "minions", 1, "merchant", 1, "memorymatch", 1)
     static DrainMs := 5000
-    static Order := ["potions", "recovery", "merchant", "craft", "biomeitems", "quests", "obby", "memorymatch", "dailyquests", "minions", "sell", "limbo", "fishing"]
+    static Order := ["potions", "recovery", "merchant", "craft", "autocal", "biomeitems", "quests", "obby", "memorymatch", "dailyquests", "minions", "sell", "limbo", "fishing"]
     static KeyNames := ["start", "pause", "stop"]
     static KeyDefaults := Map("start", "F1", "pause", "F2", "stop", "F3")
     static Msg := Map(
         "missing", ["Roblox not found", "Roblox not found. Open Roblox fullscreen, then press F2."],
         "notfs", ["Roblox window not usable", "The Roblox window can't be used (minimized, too small or partly off the screen). Restore it or make it fullscreen (F11), then press F2."],
-        "unfocused", ["Roblox lost focus", "Roblox is not the active window (alt-tab?). Input stopped. Click into Roblox, then press F2."])
+        "unfocused", ["Roblox lost focus", "Roblox is not the active window (alt-tab?). Input stopped. Click into Roblox, then press F2."],
+        "notprivate", ["Not in your private server", "You are not in your private server and recovery is off, so the macro does not rejoin it. Join your private server, then press F2."])
 
     ; Absolute repo dir (lib\App.ahk -> repo).
     static DefaultRoot() => RegExReplace(A_LineFile, "\\lib\\[^\\]+$")
@@ -215,7 +217,7 @@ class App {
         if !d.Has("cfg")
             throw ValueError("App: cfg is required")
         this.cfg := d["cfg"]
-        ; Windowed: Yes / No (Setup > Calibrate): a window is used only with Yes
+        ; Windowed: Yes / No (Help > Calibrate): a window is used only with Yes
         try Roblox.AllowWindowed := (this.cfg.Get("General.windowed", 0) = 1)
         try Calibrate.ScaleOverride := Calibrate.ScaleFromText(this.cfg.Get("General.displayScale", 0))   ; Scale: Auto / picked
         this.root := App._Dep(d, "root", App.DefaultRoot())
@@ -232,6 +234,7 @@ class App {
         this.sched := App._Dep(d, "schedule", "")    ; RunSchedule
         this.remote := ""                            ; DiscordRemote while Remote.enabled
         this._wizard := ""
+        this._wizLang := ""          ; a language picked in the setup wizard (restart on close)
         this._whatsNew := ""
         this._schedStarting := false
         this._svc := Map("sched", 0, "sum", 0, "save", 0, "stats", 0, "hist", 0)
@@ -277,6 +280,10 @@ class App {
         this._lastPoll := ""
         this._pauseReason := ""
         this._note := ""
+        this._limboTrip := false     ; App._Pick: the walk to fishing asked for since the last time in Limbo
+        this._limboChecked := false  ; inLimbo restored from the flag after Start (first poll)
+        this._limboMarked := false   ; logs\limbo_session.flag written for the current inLimbo
+        this._limboFlagPath := ""        ; that file ("" = <root>\logs\limbo_session.flag)
         this._display := ""          ; "Roblox 1280x1024 (x0.5): not tested at this size yet ...
         this._displayLogged := ""
         this._holdUntil := 0
@@ -312,7 +319,7 @@ class App {
             for name, t in d["tasks"]
                 this._taskMap[name] := t
         } else {
-            for name in ["recovery", "merchant", "craft", "biomeitems", "quests", "obby", "memorymatch", "dailyquests", "minions", "sell", "limbo", "fishing"] {
+            for name in ["recovery", "merchant", "craft", "autocal", "biomeitems", "quests", "obby", "memorymatch", "dailyquests", "minions", "sell", "limbo", "fishing"] {
                 t := this._DefaultTask(name)
                 if IsObject(t)
                     this._taskMap[name] := t
@@ -380,6 +387,9 @@ class App {
                 case "dailyquests": return DailyQuestsTask({cfg: cfg, webhook: this.wh, log: this._logFn
                     , potionQuest: (p, n) => this._PotionQuest(p, n)})
                 case "biomeitems": return BiomeItemsTask({cfg: cfg, webhook: this.wh, log: this._logFn})
+                ; one look at the inventory when one of its steps is missing or
+                ; it failed its own read (never with a full calibration that works)
+                case "autocal": return InvFindTask({cfg: cfg, webhook: this.wh, log: this._logFn})
                 case "obby": return ObbyTask({cfg: cfg, webhook: this.wh, log: this._logFn, aura: () => this._AuraNow()
                     , hintPath: App.DefaultRoot() "\data\aura_hints.json"
                     , respawnAfter: ra})
@@ -537,6 +547,7 @@ class App {
         this.ctx.Reset()
         this._idle := this._IdleOn()            ; idle mode: reads only, no input (see _IdleTick)
         try this.fixit.Reset()                  ; a new run: cards may show again
+        this._StuckUiStart()                    ; package B: last run's fix card and stuck-UI streak gone
         if (this._fixOn && !this._idle)         ; windowed: the overlay off the game
             try this._WindowedStart()
         if this._fixOn                          ; the real app: the preset that fits Roblox's screen now
@@ -568,13 +579,19 @@ class App {
         this.state.startSell := false
         this.state.needRepath := false          ; a re-path left from the last run is not this one's
         this.state.repathStreak := 0
+        this.state.limboHeld := false
+        this._limboChecked := false             ; the first poll restores inLimbo (_LimboRestore)
+        this._limboTrip := false
         if (this._taskMap.Has("merchant") && HasMethod(this._taskMap["merchant"], "Reset"))
             this._taskMap["merchant"].Reset()   ; a merchant announced before Stop is long gone
+        if (IsObject(this.recovery) && HasMethod(this.recovery, "Reset"))
+            try this.recovery.Reset()           ; a disconnect / hold from the last run is not this one's
         this.state.limboMode := this._LimboMode()
         if this._idle {
             this.Log(App.IdleStartMsg)
         } else if this.state.limboMode {
-            this.Log("Limbo is on: using the Portable Crack and waiting for Eden (fishing, selling, crafting, quests and merchants are off)")
+            this.Log("Limbo is on: using the Portable Crack and waiting for Eden (fishing, selling, crafting, quests and merchants are off;"
+                . " when the crack cannot be used they run until the next try)")
         } else if (this.cfg.Get("General.repathOnStart", 1) && FishLogic.TripWanted(this.cfg) && this._taskMap.Has("sell")) {
             ; (fishing and crafting off: no trip; it walked there and idled, 2026-10-31)
             this.state.needRepath := true
@@ -739,7 +756,8 @@ class App {
     ; window. No anti-AFK either: Roblox's own 20 minute idle kick can still
     ; disconnect an untouched client.
 
-    static IdleStartMsg := "Idle mode: reading biomes, auras, chat and the biome clock only; no clicks or keys, Roblox can stay behind other windows"
+    static IdleStartMsg := "Idle mode: reading biomes, auras, chat and the biome clock only; no clicks or keys, Roblox can stay behind other windows."
+        . " No anti-AFK or auto-rejoin either: Roblox's 20 minute idle kick ends the watch"
     static IdleNote := "Idle (watching)"
 
     _IdleOn() {
@@ -928,9 +946,41 @@ class App {
         }
     }
 
-    _LimboMode() => (this._taskMap.Has("limbo") && this.cfg.Get("Limbo.enabled", 0)) ? true : false
+    ; Limbo mode: Limbo on, except while the crack is on hold (LimboTask.Held:
+    ; it could not be used, the next try is RetryMin away), when the island
+    ; tasks run until that try (2026-11-20: nothing could run for those 10
+    ; minutes and the status said "Idle", read as idle mode)
+    _LimboMode() => (this._taskMap.Has("limbo") && this.cfg.Get("Limbo.enabled", 0) && !this._LimboHeld()) ? true : false
+
+    _LimboHeld() {
+        if !(this._taskMap.Has("limbo") && this.cfg.Get("Limbo.enabled", 0))
+            return false
+        ; the last join was not the private server (a ghost server) while one
+        ; is set: the island tasks wait for the rejoin / the crack (2026-11-20
+        ; review). No private server (public play): the hold applies.
+        if (this._joinKind = "other" && RecoveryTask.LinkOk(Trim(String(this.cfg.Get("General.privateServer", "")))))
+            return false
+        l := this._taskMap["limbo"], held := false
+        if HasMethod(l, "Held")
+            try held := l.Held(this.state) ? true : false
+        return held
+    }
 
     _Pick(now, win) {
+        held := this._LimboHeld()
+        if (held && !this.state.limboHeld) {
+            ; Limbo mode never walked to the fishing spot: the sell trip
+            ; walks there first (once until the player is in Limbo again:
+            ; a crack try only opens the inventory)
+            if (!this._limboTrip && FishLogic.TripWanted(this.cfg) && this._taskMap.Has("sell")) {
+                this.state.needRepath := true
+                this._limboTrip := true
+            }
+        }
+        if this.state.inLimbo
+            this._limboTrip := false
+        this._LimboSync()
+        this.state.limboHeld := held
         this.state.limboMode := this._LimboMode()     ; follows the Fishing page switch
         list := this._tasks
         if (win = "missing") {
@@ -966,7 +1016,7 @@ class App {
                 if this._Active()
                     this._CheckChat()               ; a merchant may make a task eligible
                 if !IsObject(this._Pick(now, win)) {
-                    this._note := "Idle"
+                    this._note := this._WaitNote()
                     return
                 }
             }
@@ -996,11 +1046,27 @@ class App {
                 else
                     this._note := "Waiting for Roblox"
             } else
-                this._note := "Idle"
+                this._note := this._WaitNote()
             return
         }
         this._note := ""
         this._Launch(nxt)
+    }
+
+    ; The status when nothing can run: why the macro waits, never a bare
+    ; "Idle" (2026-11-20: a user read it as idle mode while the Portable
+    ; Crack was on hold). Dashboard / overlay translate it (UiLogic.TaskText).
+    _WaitNote() {
+        if (this._taskMap.Has("limbo") && this.cfg.Get("Limbo.enabled", 0) && !this.state.inLimbo) {
+            l := this._taskMap["limbo"], at := ""
+            if HasMethod(l, "HoldClock")
+                try at := l.HoldClock()
+            if (at != "")
+                return "Waiting: next Portable Crack try at " at
+        }
+        if !this.cfg.Get("General.fishing", 1)
+            return "Waiting: fishing is off and nothing else is due"
+        return "Waiting: nothing is due right now"
     }
 
     ; Stop / pause pressed (e.g. during _Focus) -> do not launch.
@@ -1085,6 +1151,7 @@ class App {
             this.Log("task: " task.name " end" (how != "" ? " (" how ")" : ""))
             if !skipped
                 try this._Tidy(task)
+            try this._UiStuckCheck()               ; game windows that keep failing: rejoin
             this.state.busy := ""
             if (task.name = "sell" && !skipped)
                 this.state.startSell := false      ; the start sell happened (or failed): buying may follow
@@ -1094,7 +1161,15 @@ class App {
             ; the same after every task that walks away from the fishing spot
             ; (live 2026-11-10: after minions / obby / merchant fishing
             ; looked for its panel, failed, saved a screen, then re-pathed)
-            if (App.MovesAway.Has(task.name) && !skipped && this._taskMap.Has("sell") && this.cfg.Get("General.fishing", 1))
+            ; craft (its cauldron part ends with a respawn) and recovery (a
+            ; stuck reset, a rejoin) only sometimes: they say so themselves
+            ; (LeftSpot). Live 2026-11-20: 11 of 17 "no fishing panel"
+            ; re-paths came right after one of the two, ~7 s and a saved
+            ; screen each before the walk back started.
+            away := App.MovesAway.Has(task.name)
+            if (!away && HasMethod(task, "LeftSpot"))
+                try away := task.LeftSpot() ? true : false
+            if (away && !skipped && this._taskMap.Has("sell") && this.cfg.Get("General.fishing", 1))
                 this.state.needRepath := true
             if !skipped                            ; a skipped task did not run: due again
                 try this.state.Bump("runs." task.name)
@@ -1458,13 +1533,17 @@ class App {
         } finally {
             this._polling := false
         }
+        if (this._started && !this._limboChecked) {
+            this._limboChecked := true
+            this._LimboRestore()
+        }
         return n
     }
 
     RouteEvent(ev) {
         try {
             type := ev["type"]
-            if (type = "biome" || type = "aura") {
+            if (type = "biome" || type = "aura" || type = "roll") {
                 this.be.Handle(ev)
             } else if (type = "merchant") {
                 live := ev.Has("live") && ev["live"] is Integer && ev["live"] = 1
@@ -1500,13 +1579,102 @@ class App {
         if (ev.Has("live") && ev["live"])
             Auras.Quiet(Auras.JoinQuietMs)
         this._joinKind := ev["name"]
+        this._LimboJoin(ev)
         d := RecoveryTask.GhostDecision(ev["name"], this.state, this.cfg)
         if (d = "clear") {
             this.state.ghost := false
         } else if (d = "ghost" && !this.state.ghost) {
             this.state.ghost := true
-            this.Log("Ghost server: the game moved you to a server your friends can't join; rejoining your private server")
+            ; recovery off with a private server set: not rejoined, so the
+            ; island tasks would run in the wrong server: paused with why
+            ; (2026-11-20 live: tasks ran in a server that was not the private one)
+            link := Trim(String(this.cfg.Get("General.privateServer", "")))
+            if (!this._RecoveryOn() && RecoveryTask.LinkOk(link) && this._started && !this._idle) {
+                this.Log("Ghost server: you are not in your private server and recovery is off")
+                this._PauseFor("notprivate")
+            } else
+                this.Log("Ghost server: the game moved you to a server your friends can't join; rejoining your private server")
         }
+    }
+
+    ; THE LIMBO across restarts (live 2026-11-20 16:16): the Portable Crack
+    ; takes the player to THE LIMBO inside the same server (Workspace
+    ; .GlobalRolls.Limbo; no join in the Roblox log), so after a Stop + Start
+    ; or an app restart nothing in the log says the player is still there:
+    ; with Limbo switched off the macro ran quests, the obby and minions in
+    ; it. inLimbo is kept in logs\limbo_session.flag with the Roblox session
+    ; it was set in (log file + last join): the first poll after Start puts
+    ; it back while that session goes on (Limbo on: waits by Eden; Limbo off:
+    ; LimboTask rejoins Sol's Island first, only limbo / recovery run until
+    ; then). Any new join is a fresh server on Sol's Island: cleared.
+    _LimboFlag() => this._limboFlagPath != "" ? this._limboFlagPath : this.root "\logs\limbo_session.flag"
+
+    ; the Roblox session now: "<log file name>|<ts of its last join>" or ""
+    _LimboKey() {
+        k := ""
+        if (IsObject(this.lw) && HasMethod(this.lw, "JoinKey"))
+            try k := String(this.lw.JoinKey())
+        return k
+    }
+
+    _LimboRestore() {
+        f := this._LimboFlag(), mark := ""
+        try mark := Trim(FileRead(f, "UTF-8"), " `t`r`n")
+        key := this._LimboKey()
+        if (mark != "" && key != "" && mark == key) {
+            this._limboMarked := true
+            if !this.state.inLimbo {
+                this.state.inLimbo := true
+                off := !this.cfg.Get("Limbo.enabled", 0)
+                this.Log("Limbo: still in THE LIMBO (the Portable Crack was used in this Roblox session, no rejoin since)"
+                    . (off ? ": Limbo is off, so the macro rejoins Sol's Island first" : ": waiting by Eden"))
+            }
+            return
+        }
+        if (mark != "")
+            try FileDelete(f)
+        this._limboMarked := false
+        ; kept in memory from the last run, but Roblox joined again since
+        if (this.state.inLimbo && mark != "" && key != "") {
+            this.state.inLimbo := false
+            this.Log("Limbo: Roblox joined a server since THE LIMBO: on Sol's Island")
+        }
+    }
+
+    ; the flag follows state.inLimbo (only once the first poll restored it)
+    _LimboSync() {
+        if (!this._limboChecked || this._limboMarked == (this.state.inLimbo ? true : false))
+            return
+        f := this._LimboFlag()
+        if this.state.inLimbo {
+            key := this._LimboKey()
+            if (key = "")
+                return
+            try {
+                DirCreate(RegExReplace(f, "\\[^\\]+$"))
+                if FileExist(f)
+                    FileDelete(f)
+                FileAppend(key, f, "UTF-8")
+                this._limboMarked := true
+            }
+        } else {
+            try FileDelete(f)
+            this._limboMarked := false
+        }
+    }
+
+    ; A new join (live) is a fresh server on Sol's Island: never THE LIMBO.
+    ; The backfilled last join at Start is _LimboRestore's.
+    _LimboJoin(ev) {
+        if !(ev.Has("live") && ev["live"])
+            return
+        if (IsObject(this.recovery) && HasMethod(this.recovery, "OnJoin"))
+            try this.recovery.OnJoin()
+        if this.state.inLimbo {
+            this.state.inLimbo := false
+            this.Log("Limbo: Roblox joined a server: on Sol's Island")
+        }
+        this._LimboSync()
     }
 
     ; A ghost server now (MinionsTask's boss message is never sent from one):
@@ -1535,8 +1703,10 @@ class App {
             return ""
         now := this.Now()
         best := "", bestMs := -1
-        for t in [["quests", "Quests", "quests.enabled", "questIntervalMs"], ["obby", "Obby", "Obby.enabled", "obbyIntervalMs"]] {
-            if !(this._taskMap.Has(t[1]) && this.cfg.Get(t[3], 0))
+        ; t[5]: the switch's default, as the task reads it (quests on: a
+        ; missing key never showed Quests here, audit 2026-11-20)
+        for t in [["quests", "Quests", "quests.enabled", "questIntervalMs", 1], ["obby", "Obby", "Obby.enabled", "obbyIntervalMs", 0]] {
+            if !(this._taskMap.Has(t[1]) && this.cfg.Get(t[3], t[5]))
                 continue
             ms := this.state.lastRun.Has(t[1]) ? Max(0, this.state.lastRun[t[1]] + this.state.%t[4]% - now) : 0
             if (bestMs < 0 || ms < bestMs)
@@ -1578,7 +1748,7 @@ class App {
             task := StrTitle(this._running.name)
         else
             task := this._started ? this._note : ""
-        if (this._display != "" && (task = "" || task = "Idle"))
+        if (this._display != "" && (task = "" || task = "Idle" || SubStr(task, 1, 8) = "Waiting:"))
             task := (task = "" ? "" : task ". ") this._display
         if (task = "Fishing" && (n := this._OrbNote()) != "")
             task .= ", " n
@@ -1644,15 +1814,106 @@ class App {
         if !(this._fixOn && IsObject(this.fixit) && IsObject(this.dash))
             return
         r := ""
-        try r := this.fixit.Seen(text)
+        try r := this.fixit.Seen(text, this.Now())
         if !IsObject(r)
             return
         try this._fixCard.Destroy()
         try {
             this._fixCard := FixCard(r, Map("page", (n) => this._FixPage(n), "act", (a) => this._FixAct(a)
-                , "zip", () => this._FixZip(), "dismiss", (k) => this.fixit.Dismiss(k)))
-            this._fixCard.Show()
+                , "zip", () => this._FixZip(), "dismiss", (k) => (this.fixit.Dismiss(k), this._fixCard := "")))
+            this._fixHid := false
+            this._FixCardPlace()
         }
+    }
+
+    ; ---- package B (2026-11-20): the fix card off the game, the stuck-UI escape ----
+
+    static FixQuietMs := 10 * 60000      ; the card's line not seen for this long: the problem is gone, card closed
+    ; only rules whose line keeps coming while the problem lasts (a missing
+    ; link or calibration is logged once and stays a problem)
+    static FixAutoClose := Map("shift", 1, "focus", 1, "notfs", 1, "inventory", 1, "rejoins", 1)
+    static UiRejoinGapMs := 20 * 60000   ; stuck-UI rejoins at most this often (a misread must not rejoin all night)
+
+    ; Start: the last run's card closed (FixIt.Reset lets it come back), the
+    ; stuck-UI streak cleared.
+    _StuckUiStart() {
+        try this._fixCard.Destroy()
+        this._fixCard := ""
+        UiStuck.Reset()
+        this._uiStuckTold := false
+    }
+
+    ; The card where it covers no game (FixCard.Spot); with no room it is
+    ; hidden while the macro runs and shown when paused or stopped.
+    _FixCardPlace() {
+        c := this._fixCard
+        if !IsObject(c)
+            return
+        running := this._started && !this.ctx.IsPaused() && !this.ctx.IsStopped()
+        w := Theme.Dpi(FixCard.W), h := Theme.Dpi(FixCard.H)
+        mons := []
+        Loop MonitorGetCount() {
+            MonitorGetWorkArea(A_Index, &l, &t, &r, &b)
+            mons.Push({l: l, t: t, r: r, b: b})
+        }
+        MonitorGetWorkArea(MonitorGetPrimary(), , , &pr, &pb)
+        pref := FixCard.Pos(pr, pb)
+        game := ""
+        if (running && Roblox.Hwnd() && Screen.cw > 0)
+            game := {x: Screen.cx, y: Screen.cy, w: Screen.cw, h: Screen.ch}
+        p := FixCard.Spot(w, h, game, mons, pref)
+        if IsObject(p) {
+            c.ShowAt(p.x, p.y)
+            this._fixHid := false
+            return
+        }
+        c.Hide()
+        if !(this.HasOwnProp("_fixHid") && this._fixHid) {
+            this._fixHid := true
+            this.Log("fix card '" c.rule.title "' waits until the macro pauses or stops (it would cover the game)")
+        }
+    }
+
+    ; ServiceTick: placed again (pause, stop, a moved window), and closed
+    ; once its line has not come back for FixQuietMs.
+    _FixCardTick() {
+        c := this._fixCard
+        if !IsObject(c)
+            return
+        q := this.fixit.QuietFor(c.rule.key, this.Now())
+        if (App.FixAutoClose.Has(c.rule.key) && q >= App.FixQuietMs) {
+            try c.Destroy()
+            this._fixCard := ""
+            this.fixit.Forget(c.rule.key)
+            this.Log("fix card '" c.rule.title "' closed: the problem has not shown for " App.FixQuietMs // 60000 " min")
+            return
+        }
+        this._FixCardPlace()
+    }
+
+    ; After every task: UiStuck.TripAt game windows in a row did not read
+    ; (Aura Storage, inventory, aura search, a Memory Match board left
+    ; open) -> the recovery task rejoins, at most once per UiRejoinGapMs.
+    ; Live 2026-11-20: a board left open locked the macro out 00:12-06:39.
+    _UiStuckCheck() {
+        if (!UiStuck.Due() || this.ctx.IsStopped() || this.ctx.IsPaused())
+            return
+        if !(this._RecoveryOn() && HasMethod(this.recovery, "RequestUnlock")) {
+            if !(this.HasOwnProp("_uiStuckTold") && this._uiStuckTold)
+                this.Log("the game's windows look stuck (" UiStuck.Text() "); auto-rejoin is off, so nothing clears them: close them in Roblox or rejoin")
+            this._uiStuckTold := true
+            UiStuck.Reset()
+            return
+        }
+        now := this.Now()
+        if (this.HasOwnProp("_uiRejoinAt") && now - this._uiRejoinAt < App.UiRejoinGapMs)
+            return
+        if !this.recovery.RequestUnlock()
+            return                              ; a rejoin is already asked for
+        this._uiRejoinAt := now
+        this.Log("the game's windows look stuck (" UiStuck.Text() "): rejoining to clear them")
+        UiStuck.Reset()
+        this._holdUntil := now
     }
 
     _FixPage(name) {
@@ -1983,7 +2244,7 @@ class App {
             if !this._started
                 return this._TestRefused("the macro is not running. Start it (F1) first.")
             if !(this._RecoveryOn() && HasMethod(this.recovery, "FakeDisconnect"))
-                return this._TestRefused("auto-rejoin is off (Settings > Recovery).")
+                return this._TestRefused("auto-rejoin is off (Settings > General, Recovery).")
             if !this.recovery.FakeDisconnect()
                 return this._TestRefused("auto-rejoin needs your private server link (Settings).")
             this.Log("Test event: fake disconnect (Dev tools)")
@@ -2291,8 +2552,14 @@ class App {
 
     Boot(mode := "normal") {
         if (mode = "normal") {
-            Theme.CustomFromCfg(this.cfg)                       ; [UI] custom* colours, for theme = Custom
-            Theme.Use(this.cfg.Get("UI.theme", "Moontide"))     ; before any window
+            Theme.Cfg := this.cfg                               ; saved themes live next to settings.ini
+            ThemeStore.Migrate(this.cfg)                        ; [UI] custom* (and theme=Custom) -> "My theme", once
+            want := this.cfg.Get("UI.theme", "Moontide")
+            lt := ThemeStore.LoadWhy(this.cfg, want)
+            Theme.Apply(lt.theme)                               ; before any window
+            line := ThemeStore.FallbackLine(want, lt.why != "" ? lt.why : Theme.ApplyWhy)
+            if (line != "")
+                this.Log(line)                                  ; spec 7: the log says why
             I18n.Use(this.cfg.Get("UI.lang", "en"))             ; texts are translated when made
         }
         this._fixOn := (mode = "normal")
@@ -2335,7 +2602,8 @@ class App {
             this.overlay.Show()
         } else if (mode = "offscreen" && IsObject(this.dash)) {
             x := SysGet(76) + SysGet(78) + 200        ; right of the virtual desktop
-            this.dash._gui.Show("x" x " y0 w" Dashboard.W " h" Dashboard.H " NoActivate")
+            sz := this.dash.ShownSize()
+            this.dash._gui.Show("x" x " y0 w" sz.w " h" sz.h " NoActivate")
             this.dash._shown := true
             this.overlay._gui.Show("x" (x + 1100) " y0 w" Overlay.W " h" Overlay.H " NoActivate")
             this.overlay._shown := true
@@ -2413,6 +2681,8 @@ class App {
             this._svc["stats"] := now
             this._ServiceStep("stats page", () => this._StatsPageTick())
         }
+        if IsObject(this._fixCard)                 ; package B: off the game, closed when the problem is gone
+            this._ServiceStep("fix card", () => this._FixCardTick())
     }
 
     ; one service step; its first error of each kind is logged, never thrown
@@ -2493,8 +2763,8 @@ class App {
         n := 0
         try n := this.wh.Route("startstop").Length
         if !n {
-            this.Log("Daily summary: no webhook has Stop ticked (Alerts > Discord)")
-            return "Not sent: no webhook has Stop ticked (Alerts > Discord)"
+            this.Log("Daily summary: no webhook has Stop ticked (Discord & Clips > Discord)")
+            return "Not sent: no webhook has Stop ticked (Discord & Clips > Discord)"
         }
         b := DailySummary.Build(this.daily.Day(), today)
         this._Send("startstop", b.title, b.desc, 0xF2A93B, b.fields)
@@ -2539,7 +2809,7 @@ class App {
             return
         r := DiscordRemote(this._RemoteDeps())
         if !r.Enabled {
-            this.Log("Remote: needs the bot token, the channel id and at least one user id (Alerts > Remote)")
+            this.Log("Remote: needs the bot token, the channel id and at least one user id (Discord & Clips > Remote)")
             return
         }
         this.remote := r
@@ -2629,18 +2899,18 @@ class App {
         return res.msg
     }
 
-    ; Settings > Look "Apply now": a new theme needs new windows, so the macro
+    ; Settings > Look "Apply": a new theme needs new windows, so the macro
     ; restarts (only while stopped: a run is never cut short for a colour).
     OnRestart() {
         if (this._started || IsObject(this._running)) {
-            this.Log("Theme: stop the macro first (F3), then press Apply now")
+            this.Log("Theme: stop the macro first (F3), then press Apply")
             return false
         }
         if this._toolBusy {
-            this.Log("Theme: finish the route record / test first, then press Apply now")
+            this.Log("Theme: finish the route record / test first, then press Apply")
             return false
         }
-        this.Log("Theme: restarting to show " Theme.ThemeName(this.cfg.Get("UI.theme", "Moontide")))
+        this.Log("Theme: restarting to show " Trim(String(this.cfg.Get("UI.theme", "Moontide"))))
         Reload()
         return true
     }
@@ -2661,16 +2931,32 @@ class App {
     OpenWizard() {
         if !IsObject(this.dash)
             return
-        try this._wizard.Destroy()
-        this._wizard := SetupWizard(this.cfg, Map("checkSetup", () => this.OnCheckSetup(), "done", (f) => this._WizardDone(f)))
+        ; an open wizard goes; a language picked there (saved in UI.lang, not
+        ; yet shown) still restarts the window when the new one closes
+        dropped := ""
+        try dropped := this._wizard.Destroy()
+        this._wizLang := dropped
+        this._wizard := SetupWizard(this.cfg, Map("checkSetup", () => this.OnCheckSetup()
+            , "lang", (code) => this._wizLang := code, "done", (f) => this._WizardDone(f)))
         this._wizard.Show(this.dash._gui)
     }
 
     _WizardDone(finished) {
         this._wizard := ""
-        this.Log("Setup wizard " (finished ? "finished" : "skipped") (finished ? "" : " (Setup > Check & help runs it again)"))
+        this.Log("Setup wizard " (finished ? "finished" : "skipped") (finished ? "" : " (Help > Check & help runs it again)"))
         for page in ["Settings", "Fishing", "Craft", "Quests", "Merchants", "Obby & Memory", "Webhooks"]
             try this.dash.RevertPage(page)
+        ; a language picked in the wizard: the windows were built in the old
+        ; one, so restart to show it (only while stopped, like Look > Apply)
+        code := this._wizLang, this._wizLang := ""
+        if (code != "") {
+            if (this._started || IsObject(this._running) || this._toolBusy) {
+                this.Log("Language " code " saved: it shows after the next start")
+                return
+            }
+            this.Log("Language: restarting to show " code)
+            Reload()
+        }
     }
 
     ; ---- updates (lib\Updater.ahk) -----------------------------------------------

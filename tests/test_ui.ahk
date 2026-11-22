@@ -3,6 +3,8 @@
 ; No windows are created here. See test_ui_dash.ahk for the hidden-GUI
 ; round-trip test.
 #Include ..\lib\ui\UiLogic.ahk
+#Include ..\lib\Config.ahk
+#Include ..\lib\ui\ThemeStore.ahk
 
 ; ---- secret masking ----------------------------------------------------------
 
@@ -242,4 +244,207 @@ Test_Config_JoinButtonOnByDefault() {
         cfg.Save()
         AssertEq(Config.Load(dir).Get("General.joinButton", 1), 0, "turned off after that: stays off")
     } finally CfgTmpClean(dir)
+}
+
+; ---- Theme.Apply: a full theme (colours, fonts, picture placement) ------------
+
+UiThemeReset() {
+    ThemeStore.FontExistsFn := (fam) => ThemeStore.SystemHasFont(fam)
+    Theme.Cfg := ""
+    Theme.Use("Moontide")
+}
+
+Test_Theme_ApplyOverridesDerived() {
+    ThemeStore.FontExistsFn := (fam) => true
+    try {
+        t := ThemeStore.Default()
+        d := Theme.Derive(t["colors"]["Bg"], t["colors"]["PanelC"], t["colors"]["Text"], t["colors"]["Accent"])
+        for k in ThemeStore.DerivedKeys
+            t["colors"][k] := ""
+        t["colors"]["Muted"] := "123456"
+        Theme.Apply(t)
+        AssertEq(Theme.Muted, "123456", "override wins")
+        for k in ["SideBg", "CardBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Ink", "AccentHi", "Pulse"]
+            AssertEq(Theme.%k%, d.%k%, k " from Derive")
+    } finally {
+        UiThemeReset()
+    }
+}
+
+Test_Theme_ApplyFonts() {
+    ThemeStore.FontExistsFn := (fam) => true
+    try {
+        t := ThemeStore.Default()
+        t["fonts"]["title"] := ["Georgia", 22]
+        t["fonts"]["small"] := ["Verdana", 9]
+        t["fonts"]["head"] := ["Tahoma", 13]
+        Theme.Apply(t)
+        AssertEq(Theme.Fonts["title"][1], "s22 norm", "title size")
+        AssertEq(Theme.Fonts["title"][2], "Georgia", "title family")
+        AssertEq(Theme.Fonts["title"][3], "Text", "title colour kept")
+        AssertEq(Theme.Fonts["muted"][2], "Verdana", "muted follows small")
+        AssertEq(Theme.Fonts["muted"][1], "s10 norm", "muted size grows with small")
+        AssertEq(Theme.Fonts["caps"][2], "Verdana", "caps follows small")
+        AssertEq(Theme.Fonts["caps"][1], "s9 norm", "caps size grows with small")
+        AssertEq(Theme.Fonts["brand"][2], "Georgia", "brand follows title")
+        AssertEq(Theme.Fonts["value"][2], "Tahoma", "value follows head")
+        AssertEq(Theme.Fonts["big"][2], "Tahoma", "big follows head")
+        AssertEq(Theme.Fonts["glyph"][2], "Segoe UI Symbol", "glyph untouched")
+        AssertEq(Theme.Scale, 100, "scale")
+        AssertEq(Theme.Sidebar, "left", "sidebar")
+        ; a preset afterwards restores the defaults
+        Theme.Use("Moontide")
+        AssertEq(Theme.Fonts["muted"][2], "Segoe UI", "muted back")
+        AssertEq(Theme.Fonts["brand"][2], "Segoe UI Semilight", "brand back")
+    } finally {
+        UiThemeReset()
+    }
+}
+
+Test_Theme_ApplyWindowAndPicture() {
+    ThemeStore.FontExistsFn := (fam) => true
+    try {
+        t := ThemeStore.Default()
+        t["ui"]["scale"] := 130
+        t["ui"]["sidebar"] := "top"
+        t["picture"]["file"] := "none"
+        t["picture"]["fit"] := "tile"
+        t["picture"]["dim"] := 30
+        Theme.Apply(t)
+        AssertEq(Theme.Scale, 130, "scale")
+        AssertEq(Theme.Sidebar, "top", "sidebar")
+        AssertEq(Theme.BgImage, "", "no picture")
+        AssertEq(Theme.PictureSpec["fit"], "tile", "spec fit")
+        AssertEq(Theme.PictureSpec["dim"], 30, "spec dim")
+        t["picture"]["file"] := "Galaxy"
+        Theme.Apply(t)
+        AssertEq(Theme.BgImage, Theme.Presets["Galaxy"].BgImage, "preset picture")
+        ; a bad theme never throws and falls back to Moontide
+        Theme.Apply("junk")
+        AssertEq(Theme.Accent, Theme.Presets["Moontide"].Accent, "bad -> Moontide")
+    } finally {
+        UiThemeReset()
+    }
+}
+
+Test_Theme_PresetsUnchanged() {
+    ; the values before this task, written out
+    fonts := Map("body", ["s10 norm", "Segoe UI", "Text"], "muted", ["s9 norm", "Segoe UI", "Muted"]
+        , "small", ["s8 norm", "Segoe UI", "Muted"], "caps", ["s8 norm", "Segoe UI Semibold", "Muted"]
+        , "head", ["s11 norm", "Segoe UI Semibold", "Accent"], "title", ["s20 norm", "Segoe UI Light", "Text"]
+        , "brand", ["s20 norm", "Segoe UI Semilight", "Text"], "value", ["s12 norm", "Segoe UI Semibold", "Text"]
+        , "big", ["s16 norm", "Segoe UI Semibold", "Text"], "button", ["s10 norm", "Segoe UI Semibold", "Text"]
+        , "nav", ["s10 norm", "Segoe UI", "Muted"], "glyph", ["s9 bold", "Segoe UI Symbol", "Ink"])
+    try {
+        for name in Theme.Names {
+            AssertEq(Theme.Use(name), name, name " used")
+            p := Theme.Presets[name]
+            for k in Theme.ThemeKeys
+                AssertEq(Theme.%k%, p.%k%, name " " k)
+            AssertEq(Theme.Current, name, name " current")
+            for r, f in fonts
+                for i in [1, 2, 3]
+                    AssertEq(Theme.Fonts[r][i], f[i], name " font " r " " i)
+        }
+    } finally {
+        UiThemeReset()
+    }
+}
+
+Test_Theme_UseFindsSavedTheme() {
+    dir := A_Temp "\vesper_themeuse_" A_TickCount
+    DirCreate(dir)
+    try {
+        ThemeStore.FontExistsFn := (fam) => true
+        cfg := Config.Load(dir)
+        Theme.Cfg := cfg
+        t := ThemeStore.Default()
+        t["name"] := "Mine"
+        t["preset"] := false
+        t["colors"]["Accent"] := "00FF88"
+        AssertEq(ThemeStore.Save(cfg, t), true, "saved")
+        AssertEq(Theme.Use("Mine"), "Mine", "saved theme used")
+        AssertEq(Theme.Accent, "00FF88", "its accent")
+        AssertEq(Theme.Current, "Mine", "current")
+        Theme.Cfg := ""
+        AssertEq(Theme.Use("Mine"), "Moontide", "no cfg -> presets only")
+    } finally {
+        UiThemeReset()
+        try DirDelete(dir, true)
+    }
+}
+
+; a 200x100 24-bit bmp: x<50 red, 50..149 green, x>=150 blue
+UiThemeBmp(path) {
+    w := 200, h := 100, row := w * 3, size := 54 + row * h
+    b := Buffer(size, 0)
+    NumPut("UShort", 0x4D42, b, 0), NumPut("UInt", size, b, 2), NumPut("UInt", 54, b, 10)
+    NumPut("UInt", 40, b, 14), NumPut("Int", w, b, 18), NumPut("Int", h, b, 22)
+    NumPut("UShort", 1, b, 26), NumPut("UShort", 24, b, 28)
+    Loop h {
+        y := A_Index - 1
+        Loop w {
+            x := A_Index - 1
+            o := 54 + y * row + x * 3
+            col := (x < 50) ? "FF0000" : (x < 150) ? "00FF00" : "0000FF"
+            v := Integer("0x" col)
+            NumPut("UChar", v & 0xFF, b, o), NumPut("UChar", (v >> 8) & 0xFF, b, o + 1), NumPut("UChar", (v >> 16) & 0xFF, b, o + 2)
+        }
+    }
+    f := FileOpen(path, "w")
+    f.RawWrite(b)
+    f.Close()
+}
+
+; "RRGGBB" of a pixel of an HBITMAP
+UiThemePixel(hbm, x, y) {
+    dc := DllCall("CreateCompatibleDC", "Ptr", 0, "Ptr")
+    old := DllCall("SelectObject", "Ptr", dc, "Ptr", hbm, "Ptr")
+    c := DllCall("GetPixel", "Ptr", dc, "Int", x, "Int", y, "UInt")
+    DllCall("SelectObject", "Ptr", dc, "Ptr", old)
+    DllCall("DeleteDC", "Ptr", dc)
+    return Format("{:02X}{:02X}{:02X}", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF)
+}
+
+Test_Theme_DimPictureFit() {
+    dir := A_Temp "\vesper_themepic_" A_TickCount
+    DirCreate(dir)
+    try {
+        bmp := dir "\src.bmp"
+        UiThemeBmp(bmp)
+        bg := "112233"
+        ; fill: cover and crop, so the left column is source x 50 (green)
+        h := Theme.DimPicture(bmp, 100, 100, bg, 0, "fill")
+        AssertTrue(h != 0, "fill loads")
+        AssertEq(UiThemePixel(h, 2, 50), "00FF00", "fill crops to the middle")
+        DllCall("DeleteObject", "Ptr", h)
+        h := Theme.DimPicture(bmp, 100, 100, bg, 0)
+        AssertEq(UiThemePixel(h, 2, 50), "00FF00", "default is fill")
+        DllCall("DeleteObject", "Ptr", h)
+        ; fit: the whole picture, letterboxed in bg
+        h := Theme.DimPicture(bmp, 100, 100, bg, 0, "fit")
+        AssertEq(UiThemePixel(h, 50, 5), bg, "fit top is bg")
+        AssertEq(UiThemePixel(h, 50, 95), bg, "fit bottom is bg")
+        AssertEq(UiThemePixel(h, 50, 50), "00FF00", "fit middle is the picture")
+        DllCall("DeleteObject", "Ptr", h)
+        ; center: no scaling; 300 wide leaves 50 px of bg each side
+        h := Theme.DimPicture(bmp, 300, 100, bg, 0, "center")
+        AssertEq(UiThemePixel(h, 10, 50), bg, "center left margin is bg")
+        AssertEq(UiThemePixel(h, 60, 50), "FF0000", "center starts at source x 0")
+        AssertEq(UiThemePixel(h, 150, 50), "00FF00", "center middle")
+        AssertEq(UiThemePixel(h, 290, 50), bg, "center right margin is bg")
+        DllCall("DeleteObject", "Ptr", h)
+        ; tile: repeats at the source's own size
+        h := Theme.DimPicture(bmp, 300, 100, bg, 0, "tile")
+        AssertEq(UiThemePixel(h, 10, 50), "FF0000", "tile first copy")
+        AssertEq(UiThemePixel(h, 210, 50), "FF0000", "tile repeats")
+        AssertEq(UiThemePixel(h, 260, 50), "00FF00", "tile repeat middle")
+        DllCall("DeleteObject", "Ptr", h)
+        ; full dim is bg
+        h := Theme.DimPicture(bmp, 100, 100, bg, 1, "fill")
+        AssertEq(UiThemePixel(h, 50, 50), bg, "full dim is bg")
+        DllCall("DeleteObject", "Ptr", h)
+    } finally {
+        try DirDelete(dir, true)
+    }
 }

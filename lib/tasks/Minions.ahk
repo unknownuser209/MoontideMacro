@@ -2447,7 +2447,7 @@ class MinionsTask {
         sw._owed := ""
         c := sw._AuraCal()
         if !IsObject(c)
-            return {ok: false, had: false, prev: "", why: "the aura storage is not calibrated (Setup > Calibrate)"}
+            return {ok: false, had: false, prev: "", why: "the aura storage is not calibrated (Help > Calibrate)"}
         cur := sw._Aura()
         r := sw._SetAura(c, sw.wear, true, CleanupCtx(ctx), &was)
         return {ok: r > 0, had: (was = "on"), prev: cur.known ? cur.name : "", why: (r < 0) ? "stopped" : sw._why}

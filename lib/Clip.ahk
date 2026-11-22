@@ -22,13 +22,13 @@
 ;   Clip.Apps / Clip.App(id)   the clip apps {id, name, exes, key}: the
 ;                          process names one of which must run (none for
 ;                          "other") and the app's default save-clip hotkey
-;   Clip.Trigger(reason) -> "scheduled" | "disabled" | "no_app" | "cooldown"
+;   Clip.Trigger(reason, delayMs := "") -> "scheduled" | "disabled" | "no_app" | "cooldown"
 ;                           | "bad_hotkey" | "idle"
 ;     Clip.Idle (idle mode, set by the App while it runs): no key is ever
 ;     pressed, so every enabled Trigger is "idle" (logged once per idle run).
 ;     reason "rare" or "aura:<name>". Reason class = text before ":"; one
 ;     cooldown (cooldownSec, default 30) per class. Non-blocking: the hotkey
-;     is tapped delaySec (default 3) later from a one-shot timer, and only if
+;     is tapped delaySec (default 3; delayMs when given) later from a one-shot timer, and only if
 ;     medal.exe is still running then. The cooldown starts when a clip is
 ;     scheduled; skipped triggers (Medal missing etc.) do not consume it.
 ;     Medal missing: logged once (re-armed when Medal is seen again), skipped.
@@ -276,7 +276,9 @@ class Clip {
         return false
     }
 
-    static Trigger(reason) {
+    ; delayMs: wait this long instead of [Medal] delaySec ("" = delaySec;
+    ; an aura roll passes the game's own capture delay)
+    static Trigger(reason, delayMs := "") {
         cfg := Clip._cfg
         if !IsObject(cfg) || !cfg.Get("Medal.enabled", 0)
             return "disabled"
@@ -311,7 +313,7 @@ class Clip {
         if (Clip._last.Has(cls) && now - Clip._last[cls] < cool)
             return "cooldown"
         Clip._last[cls] := now
-        delay := Max(0, cfg.Get("Medal.delaySec", Clip.DefaultDelaySec)) * 1000
+        delay := IsNumber(delayMs) ? Max(0, delayMs) : Max(0, cfg.Get("Medal.delaySec", Clip.DefaultDelaySec)) * 1000
         r := String(reason)
         gen := Clip._gen
         Clip._timerFn.Call(() => Clip._Fire(r, key, gen, 0), delay)

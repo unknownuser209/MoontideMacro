@@ -453,3 +453,43 @@ Test_Resample_TitleScreenAtEverySize() {
     }
     AssertEq(RsJoin(bad), "", "title screen seen at every size")
 }
+
+; live 2026-11-21 02:24 (Windy day, the board over a bright sky; a watcher's
+; half-size frames, 1280x720, everything but the tiles blacked out). The
+; game drew matched tiles a brighter green (0x83FF9D) than the clip's
+; 0x56BB5E: State() read "" for them, so four real pairs were logged "looked
+; alike but did not turn green", green tiles were flipped again ("never
+; showed a still picture") and the round ended at 4 / 10.
+RsMmLive(name) => MatchVision(RsMapGrab(MatchFileGrab(A_ScriptDir "\screens\" name ".png")))
+RsMmStates(v) {
+    out := ""
+    Loop 20 {
+        s := v.State(A_Index)
+        out .= (s = "matched") ? "M" : (s = "hidden") ? "h" : (s = "open") ? "O" : "?"
+    }
+    return out
+}
+Test_Resample_MemoryMatchLiveGreenIsMatched() {
+    try {
+        RsAt(1280, 720)
+        ; six tiles matched (1-7, 2-4, 3-5), the rest face down
+        AssertEq(RsMmStates(RsMmLive("mm_live_6green_720")), "MMMMM" "hMhhh" "hhhhh" "hhhhh", "the bright green is matched")
+        ; tiles 8 and 11 face up (the same x100 potion), not green yet
+        v := RsMmLive("mm_live_pair_open_720")
+        AssertEq(RsMmStates(v), "MMMMM" "hMOhh" "Ohhhh" "hhhhh", "a pair face up")
+        ; (their pictures were compared live at full size and found alike; a
+        ; half-size JPEG is too coarse for the amount line)
+        ; a second later both are green
+        AssertEq(RsMmStates(RsMmLive("mm_live_pair_green_720")), "MMMMM" "hMMhh" "Mhhhh" "hhhhh", "the pair turned green")
+    } finally {
+        Screen.Reset()
+    }
+}
+
+Test_MatchVision_GreenOfBothGameVersions() {
+    for c in [0x56BB5E, 0x55BE5F, 0x83FF9D, 0x8CF8A2, 0x7AFF98, 0x90F99C]
+        AssertTrue(MatchVision.IsGreen(c), Format("{:06X} is a matched green", c))
+    ; tile greys (face down / up, old and new), the faces' white and cream, a dim green
+    for c in [0x212121, 0x3E3E3E, 0x444444, 0x767676, 0x453A3E, 0xFFFFFF, 0xF2E6C8, 0x2F6B3A, 0x9AE5FF]
+        AssertTrue(!MatchVision.IsGreen(c), Format("{:06X} is not", c))
+}

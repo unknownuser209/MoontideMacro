@@ -1,4 +1,5 @@
 #Requires AutoHotkey v2.0
+#Include %A_LineFile%\..\..\I18n.ahk
 ; ---------------------------------------------------------------------------
 ; UiLogic: pure helpers behind the dashboard and overlay (no windows, no I/O).
 ;
@@ -28,12 +29,33 @@
 ;   UiLogic.KeyOf(e)               "id:<id>" if it has an id, else "name:<name>"
 ;   UiLogic.MergeByKey(live, work, fields)  copy fields into live items with
 ;                                  the same KeyOf, in place.
+;   UiLogic.TaskText(task)         the status line's task / wait note
+;                                  translated (App._WaitNote's notes, one
+;                                  with a time in it; anything else I18n.T).
 ;
 ;   UiLogBuffer(cap := 200)        Push(line) Count() Text() Tail(n) Clear()
 ; ---------------------------------------------------------------------------
 
 class UiLogic {
     static Dots := Chr(0x2022) Chr(0x2022) Chr(0x2022) Chr(0x2022)
+
+    ; App._WaitNote's notes (2026-11-20: "Waiting: <why>" in place of a bare
+    ; "Idle"); a note may end with the untested-size line (App._Status)
+    static TaskText(task) {
+        task := String(task)
+        ; the untested-size line App._Status appends (". Roblox 1280x1024 ...")
+        ; stays as it is after the translated note
+        suf := ""
+        if RegExMatch(task, "^(Waiting: .*?)(\. Roblox .*)$", &s)
+            task := s[1], suf := s[2]
+        if RegExMatch(task, "^Waiting: next Portable Crack try at (\d{1,2}:\d{2})$", &m)
+            return I18n.F("Waiting: next Portable Crack try at {1}", m[1]) suf
+        switch task, true {
+            case "Waiting: nothing is due right now": return I18n.T("Waiting: nothing is due right now") suf
+            case "Waiting: fishing is off and nothing else is due": return I18n.T("Waiting: fishing is off and nothing else is due") suf
+        }
+        return I18n.T(task) suf
+    }
 
     static MaskSecret(s) {
         s := Trim(String(s))

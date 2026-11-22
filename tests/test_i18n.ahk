@@ -110,15 +110,17 @@ Test_I18n_DashboardSpanishAndEnglish() {
     try {
         I18n.Use("es")
         d := Dashboard(Config.Load(dir))
-        look := d.Ctrl("panelTitle:Settings:Look")
+        look := d.Ctrl("panelTitle:Look:Colours")
         AssertTrue(IsObject(look), "Look caption has an id")
-        AssertEq(look.Text, StrUpper(I18n.T("Look")), "panel title translated")
-        AssertTrue(look.Text != "LOOK", "not English")
+        AssertEq(look.Text, StrUpper(I18n.T("Colours")), "panel title translated")
+        AssertTrue(look.Text != "COLOURS", "not English")
         AssertEq(d.Ctrl("hub:Home").Text, "   " I18n.T("Home"), "sidebar hub translated")
         AssertEq(d.Ctrl("tab:Fishing").Text, I18n.T("Fishing"), "tab translated")
         AssertEq(d.Ctrl("desc:Settings").Text, I18n.T(Dashboard.Subtitles[UiDashPageIdx("Settings")]), "subtitle translated")
-        d.SelectHub(5)
-        AssertEq(d.Ctrl("hubTitle").Text, I18n.T("Setup"), "hub title translated")
+        d.SelectHub(Dashboard.HubOf("Look"))
+        AssertEq(d.Ctrl("hubTitle").Text, I18n.T("Settings"), "hub title translated")
+        AssertTrue(d.Ctrl("hubTitle").Text != "Settings", "hub title not English")
+        AssertEq(d.Ctrl("tab:Settings").Text, I18n.T("General"), "General tab translated")
         d.SetStatus("Paused", "Fishing", "NORMAL", false, 1000, 3)
         AssertEq(d.Ctrl("pauseBtn1").Text, I18n.T("Resume"), "Resume translated")
         AssertEq(d._stState.Text, I18n.T("Paused"), "status word translated")
@@ -129,7 +131,7 @@ Test_I18n_DashboardSpanishAndEnglish() {
 
         I18n.Use("en")
         d2 := Dashboard(Config.Load(dir))
-        AssertEq(d2.Ctrl("panelTitle:Settings:Look").Text, "LOOK", "English title unchanged")
+        AssertEq(d2.Ctrl("panelTitle:Look:Colours").Text, "COLOURS", "English title unchanged")
         AssertEq(d2.Ctrl("hub:Home").Text, "   Home", "English hub unchanged")
         AssertEq(d2.Ctrl("tab:Fishing").Text, "Fishing", "English tab unchanged")
         d2.SetStatus("Paused", "", "", false, 0, 0)
@@ -143,7 +145,7 @@ Test_I18n_DashboardSpanishAndEnglish() {
     }
 }
 
-; Settings > Look: the picker shows the saved language, Save writes UI.lang.
+; Settings > Look: the picker shows the saved language, Save (Look) writes UI.lang.
 Test_I18n_LanguagePickerSaves() {
     dir := UiDashTmp()
     d := ""
@@ -154,15 +156,15 @@ Test_I18n_LanguagePickerSaves() {
         d := Dashboard(cfg)
         dd := d.Ctrl("UI.lang")
         AssertEq(dd.Text, "English", "picker shows English")
-        ; inside the Look panel, below the theme row, above the panel's end
-        p := UiDashPos(d.Ctrl("panel:Settings:Look")), q := UiDashPos(dd), t := UiDashPos(d.Ctrl("UI.theme"))
-        AssertTrue(q.y > t.y && q.y + 24 <= p.y + p.h && q.x >= p.x && q.x + q.w <= p.x + p.w, "language row inside the Look panel")
-        AssertTrue(p.y + p.h <= 616, "Look panel ends above the save bar")
+        ; inside the Text card, below the font rows, above the card's end
+        p := UiDashPos(d.Ctrl("panel:Look:Text")), q := UiDashPos(dd), t := UiDashPos(d.Ctrl("look:font:small"))
+        AssertTrue(q.y > t.y && q.y + 24 <= p.y + p.h && q.x >= p.x && q.x + q.w <= p.x + p.w, "language row inside the Text card")
+        AssertTrue(p.y + p.h <= 620, "Text card ends above the save bar")
         dd.Choose(2)
-        AssertTrue(d.SavePage("Settings"), "saved")
+        AssertTrue(d.SavePage("Look"), "saved")
         AssertEq(Config.Load(dir).Get("UI.lang", ""), "es", "UI.lang written")
         AssertEq(I18n.Lang, "en", "the open window stays English until restart")
-        d.RevertPage("Settings")
+        d.RevertPage("Look")
         AssertEq(d.Ctrl("UI.lang").Text, I18n.Names[2], "reload shows the saved language")
     } finally {
         I18n.Use("en")
@@ -178,22 +180,98 @@ Test_I18n_WizardTranslated() {
     try {
         I18n.Use("es")
         w := SetupWizard(Config.Load(dir))
+        AssertEq(w.Ctrl("title").Text, I18n.T("Choose your language"), "language title translated")
+        AssertTrue(w.Ctrl("title").Text != "Choose your language", "not English")
+        AssertEq(w.Ctrl("stepText").Text, "Paso 1 de 7", "step text translated")
+        AssertEq(w.Ctrl("next").Text, I18n.T("Next"), "button translated")
+        w.Next()
         AssertEq(w.Ctrl("title").Text, I18n.F("Welcome to {1}", Brand.Name), "title translated")
         AssertTrue(InStr(w.Ctrl("title").Text, "Bienvenido"), "Spanish welcome")
-        AssertEq(w.Ctrl("stepText").Text, "Paso 1 de 6", "step text translated")
-        AssertEq(w.Ctrl("next").Text, I18n.T("Start"), "button translated")
+        AssertEq(w.Ctrl("next").Text, I18n.T("Start"), "Start translated")
         w.Next(), w.Next()
         AssertEq(w.Ctrl("title").Text, I18n.T("Private server"), "page title translated")
         w.Destroy(), w := ""
         I18n.Use("en")
         w := SetupWizard(Config.Load(dir))
+        AssertEq(w.Ctrl("title").Text, "Choose your language", "English language title")
+        AssertEq(w.Ctrl("stepText").Text, "Step 1 of 7", "English step text")
+        AssertEq(w.Ctrl("next").Text, "Next", "English button")
+        w.Next()
         AssertEq(w.Ctrl("title").Text, "Welcome to " Brand.Name, "English title")
-        AssertEq(w.Ctrl("stepText").Text, "Step 1 of 6", "English step text")
-        AssertEq(w.Ctrl("next").Text, "Start", "English button")
+        AssertEq(w.Ctrl("next").Text, "Start", "English Start")
     } finally {
         I18n.Use("en")
         try w.Destroy()
         try DirDelete(dir, true)
+    }
+}
+
+; The wizard asks the language first: every language in its own name, the
+; saved UI.lang lit; picking one saves UI.lang at once and the wizard's texts
+; turn to it (the next page's title too); closing puts the app's language
+; back and tells the app ("lang"). Picking the language in use rebuilds nothing.
+Test_Wizard_LanguageFirst() {
+    dir := UiDashTmp()
+    dir2 := UiDashTmp()
+    w := "", w2 := ""
+    try {
+        I18n.Use("en")
+        AssertEq(SetupWizard.Pages[1], "Lang", "the language page is the first page")
+        cfg := Config.Load(dir)
+        got := [], done := []
+        w := SetupWizard(cfg, Map("lang", (c) => got.Push(c), "done", (f) => done.Push(f)))
+        AssertEq(w.Step, 1, "opens on the language page")
+        AssertEq(w.Ctrl("title").Text, "Choose your language", "language title")
+        AssertEq(w.Ctrl("back").Visible, false, "no Back on the first page")
+        for i, code in I18n.Codes
+            AssertEq(w.Ctrl("lang:" code).Value, code = "en" ? 1 : 0, "English lit by default (" code ")")
+        vi := I18n.Names[I18n.IndexOf("vi")]
+        AssertEq(vi, "Ti" Chr(0x1EBF) "ng Vi" Chr(0x1EC7) "t", "Vietnamese in its own name")
+        AssertEq(w.PickLanguage(vi), "vi", "picked by name")
+        AssertEq(Config.Load(dir).Get("UI.lang", ""), "vi", "UI.lang saved at once")
+        AssertEq(I18n.Lang, "vi", "the wizard now speaks Vietnamese")
+        AssertEq(w.Step, 1, "still on the language page")
+        AssertEq(w.Ctrl("lang:vi").Value, 1, "Vietnamese lit")
+        AssertEq(w.Ctrl("lang:en").Value, 0, "English not lit")
+        d := I18n.LoadFile("vi")
+        AssertEq(w.Ctrl("title").Text, d["Choose your language"], "language title in Vietnamese")
+        AssertEq(w.Ctrl("next").Text, d["Next"], "Next in Vietnamese")
+        AssertEq(w.Ctrl("stepText").Text, Format(d["Step {1} of {2}"], 1, 7), "step text in Vietnamese")
+        AssertTrue(w.Next(), "Next")
+        AssertEq(w.Step, 2, "Welcome page")
+        AssertEq(w.Ctrl("title").Text, Format(d["Welcome to {1}"], Brand.Name), "next page's title in Vietnamese")
+        AssertTrue(w.Ctrl("title").Text != "Welcome to " Brand.Name, "not English")
+        AssertEq(w.Ctrl("next").Text, d["Start"], "Start in Vietnamese")
+        w.Next()
+        AssertEq(w.Ctrl("title").Text, d["Check your PC"], "Roblox check title in Vietnamese")
+        w.Skip(), w := ""
+        AssertEq(got.Length, 1, "the app is told once")
+        AssertEq(got[1], "vi", "told the new language")
+        AssertEq(done[1], 0, "skipped")
+        AssertEq(I18n.Lang, "en", "the app's language put back on close")
+        AssertEq(Config.Load(dir).Get("UI.lang", ""), "vi", "UI.lang kept")
+        ; a saved language is lit; picking the one in use rebuilds nothing
+        c2 := Config.Load(dir2)
+        c2.Set("UI.lang", "fr"), c2.Save()
+        got2 := []
+        w2 := SetupWizard(c2, Map("lang", (c) => got2.Push(c)))
+        AssertEq(w2.Ctrl("lang:fr").Value, 1, "the saved language is lit")
+        AssertEq(w2.Ctrl("lang:en").Value, 0, "English not lit")
+        t := w2.Ctrl("title")
+        AssertEq(w2.PickLanguage("English"), "en", "English by name")
+        AssertTrue(w2.Ctrl("title") == t, "same window (the language in use)")
+        AssertEq(Config.Load(dir2).Get("UI.lang", ""), "en", "UI.lang saved")
+        AssertEq(w2.Ctrl("lang:en").Value, 1, "English lit")
+        AssertEq(w2.Ctrl("lang:fr").Value, 0, "French not lit")
+        AssertEq(w2.PickLanguage("klingon"), "en", "unknown -> English")
+        w2.Finish(), w2 := ""
+        AssertEq(got2.Length, 0, "no language change to tell")
+    } finally {
+        I18n.Use("en")
+        try w.Destroy()
+        try w2.Destroy()
+        try DirDelete(dir, true)
+        try DirDelete(dir2, true)
     }
 }
 
@@ -283,4 +361,311 @@ Test_I18n_EveryLanguageFits() {
         UiDashClose(d)
         try DirDelete(dir, true)
     }
+}
+
+; Top sidebar in every language with the Menu font at 10 and at the largest
+; size the Look page allows (28), simple mode off and on: no hub runs into
+; another, the magnifier, the simple-mode button or the chip; every one is
+; inside the window and the sidebar row, and each hub's text fits its button.
+Test_I18n_TopRowFits() {
+    oldSb := Theme.Sidebar, oldNav := Theme.Fonts["nav"], oldWa := Theme.WorkAreaFn, oldSc := Theme.Scale, oldLy := Theme.Layout
+    dir := UiDashTmp()
+    d := ""
+    ovR := (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y)
+    try {
+        Theme.WorkAreaFn := () => {w: 3840, h: 2160}
+        Theme.Scale := 100
+        Theme.Layout := Map()
+        Theme.Sidebar := "top"
+        for fs in [10, 28] {
+            Theme.Fonts["nav"] := ["s" fs " norm", "Segoe UI", "Muted"]
+            for code in I18n.Codes {
+                I18n.Use(code)
+                d := Dashboard(Config.Load(dir))
+                for simple in [false, true] {
+                    d.SetSimple(simple)
+                    what := code " nav " fs (simple ? " simple" : "")
+                    all := []
+                    for i, c in d._nav {
+                        if !c.Visible
+                            continue
+                        all.Push({c: c, n: "hub " i})
+                        t := I18nNeed(c, c.Text, 9999, true), p := UiDashPos(c)
+                        AssertTrue(t.w <= p.w && t.h <= p.h, what ": hub " i " text " t.w "x" t.h " fits " p.w "x" p.h)
+                    }
+                    all.Push({c: d.Ctrl("search:icon"), n: "magnifier"}, {c: d._simpleBtn, n: "simple mode"}, {c: d._chip, n: "chip"})
+                    for a in all {
+                        p := UiDashPos(a.c)
+                        AssertTrue(p.x >= 0 && p.x + p.w <= Dashboard.W && p.y >= 59 && p.y + p.h <= 107, what ": " a.n " inside the row: " p.x "," p.y "," p.w "," p.h)
+                    }
+                    for i, a in all {
+                        for j, b in all {
+                            if (i < j)
+                                AssertTrue(!ovR(UiDashPos(a.c), UiDashPos(b.c)), what ": " a.n " and " b.n " overlap")
+                        }
+                    }
+                }
+                UiDashClose(d), d := ""
+            }
+        }
+    } finally {
+        Theme.Sidebar := oldSb, Theme.Fonts["nav"] := oldNav, Theme.WorkAreaFn := oldWa, Theme.Scale := oldSc, Theme.Layout := oldLy
+        I18n.Use("en")
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; Every I18n.T("...") / I18n.F("...") text written in lib\ui is in every
+; language file, as a key or as the capitals of one (I18n.T upper-cases a
+; translation for an all-caps text: "DRY RUN" comes from "Dry run").
+; I18nKeepEnglish (below) lists texts left English on purpose.
+Test_I18n_EveryUiStringTranslated() {
+    keep := I18nKeepEnglish()
+    texts := Map()
+    Loop Files, I18nRoot() "\lib\ui\*.ahk" {
+        src := FileRead(A_LoopFilePath, "UTF-8")
+        pos := 1
+        while (pos := RegExMatch(src, "I18n\.[TF]\(\s*`"((?:[^`"``\r\n]|``.)*)`"", &m, pos)) {
+            s := StrReplace(m[1], "````", Chr(1))
+            s := StrReplace(StrReplace(StrReplace(s, "``n", "`n"), "``t", "`t"), "```"", "`"")
+            s := StrReplace(s, Chr(1), "``")
+            if !keep.Has(s)
+                texts[s] := A_LoopFileName
+            pos += m.Len
+        }
+    }
+    AssertTrue(texts.Count >= 100, "texts found in lib\ui (" texts.Count ")")
+    for code in I18n.Codes {
+        if (code = "en")
+            continue
+        m := I18n.LoadFile(code)
+        caps := Map()
+        for k in m
+            caps[StrUpper(k)] := true
+        bad := ""
+        for s, file in texts {
+            if !(m.Has(s) || (s == StrUpper(s) && caps.Has(s)))
+                bad .= "`n  " file ": " s
+        }
+        AssertEq(bad, "", code ".json misses")
+    }
+}
+
+; Texts left English on purpose, in every language (both coverage tests):
+; game and brand names as the game shows them, units, the bot's command
+; names and OK. A text without two letters in a row ("0", "%", "?") is
+; never checked either.
+I18nKeepEnglish() {
+    m := Map()
+    for s in ["Sol's RNG", "Moontide Macro", "Mari", "Jester", "Obby", "Memory Match", "Limbo (Eden)"   ; names
+        , "pt", "px", "s", "min"                                                                      ; units
+        , "OK"
+        , "!status   !stats   !screenshot   !log`n!start   !stop   !pause   !resume   !help"]            ; bot commands
+        m[s] := true
+    return m
+}
+
+; Every text the helpers translate when they build a window (Theme.Label /
+; Button / Check / Help / Panel / Window / Segmented / ListHeader / Confirm /
+; EmptyHint, the dashboard's _Panel / _BoolField / _IntField / _StrField /
+; _WarnOn / _Tr), written as a literal (or literals joined with ., Brand.Name
+; or Chr(0xB7)) in lib\ui, plus the tables they read (page subtitles, hub
+; and tab names, the Look labels, the wizard's titles and switches, every
+; HelpTexts "?" text) is in every language file. A text built from variables
+; at run time cannot be checked here.
+Test_I18n_EveryHelperTextTranslated() {
+    keep := I18nKeepEnglish()
+    texts := Map()
+    add := (s, where) => (!keep.Has(s) && RegExMatch(s, "[A-Za-z]{2}") && !texts.Has(s)) ? texts[s] := where : 0
+    helpers := Map("I18n.T", [1], "I18n.F", [1], "Theme.Window", [1], "Theme.Label", [3], "Theme.Panel", [6]
+        , "Theme.Help", [4], "Theme.Button", [3], "Theme.Check", [4], "Theme.Segmented", [4], "Theme.ListHeader", [5]
+        , "Theme.Confirm", [2, 3, 4, 5], "Theme.EmptyHint", [3], "this._Panel", [5, 6], "this._IntField", [3, 6]
+        , "this._StrField", [3], "this._BoolField", [3, 7], "this._WarnOn", [2, 3], "Dashboard._Tr", [1])
+    Loop Files, I18nRoot() "\lib\ui\*.ahk" {
+        src := I18nStripComments(FileRead(A_LoopFilePath, "UTF-8"))
+        for name, idxs in helpers {
+            pos := 1
+            while (pos := InStr(src, name "(", true, pos)) {
+                prev := pos > 1 ? SubStr(src, pos - 1, 1) : " "
+                at := pos + StrLen(name)
+                pos := at
+                if RegExMatch(prev, "[\w.]")
+                    continue
+                args := I18nArgs(src, at)
+                for k in idxs {
+                    if (k <= args.Length)
+                        for s in I18nTextsOf(args[k])
+                            add(s, A_LoopFileName " " name)
+                }
+            }
+        }
+    }
+    AssertTrue(texts.Count >= 300, "texts found in lib\ui (" texts.Count ")")
+    ; the tables the helpers are given
+    for s in Dashboard.Subtitles
+        add(s, "Dashboard.Subtitles")
+    for h in Dashboard.Hubs
+        add(h.name, "Dashboard.Hubs")
+    for p in Dashboard.Pages
+        add(Dashboard.TabLabel(p), "Dashboard.TabLabel")
+    for tbl in [Dashboard.LookBaseLabels, Dashboard.LookDerivedLabels, Dashboard.LookRoleLabels]
+        for k, s in tbl
+            add(s, "Dashboard.Look labels")
+    for tbl in [Dashboard.LookFits, Dashboard.LookSides]
+        for s in tbl
+            add(s, "Dashboard.Look choices")
+    for i, s in SetupWizard.Titles
+        if (i != 2)                     ; page 2 shows I18n.F("Welcome to {1}", Brand.Name)
+            add(s, "SetupWizard.Titles")
+    for r in SetupWizard.RunKeys
+        add(r[2], "SetupWizard.RunKeys")
+    for k, s in HelpTexts.Map
+        add(s, "HelpTexts " k)
+    for code in I18n.Codes {
+        if (code = "en")
+            continue
+        m := I18n.LoadFile(code)
+        caps := Map()
+        for k in m
+            caps[StrUpper(k)] := true
+        bad := ""
+        for s, where in texts {
+            if !(m.Has(s) || (s == StrUpper(s) && caps.Has(s)))
+                bad .= " | " where ": " SubStr(StrReplace(s, "`n", " / "), 1, 80)
+        }
+        AssertEq(bad, "", code ".json misses")
+    }
+}
+
+; Source without ; comments (a ; at a line start or after a space or tab,
+; outside quotes), lines kept.
+I18nStripComments(src) {
+    out := ""
+    for line in StrSplit(StrReplace(src, "`r", ""), "`n") {
+        q := "", res := "", i := 1, n := StrLen(line)
+        while (i <= n) {
+            ch := SubStr(line, i, 1)
+            if (q != "") {
+                res .= ch
+                if (ch = "``" && i < n) {
+                    res .= SubStr(line, i + 1, 1), i += 2
+                    continue
+                }
+                if (ch = q)
+                    q := ""
+            } else {
+                if (ch = "`"" || ch = "'")
+                    q := ch
+                else if (ch = ";" && (i = 1 || InStr(" `t", SubStr(line, i - 1, 1))))
+                    break
+                res .= ch
+            }
+            i++
+        }
+        out .= res "`n"
+    }
+    return out
+}
+
+; The top-level arguments of the call whose "(" is at `at` (text, untouched).
+I18nArgs(src, at) {
+    args := [], cur := "", depth := 0, q := "", i := at, n := StrLen(src)
+    while (i <= n) {
+        ch := SubStr(src, i, 1)
+        if (q != "") {
+            cur .= ch
+            if (ch = "``") {
+                cur .= SubStr(src, i + 1, 1), i += 2
+                continue
+            }
+            if (ch = q)
+                q := ""
+        } else if (ch = "`"" || ch = "'") {
+            q := ch, cur .= ch
+        } else if InStr("([{", ch) {
+            depth++
+            if (depth > 1)
+                cur .= ch
+        } else if InStr(")]}", ch) {
+            depth--
+            if (depth = 0) {
+                args.Push(cur)
+                return args
+            }
+            cur .= ch
+        } else if (ch = "," && depth = 1) {
+            args.Push(cur), cur := ""
+        } else
+            cur .= ch
+        i++
+    }
+    return args
+}
+
+; Texts of an argument: a literal (or literals joined), each literal item of
+; an [array], or the two literal branches of cond ? "a" : "b". Else none.
+I18nTextsOf(expr) {
+    e := Trim(expr, " `t`r`n")
+    if (SubStr(e, 1, 1) = "[" && SubStr(e, -1) = "]") {
+        out := []
+        for a in I18nArgs("(" SubStr(e, 2, -1) ")", 1) {
+            t := I18nLiteral(a)
+            if (t != "")
+                out.Push(t)
+        }
+        return out
+    }
+    t := I18nLiteral(e)
+    if (t != "")
+        return [t]
+    if RegExMatch(e, "s)^(.*?)\?(.*):(.*)$", &m) {
+        out := []
+        for part in [m[2], m[3]] {
+            t := I18nLiteral(part)
+            if (t != "")
+                out.Push(t)
+        }
+        return out
+    }
+    return []
+}
+
+; "a" . 'b' . Brand.Name . Chr(0xB7) joined -> the text; "" when anything
+; else is in it (a variable, a call) or it holds no literal.
+I18nLiteral(expr) {
+    e := Trim(expr, " `t`r`n")
+    out := "", any := false, pos := 1, n := StrLen(e)
+    while (pos <= n) {
+        if !RegExMatch(e, "s)\G\s*(?:`"((?:[^`"``]|``.)*)`"|'((?:[^'``]|``.)*)'|(\.)|(Brand\.Name)|(Chr\(0xB7\)))", &m, pos)
+            return ""
+        if (m.Len = 0)
+            return ""
+        if (m.Pos[1])
+            out .= I18nUnescape(m[1]), any := true
+        else if (m.Pos[2])
+            out .= I18nUnescape(m[2]), any := true
+        else if (m.Pos[4])
+            out .= Brand.Name
+        else if (m.Pos[5])
+            out .= Chr(0xB7)
+        pos += m.Len
+        if (Trim(SubStr(e, pos), " `t`r`n") = "")
+            break
+    }
+    return any ? out : ""
+}
+
+I18nUnescape(s) {
+    out := "", i := 1, n := StrLen(s)
+    while (i <= n) {
+        ch := SubStr(s, i, 1)
+        if (ch = "``" && i < n) {
+            nx := SubStr(s, i + 1, 1)
+            out .= (nx = "n") ? "`n" : (nx = "t") ? "`t" : (nx = "r") ? "`r" : nx
+            i += 2
+        } else
+            out .= ch, i++
+    }
+    return out
 }

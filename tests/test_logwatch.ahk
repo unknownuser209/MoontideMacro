@@ -323,3 +323,68 @@ Test_LogWatch_AuraKnownFromAboveTheTail() {
     }
 }
 
+
+; ---- aura rolls (the game's own roll event) -----------------------------------
+; Real line, 2026-11-18 04:49:44 local: the roll of Pixelation. Its rich
+; presence line (Equipped "Pixelation") came 67 s later, with a biome change,
+; so the clip from it missed the cutscene. The roll event is base64 JSON.
+LwRollLine() => '2026-11-18T10:49:44.625Z,28364.625000,5ad0,6,Info [FLog::CreatorOutput] [_MAPIEvent][v1/event/invoke] eyJnYW1lRXZlbnQiOnsiZXZlbnRJZCI6ImF1cmFfcm9sbGVkIiwiZXZlbnROYW1lIjoiQXVyYSBSb2xsZWQ6IFwiUGl4ZWxhdGlvblwiIiwidHJpZ2dlckFjdGlvbnMiOlsiU2F2ZUNsaXAiXSwiY2xpcE9wdGlvbnMiOnsiY2FwdHVyZURlbGF5TXMiOjE1MDAwLCJkdXJhdGlvbiI6MzV9fSwidW5pdmVyc2VJZCI6NTM2MTAzMjM3OH0='
+
+LwB64(s) {
+    buf := Buffer(StrPut(s, "UTF-8") - 1)
+    StrPut(s, buf, buf.Size, "UTF-8")
+    n := 0
+    DllCall("Crypt32\CryptBinaryToStringW", "Ptr", buf, "UInt", buf.Size, "UInt", 0x40000001, "Ptr", 0, "UInt*", &n)
+    out := Buffer(n * 2)
+    DllCall("Crypt32\CryptBinaryToStringW", "Ptr", buf, "UInt", buf.Size, "UInt", 0x40000001, "Ptr", out, "UInt*", &n)
+    return StrGet(out, n, "UTF-16")
+}
+
+LwMapi(json) => "2026-11-18T10:00:00.000Z,1,1,6,Info [FLog::CreatorOutput] [_MAPIEvent][v1/event/invoke] " LwB64(json)
+
+Test_LogWatch_ParseRoll() {
+    r := LogWatch.ParseRoll(LwRollLine())
+    AssertTrue(r is Map, "the roll line parses")
+    AssertEq(r["name"], "Pixelation", "aura name from the event name")
+    AssertEq(r["delayMs"], 15000, "the game's capture delay")
+    AssertEq(r["ts"], "2026-11-18T10:49:44.625Z", "ts")
+    r := LogWatch.ParseRoll(LwRollLine() "`r")
+    AssertEq(r is Map ? r["name"] : "", "Pixelation", "CRLF")
+    AssertEq(LogWatch.ParseRoll(LwMapi('{"gameEvent":{"eventId":"biome_started","eventName":"Biome: \"GLITCHED\""}}')), "", "other event ids ignored")
+    AssertEq(LogWatch.ParseRoll("2026-11-18T10:00:00.000Z,1,1,6,Info [FLog::CreatorOutput] [_MAPIEvent][v1/event/invoke] !!!notbase64"), "", "bad base64")
+    AssertEq(LogWatch.ParseRoll(LwMapi("{nope")), "", "bad json")
+    AssertEq(LogWatch.ParseRoll(LwRpc("2026-10-24T02:52:40.100Z", 'Equipped \"Eden\"', "NORMAL")), "", "rich presence is no roll")
+    AssertEq(LogWatch.ParseRoll(""), "", "empty")
+    ; no capture delay given: 15 s; silly values clamp to 0..60 s
+    r := LogWatch.ParseRoll(LwMapi('{"gameEvent":{"eventId":"aura_rolled","eventName":"Aura Rolled: \"Virtual Memory\""}}'))
+    AssertEq(r["name"], "Virtual Memory", "name with a space")
+    AssertEq(r["delayMs"], 15000, "default delay")
+    r := LogWatch.ParseRoll(LwMapi('{"gameEvent":{"eventId":"aura_rolled","eventName":"Aura Rolled: \"BLOODLUST\"","clipOptions":{"captureDelayMs":900000}}}'))
+    AssertEq(r["delayMs"], 60000, "clamped to 60 s")
+}
+
+Test_LogWatch_RollIsALiveEventNotBackfill() {
+    d := LwTmpDir()
+    try {
+        path := d "\0.748.0.7481526_20261118T025700Z_Player_40AD3_last.log"
+        ; a roll in the old part of the log (startup backfill): no event
+        FileAppend(LwRollLine() "`n", path, "UTF-8-RAW")
+        lw := LogWatch(d)
+        for ev in lw.Poll()
+            AssertTrue(ev["type"] != "roll", "no roll event from backfill")
+        ; a live roll, then the stale presence line the game writes with it
+        FileAppend(LwRollLine() "`n" LwRpc("2026-11-18T10:49:44.828Z", 'Equipped \"Eden\"', "NORMAL") "`n", path, "UTF-8-RAW")
+        evs := lw.Poll()
+        rolls := []
+        for ev in evs
+            if (ev["type"] = "roll")
+                rolls.Push(ev)
+        AssertEq(rolls.Length, 1, "one roll event")
+        AssertEq(rolls[1]["name"], "Pixelation", "roll name")
+        AssertEq(rolls[1]["live"], true, "live")
+        AssertEq(rolls[1]["delayMs"], 15000, "delay on the event")
+        AssertEq(rolls[1].type, "roll", "ev.type works")
+    } finally {
+        LwTmpClean(d)
+    }
+}

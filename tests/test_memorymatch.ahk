@@ -45,6 +45,9 @@ class MmBoard {
         this.dropTiles := Map()     ; tile -> clicks on it the game drops (lag)
         this.titleGoneAfter := 0    ; the title stops reading once this many tiles were clicked
         this.slowBack := Map()      ; chances left after a miss -> its own BackMs (lag: the pair stays up)
+        this.closePlain := true     ; Close reads plain (false: only its red ink reads, a bright sky)
+        this.closeInk := true       ; Close's red ink reads
+        this.lookAlike := Map()     ; pid -> the pid its picture looks like (a white / cream potion)
         this.io := MmIO(this)
         this.vision := MmVision(this)
     }
@@ -167,6 +170,8 @@ class MmBoard {
 
     Sig(i) {
         p := this.pid[i]
+        if this.lookAlike.Has(p)
+            p := this.lookAlike[p]
         moving := this.openAt.Has(i) && this.t < this.openAt[i] + this.PicFor(i) && !this.Ended()
         icon := []
         Loop 10
@@ -188,7 +193,14 @@ class MmBoard {
         if (x = L.title.x && y = L.title.y)
             return (this.started && !this.closed && !(this.titleGoneAfter && this.Tiles().Length >= this.titleGoneAfter)) ? "Memory Match" : ""
         if (x = L.closeBox.x && y = L.closeBox.y)
-            return (this.Ended() && !this.closed) ? "Close" : ""
+            return (this.Ended() && !this.closed && this.closePlain) ? "Close" : ""
+        return ""
+    }
+
+    Ink(x, y, w, h, scale := 1, ink := 0) {
+        L := MemoryMatchTask.Layout
+        if (!this.gone && ink == "r" && x = L.closeBox.x && y = L.closeBox.y)
+            return (this.Ended() && !this.closed && this.closeInk) ? "Closa" : ""
         return ""
     }
 
@@ -274,6 +286,7 @@ MmMake(board, clockStr := "20261027120000", route := true) {
     clk := m.clock
     m.t := MemoryMatchTask({cfg: cfg, io: board.io, webhook: m.wh, cal: QmCal()
         , ocr: (x, y, w, h, s := 1) => board.Ocr(x, y, w, h), vision: board.vision
+        , ink: (x, y, w, h, s := 1, k := 0) => board.Ink(x, y, w, h, s, k)
         , log: (s) => m.logs.Push(s), clock: () => clk.t, statePath: m.path})
     return m
 }
@@ -784,4 +797,106 @@ Test_MM_SlowCloseIsNoExtraTurn() {
     } finally {
         MmClean(m)
     }
+}
+
+; live 2026-11-20 00:06 and 13:13: a white and a cream x100 potion read as
+; one picture; the pair did not turn green and the same two tiles were
+; flipped together 29 times, no pair matched all round. Two tiles that
+; looked alike but were not matched are never tried together again.
+Test_MM_LookAlikeMissIsNotFlippedAgain() {
+    b := MmStd()
+    b.lookAlike[2] := 1                 ; reward 2 draws reward 1's picture
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        tiles := b.Tiles(), together := 0
+        Loop tiles.Length // 2 {
+            p := tiles[2 * A_Index - 1], q := tiles[2 * A_Index]
+            if (Mod(p - 1, 10) + 1 <= 2 && Mod(q - 1, 10) + 1 <= 2 && b.pid[p] != b.pid[q])
+                together++
+        }
+        AssertTrue(together <= 2, "a look-alike pair flipped together at most twice (" together ")")
+        AssertTrue(MmHasLog(m, "not tried together again"), "logged")
+        AssertTrue(b.Won() >= 4, "the other pairs still matched (" b.Won() ")")
+        AssertTrue(b.closed, "closed")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; live 2026-11-20 00:11: red Close over a bright Snowy sky never read, the
+; round was played on 10 times and the board left open for 6 h 25 min.
+; Its red ink reads.
+Test_MM_CloseReadByItsRedInk() {
+    b := MmStd()
+    b.closePlain := false
+    m := MmMake(b)
+    try {
+        AssertEq(m.t.Run(SchedCtx()), 1, "played")
+        AssertTrue(b.closed, "closed by Close")
+        AssertTrue(!MmHasLog(m, "playing on"), "no extra turns on a finished board")
+        AssertTrue(!MmHasLog(m, "no Close button"), "Close seen")
+        AssertEq(b.Tiles().Length, 20, "20 flips")
+    } finally {
+        MmClean(m)
+    }
+}
+
+; Close reads in no way, but every tile is shown: Close is clicked where it
+; is (below the board) and the board checked gone.
+Test_MM_UnreadCloseOnAShownBoardIsClicked() {
+    b := MmStd()
+    b.closePlain := false, b.closeInk := false
+    UiStuck.Reset()
+    m := MmMake(b)
+    try {
+        m.t.Run(SchedCtx())
+        AssertTrue(b.closed, "the board closed")
+        AssertTrue(MmHasLog(m, "clicking where Close is"), "logged")
+        AssertEq(UiStuck.Due(), false, "no rejoin needed")
+    } finally {
+        MmClean(m)
+        UiStuck.Reset()
+    }
+}
+
+; a board that cannot be closed trips the stuck-UI escape at once (the App
+; asks for a rejoin); the tidy after the task tries it once more
+Test_MM_BoardLeftOpenTripsTheEscape() {
+    b := MmStd()
+    b.closePlain := false, b.closeInk := false
+    UiStuck.Reset()
+    m := MmMake(b)
+    try {
+        b.DefineProp("Click", {call: MmNoCloseClick})
+        m.t.Run(SchedCtx())
+        AssertTrue(!b.closed, "still open")
+        AssertEq(UiStuck.Due(), true, "the escape is due")
+        AssertTrue(InStr(UiStuck.Text(), "memory match board"), "named")
+        AssertTrue(MmHasLog(m, "board is left open"), "logged")
+        items := m.t.Leftovers()
+        AssertEq(items.Length, 1, "one tidy item")
+        AssertEq(items[1].up.Call(), "Memory Match board", "the tidy sees the board")
+    } finally {
+        MmClean(m)
+        UiStuck.Reset()
+    }
+    ; no board: the tidy sees nothing
+    b2 := MmStd()
+    m2 := MmMake(b2)
+    try {
+        AssertEq(m2.t.Leftovers()[1].up.Call(), "", "nothing up")
+    } finally {
+        MmClean(m2)
+    }
+}
+
+; the game ignores clicks on Close (the board stays): tiles still flip
+MmNoCloseClick(b, x, y) {
+    L := MemoryMatchTask.Layout
+    if (x = L.close.x && y = L.close.y) {
+        b.log.Push("close")
+        return
+    }
+    MmBoard.Prototype.Click.Call(b, x, y)
 }

@@ -12,6 +12,9 @@
 ;                                with keys type/name/ts/live; ev.type etc. also work):
 ;       type "biome"    name = largeImage.hoverText (e.g. "SAND STORM")
 ;       type "aura"     name = aura name; "" = aura removed
+;       type "roll"     name = aura the player just rolled (the game's own
+;                       aura_rolled event, at the roll; ParseRoll), plus
+;                       delayMs = the game's clip capture delay. Live only.
 ;       type "merchant" name = "Mari" | "Jester"
 ;       type "join"     name = "private" (the join came from the private
 ;                       server link: launch request "RequestPrivateGame")
@@ -147,6 +150,59 @@ class LogWatch {
         return r
     }
 
+    ; The game's own aura roll event (live 2026-11-18): written AT the roll,
+    ;   ...,Info [FLog::CreatorOutput] [_MAPIEvent][v1/event/invoke] <base64>
+    ; base64 of {"gameEvent":{"eventId":"aura_rolled","eventName":"Aura
+    ; Rolled: \"Pixelation\"","clipOptions":{"captureDelayMs":15000,...}}}.
+    ; The rich presence line (Equipped "X") can come a minute later, only
+    ; with the next presence update (Pixelation: 67 s, with a biome change).
+    ; -> Map{name, delayMs, ts} or "". delayMs: the game's capture delay
+    ; (the cutscene is over by then), ROLL_DELAY_MS when missing, 0..60 s.
+    static ROLL_MARKER := "[_MAPIEvent][v1/event/invoke] "
+    static ROLL_DELAY_MS := 15000
+    static ParseRoll(line) {
+        p := InStr(line, LogWatch.ROLL_MARKER)
+        if !p
+            return ""
+        b64 := Trim(SubStr(line, p + StrLen(LogWatch.ROLL_MARKER)), " `t`r`n")
+        text := LogWatch._B64Text(b64)
+        if (text = "" || !InStr(text, "aura_rolled"))
+            return ""
+        try {
+            obj := Json.Parse(text)
+        } catch {
+            return ""
+        }
+        ge := (obj is Map && obj.Has("gameEvent")) ? obj["gameEvent"] : ""
+        if !(ge is Map) || ge.Get("eventId", "") != "aura_rolled"
+            return ""
+        en := ge.Get("eventName", "")
+        if !(en is String) || !RegExMatch(en, 's)^Aura Rolled: "(.+)"$', &m)
+            return ""
+        delay := LogWatch.ROLL_DELAY_MS
+        co := ge.Get("clipOptions", "")
+        if (co is Map && co.Has("captureDelayMs") && IsNumber(co["captureDelayMs"]))
+            delay := Min(60000, Max(0, Round(co["captureDelayMs"])))
+        r := Map()
+        r["name"] := m[1]
+        r["delayMs"] := delay
+        r["ts"] := LogWatch._Ts(line)
+        return r
+    }
+
+    ; base64 -> UTF-8 text, "" when it is not base64
+    static _B64Text(s) {
+        if (s = "" || !RegExMatch(s, "^[A-Za-z0-9+/]+=*$"))
+            return ""
+        n := 0
+        if !DllCall("Crypt32\CryptStringToBinaryW", "Str", s, "UInt", 0, "UInt", 1, "Ptr", 0, "UInt*", &n, "Ptr", 0, "Ptr", 0) || n = 0
+            return ""
+        buf := Buffer(n)
+        if !DllCall("Crypt32\CryptStringToBinaryW", "Str", s, "UInt", 0, "UInt", 1, "Ptr", buf, "UInt*", &n, "Ptr", 0, "Ptr", 0)
+            return ""
+        return StrGet(buf, n, "UTF-8")
+    }
+
     ; Merchant name if the line has a merchant word and an arrival word, else "".
     static ParseMerchant(line) {
         best := ""
@@ -211,6 +267,12 @@ class LogWatch {
             events.Push(LogWatch._Ev("join", kind, this._pendingTs, true))
         return events
     }
+
+    ; The Roblox session the player is in: "<log file name>|<ts of its last
+    ; join>" ("" before a join is known). The same key after a restart =
+    ; no rejoin since (App keeps THE LIMBO across restarts with it, which
+    ; is in the same server: no join marks it, live 2026-11-20).
+    JoinKey() => (this.Path = "" || this._joinTs = "") ? "" : RegExReplace(this.Path, ".*[\\/]") "|" this._joinTs
 
     _JoinWaitOver() => this._pending && ((LogWatch.TickFn)() - this._pendingAt >= LogWatch.JOIN_WAIT_MS)
 
@@ -414,6 +476,15 @@ class LogWatch {
                             events.Push(LogWatch._Ev("aura", r["aura"], r["ts"], true))
                     }
                 }
+            }
+            if (!backfill && InStr(line, "[_MAPIEvent]")) {
+                r := LogWatch.ParseRoll(line)
+                if (r is Map) {
+                    ev := LogWatch._Ev("roll", r["name"], r["ts"], true)
+                    ev["delayMs"] := r["delayMs"]
+                    events.Push(ev)
+                }
+                continue
             }
             if (!backfill && (InStr(line, "Mari") || InStr(line, "Jester"))) {
                 who := LogWatch.ParseMerchant(line)

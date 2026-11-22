@@ -540,6 +540,59 @@ class FishLogic {
         mx := Max(r, g, b)
         return mx < 70 || (mx < 100 && mx - Min(r, g, b) <= 24)
     }
+    ; ReelDark alone is a fixed colour rule, and the see-through part takes
+    ; the scene's hue: tan (71,61,37) in HEAVEN, navy (26,51,75) in STARFALL.
+    ; Both passed as "fish", the arrow chased the bar's empty end and the
+    ; catch drained (HEAVEN 80 % lost, STARFALL 26 %, log 2026-11-15..18).
+    ; So the empty part's level is read from the bar itself: the bar right
+    ; of the arrow is the empty part (the fish covers less than half of
+    ; EmptySpan px), its brightest channel's median (EmptyLevel) + EmptyMargin
+    ; is "empty" too. The empty part is the scene dimmed: its brightest
+    ; channel stayed under 85 in every biome recorded (night of 2026-11-15),
+    ; a fish's is 225+ (251 reels), the click bar's and tints' 170+;
+    ; EmptyCap keeps a fish above it
+    ; even when the sample was mostly fish. A level from EmptyMinSpan..
+    ; EmptySpan px (arrow far right) is less sure: used only when the reel
+    ; has no better one (ReelScan's emptyMax).
+    static EmptySkip := 24
+    static EmptySpan := 200
+    static EmptyMinSpan := 40
+    static EmptyMargin := 32
+    static EmptyCap := 120
+    static ReelEmpty(c, emptyMax) {
+        r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+        mx := Max(r, g, b)
+        return mx < 70 || (mx < 100 && mx - Min(r, g, b) <= 24) || mx <= emptyMax
+    }
+    ; The empty part's level on the bar row: the median (in steps of 8) of
+    ; the brightest channel from m + EmptySkip to the bar's end, rounded up
+    ; to its step's top. 0 = no arrow, or less than EmptyMinSpan px to read.
+    ; span: the px read.
+    static EmptyLevel(barRow, m, x1, stride, &span := 0) {
+        span := 0
+        if !m
+            return 0
+        i := Max(1, Ceil((m + FishLogic.EmptySkip - x1) / stride) + 1)
+        n := barRow.Length - i + 1
+        span := Max(0, n * stride)
+        if (span < FishLogic.EmptyMinSpan)
+            return 0
+        hist := []
+        hist.Length := 32
+        Loop 32
+            hist[A_Index] := 0
+        while (i <= barRow.Length) {
+            c := barRow[i++]
+            hist[(Max((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF) >> 3) + 1]++
+        }
+        need := (n + 1) // 2, got := 0
+        for k, cnt in hist {
+            got += cnt
+            if (got >= need)
+                return k * 8 - 1
+        }
+        return 255
+    }
     ; White: every channel above WhiteMin. FishingTask._ReelUnseen lowers it
     ; for the session when the reel is up but its white border reads dimmer
     ; (a friend's PC, 2026-11-11: the minigame ran, nothing was clicked).
@@ -562,9 +615,17 @@ class FishLogic {
     static ArrowEdgeMinW := 8
 
     ; arrowRow: y 1025 (the arrow's base line); barRow: a row inside the bar.
-    ; -> {m: arrow x (0 = no arrow), p1, p2: fish extent (0 = no fish)}
-    static ReelScan(arrowRow, barRow, x1, stride) {
+    ; emptyMax: the empty level learnt earlier in this reel (0 = none), used
+    ; when this row has less than EmptySpan px of bar right of the arrow.
+    ; -> {m: arrow x (0 = no arrow), p1, p2: fish extent (0 = no fish),
+    ;     fill: click bar colour ("" = none), empty: the empty level used
+    ;     (0 = none), own: true when it was read from EmptySpan+ px of this
+    ;     row (the caller keeps it for the next rows)}
+    static ReelScan(arrowRow, barRow, x1, stride, emptyMax := 0) {
         m := FishLogic.ReelArrow(arrowRow, x1, stride)
+        lvl := FishLogic.EmptyLevel(barRow, m, x1, stride, &span)
+        own := lvl && span >= FishLogic.EmptySpan
+        em := (own || (lvl && !emptyMax)) ? Min(lvl + FishLogic.EmptyMargin, FishLogic.EmptyCap) : emptyMax
         ; click bar colour near the bar's left end ("" when it is empty): the
         ; most typical of a few samples a little way in (the edge pixels are
         ; anti-aliased)
@@ -572,7 +633,7 @@ class FishLogic {
         i := 1 + Ceil(4 / stride)
         while (i <= barRow.Length && i <= 1 + Ceil(20 / stride)) {
             c := barRow[i]
-            if !FishLogic.ReelDark(c) && !FishLogic.ReelWhite(c)
+            if !FishLogic.ReelEmpty(c, em) && !FishLogic.ReelWhite(c)
                 cand.Push(c)
             i++
         }
@@ -593,7 +654,7 @@ class FishLogic {
         c1 := 0, c2 := 0, cn := 0, gap := 0
         for c in barRow {
             x := x1 + (A_Index - 1) * stride
-            isFish := !FishLogic.ReelDark(c) && !FishLogic.ReelWhite(c)
+            isFish := !FishLogic.ReelEmpty(c, em) && !FishLogic.ReelWhite(c)
                 && (fill = "" || FishLogic.ReelDist(c, fill) > FishLogic.ReelFishDiff)
             if isFish {
                 if (cn && gap <= maxGap) {
@@ -612,7 +673,7 @@ class FishLogic {
             bestN := cn, p1 := c1, p2 := c2
         if (bestN * stride < 20)
             p1 := 0, p2 := 0
-        return {m: m, p1: p1, p2: p2, fill: fill}
+        return {m: m, p1: p1, p2: p2, fill: fill, empty: em, own: own ? true : false}
     }
 
     ; The arrow's x on its row, 0 = none: the white run whose width is closest
@@ -654,6 +715,36 @@ class FishLogic {
         return m
     }
 
+    ; The reel bar's frame is on screen: borderRow (one of coords reel.borderYs)
+    ; is bright across at least BorderShare of it and the row inside the bar
+    ; is not mostly white. Falling snow kept a finished reel "up" (arrow-sized
+    ; white runs above, bright scenery in the bar row) until the 9 s cap: 16
+    ; of the 19 capped reels were SNOWY (log 2026-11-15..18). Snow scenery is
+    ; white on every row, the bar's inside never is. Bright = luma, not every
+    ; channel: a JPEG / video frame tints the 1 px border with the click
+    ; bar's colour ((167,255,255) over cyan).
+    static BorderLuma := 200
+    static BorderShare := 0.9
+    static ReelFrame(borderRow, barRow) {
+        lo := Min(FishLogic.BorderLuma, FishLogic.WhiteMin) * 1000
+        miss := 0, most := borderRow.Length * (1 - FishLogic.BorderShare)
+        for c in borderRow
+            if ((((c >> 16) & 0xFF) * 299 + ((c >> 8) & 0xFF) * 587 + (c & 0xFF) * 114) < lo && ++miss > most)
+                return false                            ; (stops early: runs every reel pass)
+        w := 0
+        for c in barRow
+            if FishLogic.ReelWhite(c)
+                w++
+        return w * 2 < barRow.Length
+    }
+
+    ; A fish box is ~76 px wide at 2560x1440 (night of 2026-11-15: median 74,
+    ; 99 % under 112 over 538 caught reels). A wider reading is the fish run
+    ; together with something else; ReelDecide keeps the largest width seen,
+    ; so one such reading moved the aim for the rest of the reel (HEAVEN:
+    ; box over 120 px in half the frames).
+    static FishMaxW := 110
+
     ; Click now? st keeps the fish width and the last arrow sample between
     ; calls (start with {}). leadMs: aim with the arrow's predicted position.
     static ReelDecide(scan, st, nowMs, leadMs, aim := 0.4) {
@@ -661,7 +752,7 @@ class FishLogic {
             return false
         w := st.HasProp("w") ? st.w : 0
         if (scan.p1 > scan.m + 6)                       ; fish fully visible
-            w := Max(w, scan.p2 - scan.p1)
+            w := Max(w, Min(scan.p2 - scan.p1, FishLogic.FishMaxW))
         st.w := w
         left := (scan.p1 <= scan.m + 6 && w > 0) ? scan.p2 - w : scan.p1
         target := left + (scan.p2 - left) * aim

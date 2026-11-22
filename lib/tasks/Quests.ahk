@@ -6,11 +6,18 @@
 ;
 ;   t := QuestsTask(deps)     deps as TaskEnv (cfg, webhook, log, io, cal, ocr, now)
 ;   t.name = "quests", t.priority = 5   (Scheduler task contract)
-;   t.CanRun(state)  -> cfg quests.enabled (default 1) AND quest_board_rect and
-;                       quest_close are calibrated AND the route exists.
-;                       Without them the task is not eligible, so it never
+;   t.CanRun(state)  -> cfg quests.enabled (default 1) AND the route exists.
+;                       Without it the task is not eligible, so it never
 ;                       interrupts sell/fishing just to skip (the missing
 ;                       piece is logged once).
+;   THE BOARD'S STEPS NEED NO CALIBRATION (quest_board_rect, quest_accept,
+;   quest_dismiss, quest_close, quest_next): a step that is not recorded is
+;   found on screen once the board is open (_FindBoard, lib\AutoCal.ahk:
+;   "Objects" and the buttons under it place the panel, "Exit" the Exit
+;   button, the > arrow sits from Exit and is checked by its pixels). A
+;   recorded panel that reads is used as before and nothing is searched;
+;   recorded but nothing reads in it after E: one look, and when the board
+;   is found on screen the steps found are used for that visit (logged).
 ;                       The interval is enforced by Scheduler (QuestDue); the
 ;                       caller calls Scheduler.MarkRun. Not duplicated here.
 ;   t.Run(ctx)       -> number of board actions taken.
@@ -46,7 +53,18 @@
 ;     button reads "claim" (or   -> click quest_accept: Accept and Claim
 ;     the text says completed)      Rewards are the SAME button spot; the
 ;                                   word on it (OCR around quest_accept)
-;                                   tells which one is showing
+;                                   tells which one is showing.
+;                                   Claim Rewards shows (lit) on EVERY
+;                                   accepted quest, finished or not (real
+;                                   frame quest_button_claim_toast_1440:
+;                                   right under "Quest Accepted"): the
+;                                   click only claims a finished one. The
+;                                   quest still shown after it = not
+;                                   finished: its Claim Rewards is left
+;                                   alone for ClaimBackoffMin (60, 120,
+;                                   240 min), not pressed every visit.
+;                                   The same wait holds an unread button
+;                                   pressed blind that changed nothing.
 ;     no quest name matches      -> left alone (logged with its title)
 ;     enabled in the filter      -> click quest_accept
 ;     disabled in the filter     -> quests.dismissDisabled = 1: click
@@ -77,8 +95,18 @@ class QuestsTask {
     ; (never dismissed blind), a claim under a toast waits for the next visit.
     static ButtonTries := 3       ; button reads again while it reads nothing (a toast over it)
     static ButtonRetryMs := 300
+    ; Claim Rewards pressed and the quest stayed (not finished): minutes
+    ; until its next try, by the number of tries in a row (the last one
+    ; repeats). A tester's log (v1.6.1) and 24 h live (2026-11-20): 10
+    ; "claimed" lines for quests not finished, one every visit.
+    static ClaimBackoffMin := [60, 120, 240]
     static NextMaxMs := 1400      ; after >: the next quest's text shows (read twice the same) within this
     static SkillRe := "i)t[ao]unt|b[ao]rr[ao]ge|nothing|imp[ao][lI1]e|de[ao]deye|voidrush|rkm[ao]t"   ; Eden's skill list
+    ; the same names through the game-font fold (GameText): its "m" reads
+    ; "rn" ('orkrnotl' = Darkmatter, real frame
+    ; quest_button_accept_skills_toast_1440; live 'Oorkmo', 'Oarkmn' 11-19)
+    static SkillWords := ["taunt", "barrage", "nothing", "impale", "deadeye", "voidrush", "rkmat", "arkm"]
+    static SkillHit(t) => RegExMatch(String(t), QuestsTask.SkillRe) > 0 || GameText.HasAny(t, QuestsTask.SkillWords)
     static AfterCardMs := 1200     ; after a catch card closed, before E
     static WalkTries := 2          ; respawn + walk + E when the board did not open
     static OpenWaitMs := 2000      ; board text must appear within this after E
@@ -104,6 +132,9 @@ class QuestsTask {
         this._env := TaskEnv(deps)
         this._notice := ""      ; last notification text seen while waiting for the board
         this._btnRaw := ""      ; the last button read (the words, not the verdict)
+        this._held := Map()     ; quest key -> {until: env.Now() ms, n: tries} (ClaimBackoffMin)
+        this._found := ""       ; the board's steps found on screen this visit (_FindBoard)
+        this._foundWins := false    ; ... used instead of the recorded ones (they read nothing)
         ; deps "cards": (ctx) => true when it closed a fishing catch card (App:
         ; the fishing task's leftovers); "" = none
         this._cards := (IsObject(deps) && deps.HasOwnProp("cards")) ? deps.cards : ""
@@ -116,25 +147,18 @@ class QuestsTask {
         env := this._env
         if (IsObject(env.cfg) && !env.cfg.Get("quests.enabled", 1))
             return false
-        if (env.Rect("quest_board_rect") == "")
-            return false
-        if (env.Point("quest_close") == "")
-            return false
         return env.Route(IsObject(env.cfg) ? env.cfg.Get("quests.route", "quest_board") : "") != ""
     }
 
     Run(ctx) {
         env := this._env
-        rect := env.Rect("quest_board_rect")
-        if (rect == "")
-            return 0
-        closePt := env.Point("quest_close")
-        if (closePt == "")
-            return 0
         steps := env.Route(IsObject(env.cfg) ? env.cfg.Get("quests.route", "quest_board") : "")
         if (steps == "")
             return 0
-        area := QuestsTask.Panel(rect)
+        ; not recorded: "" until the board is found on screen (_FindBoard)
+        this._found := "", this._foundWins := false
+        rect := env.cal.Rect("quest_board_rect")
+        area := IsObject(rect) ? QuestsTask.Panel(rect) : ""
 
         done := []
         io := env.io
@@ -150,7 +174,6 @@ class QuestsTask {
             ; a card over the screen after a stop mid-cast: live 2026-11-11)
             ; gets one more respawn + walk before the run gives up
             oldMode := Screen.Mode
-            closeRH := Screen.Convert(closePt, "S", "RH")
             opened := 0
             Loop QuestsTask.WalkTries {
                 if (A_Index > 1)
@@ -179,9 +202,16 @@ class QuestsTask {
                 ; the rest stretches (16:10, live 1440x900): the board phase maps
                 ; in Screen mode "RH"; its Exit and > buttons stretch (converted)
                 Screen.Mode := "RH"
-                try
+                try {
                     opened := this._WaitOpen(ctx, area)
-                finally
+                    ; recorded, but nothing read in it: is the board on
+                    ; screen somewhere else? (one look; the game's "no
+                    ; quests" notification already answered it)
+                    if (opened = 0 && IsObject(area) && !RegExMatch(this._notice, QuestsTask.NoQuestRe) && this._FindBoard(true))
+                        opened := 1
+                    if (opened = 1 && IsObject(this._found) && (this._foundWins || !IsObject(area)))
+                        area := QuestsTask.Panel(this._found["quest_board_rect"])
+                } finally
                     Screen.Mode := oldMode
                 if (opened != 0 || RegExMatch(this._notice, QuestsTask.NoQuestRe))
                     break                           ; open, stopped, or the game says empty
@@ -191,7 +221,7 @@ class QuestsTask {
                 if (opened < 0) {
                     ; told to stop while the board was opening: close it if it is up
                     if !CleanupCtx.Halted(ctx)
-                        this._CloseBoard(cc, closeRH, area)
+                        this._CloseBoard(cc, this._CloseRH(), area)
                     return 0
                 }
                 if !opened {
@@ -200,7 +230,7 @@ class QuestsTask {
                 }
                 done := this._Pass(ctx, area)
                 if !CleanupCtx.Halted(ctx)
-                    this._CloseBoard(cc, closeRH, area)
+                    this._CloseBoard(cc, this._CloseRH(), area)
             } finally
                 Screen.Mode := oldMode
         } finally {
@@ -221,6 +251,21 @@ class QuestsTask {
     ; Roblox purchase prompt (live 2026-11-02), closed with Esc after it.
     _CloseBoard(ctx, closePt, area) {
         env := this._env
+        if (!IsObject(closePt) || !IsObject(area)) {
+            ; a step that is not recorded and was not found yet: looked for
+            ; now (the board may have been seen while it was still opening,
+            ; or the run was told to stop before it was)
+            if this._FindBoard(this._foundWins) {
+                if !IsObject(area)
+                    area := QuestsTask.Panel(this._found["quest_board_rect"])
+                if !IsObject(closePt)
+                    closePt := this._CloseRH()
+            }
+            if !IsObject(area)
+                return env.Log("quests: the board is not on screen (not calibrated, not found): Exit not clicked")
+            if !IsObject(closePt)
+                return env.Log("quests: Exit not clicked: quest_close is not calibrated and the Exit button was not found on screen")
+        }
         if ((why := env.Unsafe("quests")) != "")
             return env.Log("quests: Exit not clicked: " why)
         e := QuestsTask.ExitBox
@@ -233,6 +278,60 @@ class QuestsTask {
         env.BuyPrompt("quests")
     }
 
+    ; A board step: the recorded one, else the one found on screen this
+    ; visit; the found one first when the recorded panel read nothing
+    ; (_foundWins). "" = neither.
+    _Step(id) {
+        f := (IsObject(this._found) && this._found.Has(id)) ? this._found[id] : ""
+        if (this._foundWins && IsObject(f))
+            return f
+        v := ""
+        try v := (id = "quest_board_rect") ? this._env.cal.Rect(id) : this._env.cal.Point(id)
+        return IsObject(v) ? v : f
+    }
+
+    ; quest_close as the board phase clicks it (Exit stretches: "S" -> "RH")
+    _CloseRH() {
+        pt := this._Step("quest_close")
+        return IsObject(pt) ? Screen.Convert(pt, "S", "RH") : ""
+    }
+
+    ; The board found on screen (AutoCal; called in the board phase, Screen
+    ; mode "RH"): the panel from "Objects" and its buttons, checked by the
+    ; task's own read of the panel found; Exit and the > arrow read in mode
+    ; "S" (they stretch), the arrow only when its pixels are an arrow
+    ; button's. wins: the recorded steps read nothing, the found ones are
+    ; used instead. -> true when the panel was found (this._found set)
+    _FindBoard(wins := false) {
+        env := this._env
+        panel := AutoCal.QuestPanel(env.Lines())
+        if !IsObject(panel)
+            return false
+        a := QuestsTask.Panel(panel.rect)
+        if !QuestsTask.PanelUp((env.ocrFn)(a.x, a.y, a.w, a.h))
+            return false
+        f := Map("quest_board_rect", panel.rect, "quest_accept", panel.accept, "quest_dismiss", panel.dismiss)
+        ex := AutoCal.QuestExit(Screen.WithMode("S", () => env.Lines()))
+        if IsObject(ex) {
+            f["quest_close"] := ex.close
+            if this._colourOn {
+                b := AutoCal.Quest.arrowBox, px := ""
+                try px := Screen.WithMode("S", () => (env.rectFn)(ex.next.x - b // 2, ex.next.y - b // 2, b, b))
+                if AutoCal.IsArrow(px)
+                    f["quest_next"] := ex.next
+            }
+        }
+        first := !IsObject(this._found)
+        this._found := f
+        this._foundWins := wins ? true : false
+        if first
+            env.Log("quests: the board found on screen (panel at " panel.rect.x "," panel.rect.y
+                . (f.Has("quest_close") ? ", Exit at " f["quest_close"].x "," f["quest_close"].y : ", Exit not read")
+                . (f.Has("quest_next") ? ", > at " f["quest_next"].x "," f["quest_next"].y : ", > not seen") ")"
+                . (wins ? ": nothing read in the calibrated quest_board_rect, the steps found are used for this visit" : ": its steps that are not calibrated are placed from it"))
+        return true
+    }
+
     ; quest_board_rect grown upwards by TitleUp (the title sits above the
     ; "Objects" box the user usually marks).
     static Panel(rect) {
@@ -243,7 +342,42 @@ class QuestsTask {
     ; Identity of the quest on screen: the letters of its title (first
     ; non-empty OCR line). Stars and objective text are left out: they OCR
     ; differently from read to read.
-    static Key(text) => RegExReplace(StrLower(QuestsTask.Title(text)), "[^a-z]+")
+    ; The game font's k reads "l<" on one read and k on the next, its a
+    ; reads o: 'Minnow Rookie' then 'Minnow Rool<ie' was one quest claimed
+    ; twice on one board (live 2026-11-20). Both are folded.
+    static Key(text) => StrReplace(RegExReplace(StrLower(GameText.FixK(QuestsTask.Title(text))), "[^a-z]+"), "a", "o")
+
+    ; Minutes left before the quest's Claim Rewards is tried again (0 = now)
+    _HeldMin(key) {
+        if !this._held.Has(key)
+            return 0
+        left := this._held[key].until - this._env.Now()
+        return (left > 0) ? Ceil(left / 60000) : 0
+    }
+
+    ; Claim Rewards (or an unread button) changed nothing: wait longer each
+    ; time -> the minutes
+    _Hold(key) {
+        n := this._held.Has(key) ? this._held[key].n + 1 : 1
+        steps := QuestsTask.ClaimBackoffMin
+        mins := steps[Min(n, steps.Length)]
+        this._held[key] := {until: this._env.Now() + mins * 60000, n: n}
+        return mins
+    }
+
+    ; What the game says after a click that changed nothing (notify_rect;
+    ; "" = nothing read, or Eden's skill list): only for the log
+    _Said() {
+        env := this._env
+        n := env.cal.Rect("notify_rect")
+        if !IsObject(n)
+            return ""
+        t := ""
+        try t := Trim(RegExReplace(String((env.ocrFn)(n.x, n.y, n.w, n.h)), "\s+", " "))
+        if (t = "" || QuestsTask.SkillHit(t))
+            return ""
+        return "; the game says '" SubStr(t, 1, 60) "'"
+    }
 
     ; First non-empty line (the title) for the log.
     static Title(text) {
@@ -268,7 +402,8 @@ class QuestsTask {
         n := env.cal.Rect("notify_rect")
         waited := 0
         Loop {
-            if QuestsTask.PanelUp((env.ocrFn)(area.x, area.y, area.w, area.h))
+            ; no recorded panel: looked for on screen (_FindBoard)
+            if (IsObject(area) ? QuestsTask.PanelUp((env.ocrFn)(area.x, area.y, area.w, area.h)) : this._FindBoard())
                 return 1
             if IsObject(n) {
                 t := (env.ocrFn)(n.x, n.y, n.w, n.h)
@@ -314,7 +449,7 @@ class QuestsTask {
             if (Trim(t) != "")
                 return "quests: the board did not open (notification reads: '" SubStr(Trim(RegExReplace(t, "\s+", " ")), 1, 80) "'); nothing clicked"
         }
-        return "quests: the board did not open after E (no quests, or the route missed it: try Test on Setup > Routes); nothing clicked"
+        return "quests: the board did not open after E (no quests, or the route missed it: try Test on Help > Routes); nothing clicked"
     }
 
     ; Word on the Accept / Claim Rewards button:
@@ -351,7 +486,7 @@ class QuestsTask {
         w := QuestsTask.WordOf(t)
         ; the skill list's white names over it ('rkmot'): its green word
         ; alone (Accept is green; 'Accevi' at 2560x1440)
-        if (w = "" && RegExMatch(t, QuestsTask.SkillRe)) {
+        if (w = "" && QuestsTask.SkillHit(t)) {
             g := String((env.inkFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h, 2, "g"))
             this._btnRaw .= " / green '" g "'"
             w := QuestsTask.WordOf(g)
@@ -383,8 +518,7 @@ class QuestsTask {
         try arr := (this._env.rectFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h)
         if !(arr is Array && arr.Length = b.w * b.h)
             return ""
-        dp := ""
-        try dp := this._env.cal.Point("quest_dismiss")
+        dp := this._Step("quest_dismiss")
         if IsObject(dp)                     ; read like quest_accept (the panel's mode)
             try dis := (this._env.rectFn)(dp.x + b.dx, dp.y + b.dy, b.w, b.h)
         return QuestsTask.ButtonColour(arr, dis)
@@ -436,8 +570,8 @@ class QuestsTask {
         env := this._env
         quests := IsObject(env.cfg) ? env.cfg.Data("quests") : Map()
         dismissOn := IsObject(env.cfg) && env.cfg.Get("quests.dismissDisabled", 0)
-        acceptPt := env.cal.Point("quest_accept")
-        nextPt := env.cal.Point("quest_next")
+        acceptPt := this._Step("quest_accept")
+        nextPt := this._Step("quest_next")
         if IsObject(nextPt)                 ; > stretches (the board's own panel maps "RH")
             nextPt := Screen.Convert(nextPt, "S", Screen.Mode)
         done := []
@@ -473,7 +607,7 @@ class QuestsTask {
             tries := 0
             ; An aura's skill list (Eden: Taunt, Darkmatter Barrage...) sits
             ; there for good: no wait for that (4 s a quest, live 2560x1440)
-            while (word = "" && IsObject(acceptPt) && !RegExMatch(this._btnRaw, QuestsTask.SkillRe)
+            while (word = "" && IsObject(acceptPt) && !QuestsTask.SkillHit(this._btnRaw)
                 && tries++ < QuestsTask.ButtonTries) {
                 if !env.Wait(QuestsTask.ButtonRetryMs, ctx)
                     break
@@ -481,7 +615,15 @@ class QuestsTask {
             }
             env.Log("quests: [" seen.Count "] '" title "' -> " ((m != "") ? m.name (m.enabled ? " (ticked)" : " (not ticked)") : "no match") ", button: " ((word != "") ? word : "? ('" SubStr(Trim(RegExReplace(this._btnRaw, "\s+", " ")), 1, 30) "')"))
             action := ""
-            if (word = "claim" || (word = "" && m != "" && QuestMatch.IsComplete(text)))
+            name := (m != "") ? m.name : title
+            if (word = "accept")
+                try this._held.Delete(key)      ; a new quest under that title
+            held := this._HeldMin(key)
+            claimable := (word = "claim" || (word = "" && m != "" && QuestMatch.IsComplete(text)))
+            if (held && (claimable || (word = "" && m != "" && m.enabled)))
+                ; Claim Rewards did nothing on it a while ago: not every visit
+                env.Log("quests: left " name " alone (accepted, not finished at the last try: Claim Rewards again in " held " min)")
+            else if claimable
                 action := "turnin"
             else if (word = "active")
                 env.Log("quests: " title " is already accepted")
@@ -499,9 +641,8 @@ class QuestsTask {
             else
                 env.Log("quests: left " m.name " alone (not ticked; never dismissed while quests.dismissDisabled = 0)")
             if (action != "") {
-                name := (m != "") ? m.name : title
                 id := (action = "dismiss") ? "quest_dismiss" : "quest_accept"   ; Claim Rewards = the Accept spot
-                pt := env.Point(id)
+                pt := this._Step(id)
                 if (pt != "") {
                     ; an unread button is clicked only on the Accept spot (a
                     ; ticked quest): that spot holds Accept or Claim Rewards,
@@ -509,7 +650,8 @@ class QuestsTask {
                     env.Click(pt)
                     verb := (action = "turnin") ? "claimed rewards for" : (action = "accept") ? "accepted" : "dismissed"
                     done.Push(verb " " name)
-                    env.Log("quests: " verb " " name (word = "" ? " (button unread: pressed the Accept / Claim Rewards spot)" : ""))
+                    ; a claim is only known after the click (the quest leaves)
+                    env.Log("quests: " ((action = "turnin") ? "pressed Claim Rewards for" : verb) " " name (word = "" ? " (button unread: pressed the Accept / Claim Rewards spot)" : ""))
                 } else {
                     env.Log("quests: skipped " action " for " name)
                 }
@@ -518,13 +660,26 @@ class QuestsTask {
                 if (action = "dismiss" && pt != "")
                     continue                    ; the board shows the next quest by itself
                 ; a claim may remove the quest: move on only if it is still shown
-                if (QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h)) != key)
+                if (QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h)) != key) {
+                    if (pt != "" && (action = "turnin" || word = "")) {
+                        ; gone: claimed (Accept keeps the quest on screen, so
+                        ; an unread button that removed it was Claim Rewards)
+                        try this._held.Delete(key)
+                        done[done.Length] := "claimed rewards for " name
+                        env.Log("quests: claimed rewards for " name)
+                    }
                     continue
+                }
                 ; still shown after Claim Rewards: not finished yet (live
                 ; 09:09 / 09:25: the same quest "claimed" visit after visit)
                 if (action = "turnin" && pt != "") {
                     done.Pop()
-                    env.Log("quests: " name " is not finished yet (it stayed on the board after Claim Rewards)")
+                    env.Log("quests: " name " is not finished yet (it stayed on the board after Claim Rewards" this._Said() "): next try in " this._Hold(key) " min")
+                } else if (action = "accept" && pt != "" && word = "") {
+                    ; the unread button changed nothing to see: accepted now,
+                    ; or an unfinished quest's Claim Rewards. Not pressed
+                    ; blind again every visit.
+                    this._Hold(key)
                 }
             }
             if !IsObject(nextPt)

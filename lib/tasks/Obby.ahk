@@ -161,6 +161,7 @@ class ObbyTask {
     ; Equip 840,843, "Rolled at" ~670..900 x 650..700)
     static InfoBox := {dx: -190, dy: -205, w: 380, h: 90}
     static NeverRe := "i)delete|lock|sell|remove|discard"
+    static NeverWords := ["delete", "lock", "sell", "remove", "discard"]
     ; "Aura Storage" title, from aura_search (2560x1440 frames: "Auro Storage")
     static StorageBox := {dx: -200, dy: -135, w: 650, h: 85}
     static StorageRe := "i)st[o0]r[ao][go][e3]"
@@ -173,6 +174,13 @@ class ObbyTask {
     ; does): the storage is up even when a banner hides its title
     static PanelBox := {dx: -210, dy: -262, w: 260, h: 66}
     static PanelRe := "i)nf[o0]rmati[o0]n"
+    ; the search box's text, from aura_search (2560x1440 storage frames:
+    ; "Sailor" / "Soilor" at 3x; nothing at 1x). Read only when result tile
+    ; 1 stays empty: 13:54-16:17 2026-11-20 both tabs listed nothing 15 runs
+    ; in a row, cleared only by a fresh client (what the box held: unknown)
+    static SearchBox := {dx: -86, dy: -20, w: 300, h: 40}
+    static SearchScale := 3
+    static ShotGapMs := 30 * 60000  ; a failure's screenshot at most this often (per kind)
     static CloseTries := 3         ; clicks on the storage's X before giving up
     static TitleWaitMs := 3000     ; panel up, title unread: re-read this long (a banner passes)
     static TitlePollMs := 250
@@ -263,7 +271,7 @@ class ObbyTask {
         if (retries > 0 && this._missStreak >= ObbyTask.MissStreakOne) {
             retries := 0
             if (this._missStreak = ObbyTask.MissStreakOne)
-                env.Log("obby: the blessing was missed " this._missStreak " obbies in a row: one run per obby until it shows (fix the route on Setup > Routes)")
+                env.Log("obby: the blessing was missed " this._missStreak " obbies in a row: one run per obby until it shows (fix the route on Help > Routes)")
         }
         io := env.io
         plays := 0, seen := false, stopped := false, unchecked := false, why := ""
@@ -333,7 +341,7 @@ class ObbyTask {
             return 0
         }
         if (plays > 0) {
-            msg := "the Basic Blessing never showed after " plays " run(s) (a jump missed? Test the obby route on Setup > Routes, or re-record it)"
+            msg := "the Basic Blessing never showed after " plays " run(s) (a jump missed? Test the obby route on Help > Routes, or re-record it)"
             env.Log("obby: " msg)
             env.Report("errors", "Obby failed", msg, 0xE74C3C)
         }
@@ -346,7 +354,7 @@ class ObbyTask {
         c := this._AuraCal()
         if !IsObject(c)
             return {ok: false, had: false, prev: "", unknown: false
-                , why: "the aura storage is not calibrated (Setup > Calibrate: aura_open, aura_search, aura_tile_rect, aura_equip, aura_close)"}
+                , why: "the aura storage is not calibrated (Help > Calibrate: aura_open, aura_search, aura_tile_rect, aura_equip, aura_close)"}
         ; the swap finishes on a preempt (it takes seconds); only a real halt
         ; cuts it short
         cctx := CleanupCtx(ctx)
@@ -404,7 +412,7 @@ class ObbyTask {
     ; (w a s d only, 1..AlignMaxMs each): every key held its ms after the
     ; camera reset (and the first run's zoom), before the route - into the
     ; spawn's walls so every run starts from one spot; the offset walks from
-    ; there to where the recording started. The route recorder (Setup >
+    ; there to where the recording started. The route recorder (Help >
     ; Routes) plays the same before an obby recording, the route test too.
     static AlignKeys := Map("w", 1, "a", 1, "s", 1, "d", 1)
     static AlignMaxMs := 5000
@@ -1293,9 +1301,82 @@ class ObbyTask {
     _Open(c) {
         b := ObbyTask.StorageBox
         x := c.aura_search.x + b.dx, y := c.aura_search.y + b.dy
-        if RegExMatch(String((this._env.ocrFn)(x, y, b.w, b.h)), ObbyTask.StorageRe)
-            return true
-        return RegExMatch(String((this._env.ocrFn)(x, y, b.w, b.h, ObbyTask.StorageScale)), ObbyTask.StorageRe) > 0
+        t := String((this._env.ocrFn)(x, y, b.w, b.h))
+        if !RegExMatch(t, ObbyTask.StorageRe)
+            t := String((this._env.ocrFn)(x, y, b.w, b.h, ObbyTask.StorageScale))
+        this._titleRead := t                    ; for the log when it never reads
+        if !RegExMatch(t, ObbyTask.StorageRe)
+            return false
+        UiStuck.Ok("aura storage")              ; its title read: the storage works
+        return true
+    }
+
+    ; ---- package B (2026-11-20): the stuck-UI escape, search check, shots ----
+
+    ; The storage did not open / the search listed nothing: counted for the
+    ; stuck-UI escape (lib\UiStuck.ahk), the raw read logged, a screenshot
+    ; (at most once per ShotGapMs per kind: live, 235 title misses had none).
+    _UiFail(kind, read := "") {
+        env := this._env
+        UiStuck.Fail(kind)
+        if (read != "")
+            env.Log("obby: (" kind ") the box read '" SubStr(Trim(RegExReplace(read, "\s+", " ")), 1, 40) "'")
+        if !this.HasOwnProp("_shotAt")
+            this._shotAt := Map()
+        now := env.Now()
+        if (this._shotAt.Has(kind) && now - this._shotAt[kind] < ObbyTask.ShotGapMs)
+            return
+        this._shotAt[kind] := now
+        shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
+        if (shot != "")
+            env.Log("obby: screen when the " kind " failed saved to " shot)
+    }
+
+    ; The search box holds `text` and little else (game font folded, a
+    ; letter of slack, the caret read as a letter: "Sailorl").
+    static SearchHolds(read, text) {
+        r := GameLists.Fold(read), t := GameLists.Fold(text)
+        if (t = "" || r = "" || StrLen(r) > StrLen(t) + 2)
+            return false
+        return GameLists.Distance(SubStr(r, 1, StrLen(t)), t) <= 1
+    }
+
+    ; Clicks the search box, clears it, types `text`. Result tile 1 still
+    ; empty and the box not holding `text`: cleared from both ends (Home +
+    ; Delete too: a caret left mid-text) and typed once more. -> 1 | -1 stopped
+    _TypeSearch(c, text, ctx) {
+        env := this._env, io := env.io
+        this._searchRead := ""
+        if !this._Click(c.aura_search, ctx, c)
+            return -1
+        Input.ClearText(io)
+        Input.TypeText(text, io)
+        if !env.Wait(ObbyTask.MenuMs, ctx)
+            return -1
+        if this._TileHere(ObbyTask.TileRect(c.aura_tile_rect, 1)) {
+            UiStuck.Ok("aura search")           ; it lists something: the search works
+            return 1
+        }
+        b := ObbyTask.SearchBox
+        rd := String((env.ocrFn)(c.aura_search.x + b.dx, c.aura_search.y + b.dy, b.w, b.h, ObbyTask.SearchScale))
+        this._searchRead := rd
+        if ObbyTask.SearchHolds(rd, text)
+            return 1
+        env.Log("obby: no result and the search box reads '" SubStr(Trim(RegExReplace(rd, "\s+", " ")), 1, 30) "', not '" text "': cleared again and typed once more")
+        if !this._Click(c.aura_search, ctx, c)
+            return -1
+        Input.Key("Home", 30, io)
+        Loop Input.ClearKeys
+            Input.Key("Delete", 20, io)
+        Input.ClearText(io)
+        Input.TypeText(text, io)
+        if !env.Wait(ObbyTask.MenuMs, ctx)
+            return -1
+        if this._TileHere(ObbyTask.TileRect(c.aura_tile_rect, 1)) {
+            UiStuck.Ok("aura search")
+            env.Log("obby: the search lists results after typing it again")
+        }
+        return 1
     }
 
     ; The storage's left panel shows ("[ Information ]", PanelBox): it is up
@@ -1375,6 +1456,7 @@ class ObbyTask {
             ; covered by the Aura Collections screen? (_SetAura looks once more)
             this._empty := true
             this._why := "the Aura Storage window did not open (its title did not read)"
+            this._UiFail("aura storage", this.HasOwnProp("_titleRead") ? this._titleRead : "")
             return 0
         }
         found := 0, text := "", picked := 0
@@ -1392,11 +1474,7 @@ class ObbyTask {
                 return -1
             ; hover first: a dropped click left the search empty, so the tab
             ; listed every aura (2026-11-01)
-            if !this._Click(c.aura_search, ctx, c)
-                return -1
-            Input.ClearText(io)
-            Input.TypeText(ObbyTask.SearchText(aura), io)
-            if !env.Wait(ObbyTask.MenuMs, ctx)
+            if (this._TypeSearch(c, ObbyTask.SearchText(aura), ctx) < 0)
                 return -1
             ; speed (2026-11-17): an aura whose name never reads (Eden, a
             ; Flying Dutchman) was found by the log last time: that tile is
@@ -1431,6 +1509,8 @@ class ObbyTask {
         } else if !found {
             this._empty := Trim(text) = ""
             this._why := "no '" aura "' in the aura storage search (first tile's name read: '" SubStr(Trim(RegExReplace(text, "\s+", " ")), 1, 40) "')"
+            if this._empty
+                this._UiFail("aura search", this.HasOwnProp("_searchRead") ? this._searchRead : "")
         } else {
             st := this._Button(c)
             was := st
@@ -1518,6 +1598,7 @@ class ObbyTask {
         if !this._OpenWait(c) {
             this._empty := true
             this._why := "the Aura Storage window did not open (its title did not read)"
+            this._UiFail("aura storage", this.HasOwnProp("_titleRead") ? this._titleRead : "")
             return 0
         }
         text := ObbyTask.SearchText(aura)
@@ -1537,11 +1618,7 @@ class ObbyTask {
                 return -1
             if !env.Wait(ObbyTask.SelectMs, ctx)
                 return -1
-            if !this._Click(c.aura_search, ctx, c)
-                return -1
-            Input.ClearText(io)
-            Input.TypeText(text, io)
-            if !env.Wait(ObbyTask.MenuMs, ctx)
+            if (this._TypeSearch(c, text, ctx) < 0)
                 return -1
             r := ObbyTask.TileRect(c.aura_tile_rect, 1)
             if !this._TileHere(r) {                     ; never a click on an empty slot
@@ -1586,6 +1663,7 @@ class ObbyTask {
         if (!done && !IsObject(tile)) {
             this._empty := true
             this._why := "no '" aura "' in the aura storage search (no result tile showed)"
+            this._UiFail("aura search", this.HasOwnProp("_searchRead") ? this._searchRead : "")
         } else if !done
             this._why := "the first results were other auras (the log named them)"
         this._closed := this._ShutStorage(c, ctx)
@@ -1744,11 +1822,21 @@ class ObbyTask {
     _Button(c) {
         b := ObbyTask.ButtonBox
         this._btn := String((this._env.ocrFn)(c.aura_equip.x + b.dx, c.aura_equip.y + b.dy, b.w, b.h))
-        if RegExMatch(this._btn, ObbyTask.NeverRe)
+        return ObbyTask.ButtonState(this._btn)
+    }
+
+    ; The storage button's text -> "never" (Delete / Lock / Sell / Remove /
+    ; Discard: never clicked) | "on" (Unequip, or "nequip" with the U lost) |
+    ; "off" (Equip) | "". Read through the game-font fold (GameText): live
+    ; 2026-11-20 08:58 Equip read 'ECluip' (q as Cl) and Sailor was never
+    ; put on. The never-words are checked folded too (only ever stricter).
+    static ButtonState(t) {
+        t := String(t)
+        if (RegExMatch(t, ObbyTask.NeverRe) || GameText.HasAny(t, ObbyTask.NeverWords))
             return "never"
-        if RegExMatch(this._btn, "i)n\s*equ")      ; "Unequip", or "nequip" with the U lost
+        if (RegExMatch(t, "i)n\s*equ") || GameText.Has(t, "nequ"))
             return "on"
-        return RegExMatch(this._btn, "i)equip") ? "off" : ""
+        return GameText.Has(t, "equip") ? "off" : ""
     }
 
     ; After the run: the previous aura back (or Sailor off when there was none).

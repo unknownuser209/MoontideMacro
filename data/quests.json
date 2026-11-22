@@ -64,6 +64,14 @@
         { "name": "Meditation II", "enabled": true },
         { "name": "Meditation III", "enabled": true }
       ]
+    },
+    {
+      "name": "Obby", "enabled": true,
+      "quests": [ { "name": "To the Temple", "enabled": true } ]
+    },
+    {
+      "name": "Gear", "enabled": true,
+      "quests": [ { "name": "Your First Gear", "enabled": false } ]
     }
   ]
 }

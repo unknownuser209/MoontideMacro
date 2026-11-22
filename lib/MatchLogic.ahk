@@ -23,6 +23,9 @@
 ;                              when key is "".
 ;   MatchLogic.Matched(board, a [, b])         both tiles matched (b = 0: only
 ;                              a, a tile found green when flipped).
+;   MatchLogic.NotPair(board, a, b)            a and b looked alike but the
+;                              game did not match them: never picked as a
+;                              pair again (each may still pair with another).
 ;
 ; CHOOSING FLIPS
 ;   First:  the most valuable pair of two seen tiles with equal keys (the
@@ -77,9 +80,21 @@ class MatchLogic {
     static NewBoard(n := 20) {
         board := []
         Loop n
-            board.Push(Map("state", "hidden", "key", ""))
+            board.Push(Map("state", "hidden", "key", "", "not", Map()))
         return board
     }
+
+    ; live 2026-11-20: tiles 2 and 3 (a white and a cream x100 potion) read
+    ; alike, did not turn green, and were flipped together 29 times in a row
+    static NotPair(board, a, b) {
+        for t in [a, b]
+            if !board[t].Has("not")
+                board[t]["not"] := Map()
+        board[a]["not"][b] := true
+        board[b]["not"][a] := true
+    }
+
+    static _Paired(board, i, j) => !(board[i].Has("not") && board[i]["not"].Has(j))
 
     static Record(board, i, key) {
         board[i]["key"] := key
@@ -101,7 +116,7 @@ class MatchLogic {
             for j, u in board {
                 if (j <= i)
                     continue
-                if (u["state"] = "seen" && u["key"] == t["key"]) {
+                if (u["state"] = "seen" && u["key"] == t["key"] && MatchLogic._Paired(board, i, j)) {
                     v := MatchLogic.Value(t["key"])
                     if (bestI = 0 || v < bestV)
                         bestI := i, bestV := v
@@ -136,7 +151,7 @@ class MatchLogic {
         key := board[first]["key"]
         if (key != "") {
             for i, t in board {
-                if (i != first && t["state"] = "seen" && t["key"] == key)
+                if (i != first && t["state"] = "seen" && t["key"] == key && MatchLogic._Paired(board, first, i))
                     return i
             }
         }

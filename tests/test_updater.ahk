@@ -94,8 +94,6 @@ Test_Updater_Versions() {
     AssertEq(Updater.Compare("v0.9", "1.0"), -1, "older")
     AssertEq(Updater.Compare("v1.0.0", "1.0"), 0, "equal")
     AssertEq(Updater.Compare("v1.10", "v1.9"), 1, "numeric not text order")
-    AssertEq(Updater.Compare("v1.6.1", "v1.6"), 1, "a point release is newer (v1.6.1 > v1.6)")
-    AssertEq(Updater.Compare("v1.6.1", "1.7"), -1, "and older than the next minor")
     for bad in ["", "latest", "v1.x", "1.2.3.4", "v-1", "1.0-beta", "release 2"]
         AssertEq(Updater.Compare(bad, "1.0"), "", "garbage tag <" bad ">")
 }

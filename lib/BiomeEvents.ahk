@@ -78,6 +78,12 @@
 ;     the startup (not live) aura and the macro's own swaps. The set is
 ;     seeded once, when hadFile does not exist, with every aura equipped in
 ;     hadLogDir\*.log. Test events never touch it.
+;   - Roll (LogWatch "roll", the game's aura_rolled event, at the roll;
+;     the Equipped line can come a minute later, 2026-11-18 Pixelation:
+;     67 s, its clip missed the cutscene): stats, the rare aura alert and
+;     the clip decided as above, Clip.Trigger("aura:" name, ev delayMs) =
+;     the game's capture delay instead of delaySec. A real roll: clips even
+;     when had or during a macro swap. Its later Equipped line: skipped.
 ;   - Other event types are ignored here.
 ; ---------------------------------------------------------------------------
 
@@ -195,6 +201,53 @@ class BiomeEvents {
         switch type {
             case "biome": this._Biome(name, ts, live, test)
             case "aura": this._Aura(name, live, ev)
+            case "roll": this._Roll(name, live, ev)
+        }
+    }
+
+    ; The game's roll event (LogWatch "roll"): a real roll, at the roll, so
+    ; it clips even for an aura equipped before or during a macro swap, the
+    ; game's capture delay after it (ev delayMs: the cutscene is over then).
+    ; Its later Equipped line is then skipped (_Aura).
+    _Roll(name, live, ev) {
+        name := Trim(name)
+        if (name = "" || !live)
+            return
+        test := (ev is Map) && ((ev.Has("test") && ev["test"]) || (ev.Has("ts") && SubStr(String(ev["ts"]), 1, 5) = "TEST-"))
+        if (test && this._cfg.Get("General.dryRun", 1) != 1)
+            return
+        k := Auras.Key(name)
+        if !this.HasOwnProp("_rolled")
+            this._rolled := Map()
+        this._rolled[k] := false
+        if !test
+            this._HadAdd(name)
+        d := Auras.Decide(this._cfg, name)
+        if (!test && d["clip"] && IsObject(this._state) && HasMethod(this._state, "Bump"))
+            try this._state.Bump("rareAuras")
+        this._AuraAlert(name, test)
+        if !(this._cfg.Get("Medal.onRareAura", 0) || this._cfg.Get("Medal.clipCutscenes", 0))
+            return
+        if !d["clip"] {
+            this._Unknown(name, d)
+            return
+        }
+        ms := (ev is Map && ev.Has("delayMs") && IsNumber(ev["delayMs"])) ? ev["delayMs"] : 15000
+        this._Log("Aura: " name " rolled (clip in " Round(ms / 1000) " s, after its cutscene: " d["why"] ")")
+        this._rolled[k] := true
+        try this._clip.Trigger("aura:" name, ms)
+    }
+
+    ; logs an unknown aura once per name (no clip)
+    _Unknown(name, d) {
+        if d["known"]
+            return
+        k := Auras.Key(name)
+        if !this.HasOwnProp("_unknownAuras")
+            this._unknownAuras := Map()
+        if !this._unknownAuras.Has(k) {
+            this._unknownAuras[k] := true
+            this._Log("Aura: unknown aura " Trim(name) " " Chr(0x2014) " add to data/auras.json (no clip)")
         }
     }
 
@@ -289,6 +342,14 @@ class BiomeEvents {
             had := this._HadHas(name)
             this._HadAdd(name)                 ; startup aura and new ones too
         }
+        ; its roll event came first: handled there (no second clip or alert)
+        k := Auras.Key(name)
+        if (!test && this.HasOwnProp("_rolled") && this._rolled.Has(k)) {
+            clipped := this._rolled.Delete(k)
+            if live
+                this._Log("Aura: " Trim(name) " equipped after its roll (" (clipped ? "clipped at the roll" : "seen at the roll") ")")
+            return
+        }
         if !live
             return
         ; Stats (daily summary): a new aura, rolled by the player, as rare as
@@ -315,13 +376,7 @@ class BiomeEvents {
         }
         d := Auras.Decide(this._cfg, name)
         if !d["clip"] {
-            k := Auras.Key(name)
-            if (!d["known"] && !this.HasOwnProp("_unknownAuras"))
-                this._unknownAuras := Map()
-            if (!d["known"] && !this._unknownAuras.Has(k)) {
-                this._unknownAuras[k] := true
-                this._Log("Aura: unknown aura " Trim(name) " " Chr(0x2014) " add to data/auras.json (no clip)")
-            }
+            this._Unknown(name, d)
             return
         }
         this._Log("Aura: " name " (clip: " d["why"] ")")

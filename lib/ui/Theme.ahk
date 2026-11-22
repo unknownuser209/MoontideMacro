@@ -85,57 +85,142 @@ class Theme {
             , BgImage: "themes\contrast.png", Note: "High contrast: black, white and yellow, easy to read"})
     static ThemeKeys := ["Bg", "PanelC", "Text", "Accent", "SideBg", "CardBg", "FieldBg", "FrameC", "HoverBg", "OffBg", "Muted", "Ink", "AccentHi", "Pulse", "BgImage"]
 
-    ; Theme name as listed (any case, "Custom" too), "Moontide" when unknown.
+    ; A preset's name as listed (any case), "Moontide" when it is no preset.
     static ThemeName(name) {
         name := Trim(String(name))
-        if (name = Theme.CustomName)
-            return Theme.CustomName
         for n in Theme.Names
             if (n = name)
                 return n
         return "Moontide"
     }
 
-    ; Every colour of theme `name` (unknown -> Moontide; "Custom" -> the
-    ; colours SetCustom / CustomFromCfg made, Moontide's until then). Call
-    ; before windows are built: existing controls keep their colours.
-    ; -> the name used.
+    ; The saved-themes folder lives under this Config (settings.ini's folder).
+    ; App sets it at start; it stays "" in tests and tools, where Use and
+    ; Apply know the nine presets only.
+    static Cfg := ""
+    static Scale := 100            ; window size in percent (theme.ui.scale)
+    static Sidebar := "left"       ; left | right | top (theme.ui.sidebar)
+    static Layout := Map()         ; theme.layout: "<page>:<card>" -> [x, y, w, h, hidden] (Dashboard reads it)
+    static PictureSpec := Map("file", "Moontide", "fit", "fill", "dim", 60)
+    static _FontBase := ""         ; the built-in Theme.Fonts, kept before the first Apply
+
+    ; Every colour of theme `name` (a preset in any case, a saved theme when
+    ; Theme.Cfg is set; unknown -> Moontide). Call before windows are built:
+    ; existing controls keep their colours. A shim over Apply. -> the name used.
     static Use(name) {
-        n := Theme.ThemeName(name)
-        p := (n = Theme.CustomName) ? Theme.CustomPreset() : Theme.Presets[n]
-        for k in Theme.ThemeKeys
-            Theme.%k% := p.%k%
-        Theme.Current := n
-        Theme.CurrentSig := (n = Theme.CustomName) ? p.Sig : ""
+        raw := Trim(String(name))
+        n := Theme.ThemeName(raw)
+        if (ThemeStore.PresetName(raw) = "" && IsObject(Theme.Cfg)) {
+            try {
+                if ThemeStore.Exists(Theme.Cfg, raw) {
+                    Theme.Apply(ThemeStore.Load(Theme.Cfg, raw))
+                    return Theme.Current
+                }
+            }
+        }
+        Theme.Apply(ThemeStore.Preset(n))
         return n
     }
 
-    ; ---- custom theme (Settings > Look > Edit custom) ---------------------------
-    ; The user picks 4 base colours (Bg, PanelC, Text, Accent, as the spec
-    ; palette) and a background picture; Derive mixes the other keys the way
+    ; Make `th` (a ThemeStore Map) the one shown: every colour (the 4 base
+    ; ones, Derive for the rest, then the derived colours the theme sets
+    ; itself), Theme.Fonts, Scale, Sidebar, PictureSpec and BgImage. Call
+    ; before windows are built. A bad theme never throws: Moontide is applied
+    ; instead (and the reason goes to the debug output).
+    static Apply(th) {
+        Theme.ApplyWhy := ""
+        try {
+            Theme._Apply(ThemeStore.Clean(th))
+            return Theme.Current
+        } catch as e {
+            try OutputDebug("Theme.Apply failed, using Moontide: " e.Message)
+            Theme.ApplyWhy := "its settings could not be used"
+        }
+        try Theme._Apply(ThemeStore.Default())
+        return Theme.Current
+    }
+    static ApplyWhy := ""          ; why the last Apply fell back to Moontide ("" when it did not)
+
+    static _Apply(t) {
+        c := t["colors"]
+        d := Theme.Derive(c["Bg"], c["PanelC"], c["Text"], c["Accent"])
+        for k in Theme.BaseKeys
+            Theme.%k% := d.%k%
+        for k in ThemeStore.DerivedKeys
+            Theme.%k% := (c[k] != "") ? c[k] : d.%k%
+        Theme._ApplyFonts(t["fonts"])
+        Theme.Scale := t["ui"]["scale"]
+        Theme.Sidebar := t["ui"]["sidebar"]
+        Theme.Layout := t["layout"]
+        pic := t["picture"]
+        Theme.PictureSpec := Map("file", pic["file"], "fit", pic["fit"], "dim", pic["dim"])
+        Theme.BgImage := Theme._PictureFile(pic["file"])
+        Theme.Current := t["name"]
+    }
+
+    ; the dashboard picture for a theme's picture.file: "" (none), a preset's
+    ; art (relative to assets), or the full path of a file in the themes folder
+    static _PictureFile(file) {
+        file := Trim(String(file))
+        if (file = "" || file = "none")
+            return ""
+        n := ThemeStore.PresetName(file)
+        if (n != "")
+            return Theme.Presets[n].BgImage
+        if IsObject(Theme.Cfg) {
+            path := ThemeStore.Dir(Theme.Cfg) "\" file
+            if (!RegExMatch(file, "[\\/:]") && FileExist(path) != "" && !InStr(FileExist(path), "D"))
+                return path
+        }
+        return ""
+    }
+
+    ; The built-in Theme.Fonts as they were before any Apply (a copy kept on
+    ; first use; Apply rewrites Theme.Fonts, never this).
+    static DefaultFonts() {
+        if !IsObject(Theme._FontBase) {
+            Theme._FontBase := Map()
+            for r, f in Theme.Fonts
+                Theme._FontBase[r] := f.Clone()
+        }
+        return Theme._FontBase
+    }
+
+    ; fonts: title, head, body, button, nav, small as the theme says. muted and
+    ; caps take small's family and grow with its size (their own size + small's
+    ; size - 8), brand follows title, value and big follow head's family. A
+    ; family the theme leaves at its built-in one keeps that role's own
+    ; built-in family (caps stays semibold), so the presets are unchanged.
+    static _ApplyFonts(fonts) {
+        b := Theme.DefaultFonts()
+        out := Map()
+        for r, f in b
+            out[r] := f.Clone()
+        size := (r) => Integer(RegExReplace(b[r][1], "^s(\d+).*$", "$1"))
+        follow := (role, base, fam, sz) => out[role] := ["s" Max(6, sz) " norm", (fam = b[base][2]) ? b[role][2] : fam, b[role][3]]
+        for r in ["title", "head", "body", "button", "nav", "small"]
+            out[r] := ["s" fonts[r][2] " norm", fonts[r][1], b[r][3]]
+        ds := fonts["small"][2] - size("small")
+        follow("muted", "small", fonts["small"][1], size("muted") + ds)
+        follow("caps", "small", fonts["small"][1], size("caps") + ds)
+        dt := fonts["title"][2] - size("title")
+        follow("brand", "title", fonts["title"][1], size("brand") + dt)
+        follow("value", "head", fonts["head"][1], size("value"))
+        follow("big", "head", fonts["head"][1], size("big"))
+        for r, f in out
+            Theme.Fonts[r] := f
+    }
+
+    ; ---- colours (the Look page edits a theme's 4 base colours) -----------------
+    ; Derive mixes the other keys from Bg, PanelC, Text and Accent the way
     ; the presets relate to their own 4 (checked against Moontide / Galaxy).
-    ; settings.ini [UI]: customBg, customPanel, customText, customAccent
-    ; (RRGGBB, "#" allowed; bad -> Moontide's), customPicture ("none", a
-    ; preset name = its picture, "file" = customPictureFile, a picture of
-    ; your own, darkened and scaled when the dashboard is built).
+    ; CustomName: the old [UI] theme=Custom, which ThemeStore.Migrate turns
+    ; into "My theme"; it is no theme name any more.
     static CustomName := "Custom"
-    static Custom := ""            ; the Derive object Use("Custom") applies
-    static CurrentSig := ""        ; Sig of the custom colours now shown
     static BaseKeys := ["Bg", "PanelC", "Text", "Accent"]
-    static CustomCfgKeys := Map("Bg", "UI.customBg", "PanelC", "UI.customPanel", "Text", "UI.customText", "Accent", "UI.customAccent")
 
-    ; dropdown list: the presets, then "Custom"
-    static Choices() {
-        out := Theme.Names.Clone()
-        out.Push(Theme.CustomName)
-        return out
-    }
-
-    ; the short description of a theme
-    static NoteOf(name) {
-        n := Theme.ThemeName(name)
-        return (n = Theme.CustomName) ? "Your own colours" : Theme.Presets[n].Note
-    }
+    ; the short description of a preset
+    static NoteOf(name) => Theme.Presets[Theme.ThemeName(name)].Note
 
     ; "RRGGBB" (upper case) from "rrggbb" / "#RRGGBB" with spaces; "" when not
     ; exactly 6 hex digits. Never throws.
@@ -227,57 +312,8 @@ class Theme {
         return o
     }
 
-    ; BgImage of a customPicture choice: "none" -> "", a preset name -> its
-    ; picture, "file" -> the file when it exists (a folder or a missing file
-    ; -> "", no picture). Anything else -> Moontide's picture.
-    static CustomPicture(choice, file := "") {
-        choice := Trim(String(choice))
-        if (choice = "none")
-            return ""
-        if (choice = "file") {
-            file := Trim(String(file), " `t`"")
-            try {
-                a := FileExist(file)
-                return (Theme.IsOwnPicture(file) && a != "" && !InStr(a, "D")) ? file : ""
-            }
-            return ""
-        }
-        for n in Theme.Names
-            if (n = choice)
-                return Theme.Presets[n].BgImage
-        return Theme.Presets["Moontide"].BgImage
-    }
-
     ; true when BgImage is a picture of the user's own (a full path)
     static IsOwnPicture(p) => RegExMatch(String(p), "^([A-Za-z]:\\|\\\\)") ? true : false
-
-    static SetCustom(bg, panel, text, accent, bgImage := "") {
-        Theme.Custom := Theme.Derive(bg, panel, text, accent, bgImage)
-        return Theme.Custom
-    }
-
-    static CustomPreset() => IsObject(Theme.Custom) ? Theme.Custom : Theme.SetCustom("", "", "", "", Theme.Presets["Moontide"].BgImage)
-
-    ; the custom theme from settings, made the one Use("Custom") applies
-    static CustomFromCfg(cfg) {
-        Theme.Custom := Theme.CustomDerive(cfg)
-        return Theme.Custom
-    }
-
-    ; the custom theme from settings ([UI] custom*; cfg: anything with
-    ; Get(path, default)), not applied. Never throws. -> the Derive object
-    static CustomDerive(cfg) {
-        v := Map()
-        for k, key in Theme.CustomCfgKeys {
-            s := ""
-            try s := cfg.Get(key, "")
-            v[k] := s
-        }
-        pic := "Moontide", file := ""
-        try pic := cfg.Get("UI.customPicture", "Moontide")
-        try file := cfg.Get("UI.customPictureFile", "")
-        return Theme.Derive(v["Bg"], v["PanelC"], v["Text"], v["Accent"], Theme.CustomPicture(pic, file))
-    }
 
     ; Win32 colour dialog (comdlg32 ChooseColorW) opened on hex. -> the
     ; picked "RRGGBB", or "" when cancelled / on any failure.
@@ -300,13 +336,15 @@ class Theme {
         return ""
     }
 
-    ; A picture of the user's own for the dashboard background: scaled to
-    ; cover w x h (centred crop) and darkened with bg at `dim` (0..1) so
-    ; panels and text read on it. Only the w x h result stays in memory.
+    ; A picture for the dashboard background placed in w x h and darkened
+    ; with bg at `dim` (0..1) so panels and text read on it. fit: "fill" =
+    ; cover, centred crop; "fit" = the whole picture, letterboxed in bg;
+    ; "center" = no scaling, bg around it; "tile" = repeated at its own
+    ; size. Only the w x h result stays in memory.
     ; -> HBITMAP (the Picture control takes it) | 0 when the file is
     ; missing, too big, not a picture or GDI+ fails.
-    static DimPicture(path, w, h, bg, dim := 0.6) {
-        tok := 0, src := 0, dst := 0, gr := 0, br := 0, hbm := 0
+    static DimPicture(path, w, h, bg, dim := 0.6, fit := "fill") {
+        tok := 0, src := 0, dst := 0, gr := 0, br := 0, tb := 0, hbm := 0
         try {
             a := FileExist(path)
             if (a = "" || InStr(a, "D") || FileGetSize(path) > 40 * 1024 * 1024)
@@ -327,20 +365,35 @@ class Theme {
             if DllCall("gdiplus\GdipGetImageGraphicsContext", "Ptr", dst, "Ptr*", &gr)
                 return 0
             DllCall("gdiplus\GdipSetInterpolationMode", "Ptr", gr, "Int", 7)
-            s := Max(w / iw, h / ih)
-            dw := Round(iw * s), dh := Round(ih * s)
-            DllCall("gdiplus\GdipDrawImageRectI", "Ptr", gr, "Ptr", src, "Int", (w - dw) // 2, "Int", (h - dh) // 2, "Int", dw, "Int", dh)
+            bgc := 0xFF000000 | (Integer("0x" bg) & 0xFFFFFF)
+            DllCall("gdiplus\GdipGraphicsClear", "Ptr", gr, "UInt", bgc)
+            fit := StrLower(String(fit))
+            if (fit = "tile") {
+                if (!DllCall("gdiplus\GdipCreateTexture", "Ptr", src, "Int", 0, "Ptr*", &tb) && tb)
+                    DllCall("gdiplus\GdipFillRectangleI", "Ptr", gr, "Ptr", tb, "Int", 0, "Int", 0, "Int", w, "Int", h)
+            } else {
+                if (fit = "center")
+                    s := 1
+                else if (fit = "fit")
+                    s := Min(w / iw, h / ih)
+                else
+                    s := Max(w / iw, h / ih)
+                dw := Max(1, Round(iw * s)), dh := Max(1, Round(ih * s))
+                DllCall("gdiplus\GdipDrawImageRectI", "Ptr", gr, "Ptr", src, "Int", (w - dw) // 2, "Int", (h - dh) // 2, "Int", dw, "Int", dh)
+            }
             DllCall("gdiplus\GdipDisposeImage", "Ptr", src), src := 0
             argb := (Round(Max(0, Min(1, dim)) * 255) << 24) | (Integer("0x" bg) & 0xFFFFFF)
             DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &br)
             if br
                 DllCall("gdiplus\GdipFillRectangleI", "Ptr", gr, "Ptr", br, "Int", 0, "Int", 0, "Int", w, "Int", h)
-            if DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", dst, "Ptr*", &hbm, "UInt", 0xFF000000 | (Integer("0x" bg) & 0xFFFFFF))
+            if DllCall("gdiplus\GdipCreateHBITMAPFromBitmap", "Ptr", dst, "Ptr*", &hbm, "UInt", bgc)
                 return 0
             return hbm
         } catch
             return 0
         finally {
+            if tb
+                DllCall("gdiplus\GdipDeleteBrush", "Ptr", tb)
             if br
                 DllCall("gdiplus\GdipDeleteBrush", "Ptr", br)
             if gr
@@ -360,6 +413,9 @@ class Theme {
     static _trans := Map()         ; hwnd of BackgroundTrans labels
     static _roles := Map()         ; label hwnd -> font role ("muted", ...)
     static _help := Map()          ; "?" hwnd -> its help text
+    static _act := Map()           ; switch caption / button hwnd -> true (a setting's own text, for the search ranking)
+    static _btn := Map()           ; Theme.Button hwnd -> the point size its text uses (FitButton)
+    static _src := Map()           ; Label / button / switch caption / "?" hwnd -> the English text it was made from
     static _panels := Map()        ; panel frame / fill hwnd -> true
     static HelpTip := 20           ; ToolTip number used by Help
     static _hoverHwnd := 0
@@ -404,15 +460,103 @@ class Theme {
         "glyph", ["s9 bold", "Segoe UI Symbol", "Ink"]
     )
 
+    ; The font option string of a role ("s10 norm"), its size multiplied by
+    ; the UI size when `scaled` (s10 at 130 % -> s13).
+    static FontOpt(role := "body", scaled := true) {
+        f := Theme.Fonts.Has(role) ? Theme.Fonts[role] : Theme.Fonts["body"]
+        o := f[1]
+        if (scaled && Theme.Scale != 100 && RegExMatch(o, "(?<=^|\s)s(\d+)", &m))
+            o := SubStr(o, 1, m.Pos) Max(6, Theme.S(m[1])) SubStr(o, m.Pos + m.Len)
+        return o
+    }
+
     static Font(g, role := "body", color := "") {
         f := Theme.Fonts.Has(role) ? Theme.Fonts[role] : Theme.Fonts["body"]
         c := (color != "") ? color : Theme.%f[3]%
-        g.SetFont(f[1] " c" c, f[2])
+        g.SetFont(Theme.FontOpt(role, Theme.IsScaled(g)) " c" c, f[2])
+    }
+
+    ; ---- UI size (Theme.Scale 100 / 115 / 130) ------------------------------
+    ; Only windows made with Theme.Window(..., true) (the dashboard) scale;
+    ; the overlay, wizard, cards and dialogs keep their own sizes. All page
+    ; code works in 100 % units: Theme.Add scales x / y / w / h, Theme.Pos
+    ; reads a control back in 100 % units and Theme.MoveTo moves in them, so
+    ; nothing is scaled twice. Theme.Dpi (the Windows scale, for screen px)
+    ; is a separate factor.
+
+    static _scaled := Map()        ; hwnd of the windows that scale
+
+    static IsScaled(g) {
+        try return Theme._scaled.Has(g.Hwnd)
+        return false
+    }
+
+    static S(n) => Round(n * Theme.Scale / 100)
+
+    ; Every x / y / w / h number of an options string times the UI size
+    ; (also after xm / yp / xs ..., "xm+10" -> "xm+13"). Options like +0x200,
+    ; -E0x200, Limit7, Background.., c.., s.. and r.. stay as they are.
+    static ScaleOpts(opts) {
+        if (Theme.Scale = 100)
+            return opts
+        out := "", pos := 1
+        while RegExMatch(opts, "i)(?<=^|\s)([xywh][mps]?)([+-]?)(\d+)(?=\s|$)", &m, pos) {
+            out .= SubStr(opts, pos, m.Pos - pos) m[1] m[2] Theme.S(m[3])
+            pos := m.Pos + m.Len
+        }
+        return out SubStr(opts, pos)
+    }
+
+    ; A ListView column width ("54" or "54 Center") times the UI size.
+    static _ColOpt(g, wd) {
+        if (!Theme.IsScaled(g) || !RegExMatch(String(wd), "^(\s*)(\d+)(.*)$", &m))
+            return wd
+        return m[1] Theme.S(m[2]) m[3]
+    }
+
+    ; A control's place in 100 % units (GetPos undone).
+    static Pos(ctrl) {
+        ctrl.GetPos(&x, &y, &w, &h)
+        if (Theme.IsScaled(ctrl.Gui) && Theme.Scale != 100)
+            x := Round(x * 100 / Theme.Scale), y := Round(y * 100 / Theme.Scale), w := Round(w * 100 / Theme.Scale), h := Round(h * 100 / Theme.Scale)
+        return {x: x, y: y, w: w, h: h}
+    }
+
+    ; ctrl.Move in 100 % units; "" leaves a value as it is.
+    static MoveTo(ctrl, x := "", y := "", w := "", h := "") {
+        ctrl.GetPos(&cx, &cy, &cw, &ch)         ; an omitted value keeps the current one
+        k := Theme.IsScaled(ctrl.Gui)
+        ctrl.Move(x = "" ? cx : (k ? Theme.S(x) : x), y = "" ? cy : (k ? Theme.S(y) : y)
+            , w = "" ? cw : (k ? Theme.S(w) : w), h = "" ? ch : (k ? Theme.S(h) : h))
+    }
+
+    ; The largest of 130 / 115 / 100 that is at most `want` and whose window
+    ; (winW x winH in 100 % units) fits workW x workH screen px. The window
+    ; is counted at the Windows scale (Theme.Dpi) plus an allowance for the
+    ; title bar and borders (16 px wide, 40 px high); 100 when nothing fits.
+    static FitScale(want, workW, workH, winW, winH) {
+        for sc in [130, 115, 100] {
+            if (sc > want)
+                continue
+            if (Theme.Dpi(Round(winW * sc / 100)) + 16 <= workW && Theme.Dpi(Round(winH * sc / 100)) + 40 <= workH)
+                return sc
+        }
+        return 100
+    }
+
+    ; The primary monitor's work area -> {w, h}. Tests replace the hook.
+    static WorkAreaFn := () => Theme._WorkArea()
+    static _WorkArea() {
+        l := 0, t := 0, r := 1920, b := 1080
+        try MonitorGetWorkArea(MonitorGetPrimary(), &l, &t, &r, &b)
+        return {w: r - l, h: b - t}
     }
 
     static Add(g, type, opts := "", text := "") {
         if (type = "Text")
             opts .= " +0x80"                ; SS_NOPREFIX: show "&" literally
+        if Theme.IsScaled(g)
+            opts := Theme.ScaleOpts(opts)
         c := g.Add(type, opts, text)
         if (Theme.Sink is Array)
             Theme.Sink.Push(c)
@@ -420,8 +564,11 @@ class Theme {
     }
 
     ; Window with the palette, dark title bar (Win10 1809+/Win11 caption colours).
-    static Window(title, opts := "") {
+    ; scaled true: the window follows the UI size (Theme.Scale); see above.
+    static Window(title, opts := "", scaled := false) {
         g := Gui(opts, I18n.T(title))
+        if scaled
+            Theme._scaled[g.Hwnd] := true
         g.BackColor := Theme.Bg
         g.MarginX := 0, g.MarginY := 0
         Theme.Font(g, "body")
@@ -441,7 +588,7 @@ class Theme {
         }
     }
 
-    ; A light background (a light Custom theme): the system's light control
+    ; A light background (a light saved theme): the system's light control
     ; look (Explorer / CFD), so drop-downs, scrollbars and lists are not
     ; drawn dark with light text on a light window
     static DarkTheme(hwnd, cls := "DarkMode_Explorer") {
@@ -450,7 +597,7 @@ class Theme {
         try DllCall("uxtheme\SetWindowTheme", "Ptr", hwnd, "Str", cls, "Ptr", 0)
     }
 
-    ; the window background is light (luminance over 0.4: a light Custom theme)
+    ; the window background is light (luminance over 0.4: a light saved theme)
     static IsLight() {
         try return Theme.Lum(Theme.HexOr(Theme.Bg, "000000")) > 0.4
         return false
@@ -469,7 +616,17 @@ class Theme {
         if (bg = "")
             Theme._trans[c.Hwnd] := true
         Theme._roles[c.Hwnd] := role
+        Theme._src[c.Hwnd] := String(text)
         return c
+    }
+
+    ; The English text a Label, Button, switch caption or "?" was made from
+    ; ("" for any other control). The search index reads it.
+    static IsActionText(ctrl) => Theme._act.Has(ctrl.Hwnd)
+
+    static SourceOf(ctrl) {
+        try return Theme._src.Has(ctrl.Hwnd) ? Theme._src[ctrl.Hwnd] : ""
+        return ""
     }
 
     ; Font role a Label was made with ("" for other controls).
@@ -479,6 +636,7 @@ class Theme {
     ; gold capitals at x+12, y+8. -> Array of its ctrls (frame first).
     static Panel(g, x, y, w, h, title := "") {
         parts := [Theme.Rect(g, x, y, w, h, Theme.FrameC), Theme.Rect(g, x + 1, y + 1, w - 2, h - 2, Theme.CardBg)]
+        Theme.Inset(parts[1], parts[2])
         for c in parts
             Theme._panels[c.Hwnd] := true
         if (title != "")
@@ -488,13 +646,26 @@ class Theme {
 
     static IsPanel(ctrl) => Theme._panels.Has(ctrl.Hwnd)
 
+    ; `inner` to `outer`'s real place less d px on every side. At 115 / 130 %
+    ; a frame and its fill scaled one by one round apart (x 204 w 808 at
+    ; 130 %: frame 265..1315, fill 267..1315), so the fill hid the frame's
+    ; right or bottom line; the fill is placed from the frame instead.
+    static Inset(outer, inner, d := 1) {
+        try {
+            outer.GetPos(&x, &y, &w, &h)
+            inner.Move(x + d, y + d, Max(0, w - 2 * d), Max(0, h - 2 * d))
+        }
+    }
+
     ; 16x16 "?" in Muted; hovering (or clicking) shows `text` as a ToolTip
     ; by the mouse, leaving hides it.
     static Help(g, x, y, text) {
+        src := String(text)
         text := I18n.T(text)
         Theme.Font(g, "caps")
         c := Theme.Add(g, "Text", "x" x " y" y " w16 h16 +0x100 +0x200 Center Background" Theme.OffBg " c" Theme.Muted, "?")
         Theme._help[c.Hwnd] := text
+        Theme._src[c.Hwnd] := src
         Theme.Clickable(c, (*) => Theme._HelpTip(c, true), (on) => Theme._HelpTip(c, on))
         return c
     }
@@ -587,12 +758,97 @@ class Theme {
         }
     }
 
+    ; Width of `text` (the control's own text when omitted) in the
+    ; control's font, real (Gui) px; 0 when it cannot be measured.
+    static TextW(ctrl, text?) {
+        w := 0
+        try {
+            t := IsSet(text) ? String(text) : ctrl.Text
+            hdc := DllCall("GetDC", "Ptr", ctrl.Hwnd, "Ptr")
+            old := DllCall("SelectObject", "Ptr", hdc, "Ptr", SendMessage(0x31, 0, 0, ctrl.Hwnd), "Ptr")   ; WM_GETFONT
+            sz := Buffer(8, 0)
+            DllCall("GetTextExtentPoint32W", "Ptr", hdc, "Str", t, "Int", StrLen(t), "Ptr", sz)
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", old)
+            DllCall("ReleaseDC", "Ptr", ctrl.Hwnd, "Ptr", hdc)
+            w := NumGet(sz, 0, "Int")
+        }
+        return w
+    }
+
+    ; Real px of a control's window -> 100 % units (rounded up).
+    static Units(g, px) => (Theme.IsScaled(g) && Theme.Scale != 100) ? Ceil(px * 100 / Theme.Scale) : px
+
+    ; Height of one line of the control's text in its font, real px.
+    static TextH(ctrl) {
+        h := 0
+        try {
+            hdc := DllCall("GetDC", "Ptr", ctrl.Hwnd, "Ptr")
+            old := DllCall("SelectObject", "Ptr", hdc, "Ptr", SendMessage(0x31, 0, 0, ctrl.Hwnd), "Ptr")   ; WM_GETFONT
+            sz := Buffer(8, 0)
+            DllCall("GetTextExtentPoint32W", "Ptr", hdc, "Str", "Ag", "Int", 2, "Ptr", sz)
+            DllCall("SelectObject", "Ptr", hdc, "Ptr", old)
+            DllCall("ReleaseDC", "Ptr", ctrl.Hwnd, "Ptr", hdc)
+            h := NumGet(sz, 4, "Int")
+        }
+        return h
+    }
+
+    ; The smallest point size a long translation may shrink a text to
+    ; (polish rule 2026-11-19): 9 pt for labels, 8 pt for buttons; a role
+    ; that is already small (caps, small: 8 pt) does not shrink at all. A
+    ; text that still does not fit needs a shorter translation (the fit
+    ; tests check every language).
+    static MinPt(role) {
+        f := Theme.Fonts.Has(role) ? Theme.Fonts[role] : Theme.Fonts["body"]
+        base := RegExMatch(f[1], "(?<=^|\s)s(\d+)", &m) ? Integer(m[1]) : 10
+        return Min(base, role = "button" ? 8 : 9)
+    }
+
+    ; Point size (at 100 %) of each text FitFont shrank, by hwnd; the fit
+    ; tests read it.
+    static _fit := Map()
+    static FitPt(ctrl) => Theme._fit.Has(ctrl.Hwnd) ? Theme._fit[ctrl.Hwnd] : 0
+
+    ; A text too wide for maxW real px (a long translation): the control's
+    ; font a point smaller each step, down to Theme.MinPt(role), until it
+    ; fits. The colour and family stay. A top-aligned label (no
+    ; SS_CENTERIMAGE) moves down by half the height it lost, so its text
+    ; keeps the middle of the row (it sat higher than its neighbours).
+    ; -> the point size used (at 100 %).
+    static FitFont(ctrl, role, maxW) {
+        f := Theme.Fonts.Has(role) ? Theme.Fonts[role] : Theme.Fonts["body"]
+        pt := RegExMatch(f[1], "(?<=^|\s)s(\d+)", &m) ? Integer(m[1]) : 10
+        base := pt, minPt := Theme.MinPt(role)
+        try {
+            k := Theme.IsScaled(ctrl.Gui)
+            h0 := Theme.TextH(ctrl)
+            while (pt > minPt && Theme.TextW(ctrl) > maxW) {
+                pt--
+                ctrl.SetFont("s" (k ? Max(6, Theme.S(pt)) : pt), f[2])
+            }
+            if (pt < base) {
+                Theme._fit[ctrl.Hwnd] := pt
+                if !(ControlGetStyle(ctrl.Hwnd) & 0x200) {
+                    d := (h0 - Theme.TextH(ctrl)) // 2
+                    if (d > 0) {
+                        ctrl.GetPos(&cx, &cy)
+                        ctrl.Move(cx, cy + d)
+                    }
+                }
+            } else if Theme._fit.Has(ctrl.Hwnd)
+                Theme._fit.Delete(ctrl.Hwnd)
+        }
+        return pt
+    }
+
     ; Change text; transparent labels get their background repainted.
     static SetText(ctrl, text) {
         text := String(text)
         if (ctrl.Text == text)
             return
         ctrl.Text := text
+        if Theme._btn.Has(ctrl.Hwnd)
+            Theme.FitButton(ctrl)
         if Theme._trans.Has(ctrl.Hwnd)
             Theme.RepaintCtrl(ctrl)
     }
@@ -632,6 +888,16 @@ class Theme {
             e.click.Call(ctrl)
     }
 
+    ; An Edit's frame to colour `col` (focus gold, else the frame colour).
+    ; Never throws: focus moves while a window is destroyed, after Forget
+    ; has dropped the frame (an error there would be a dialog).
+    static _FrameColor(e, col) {
+        try {
+            if Theme._frames.Has(e.Hwnd)
+                Theme.SetColors(Theme._frames[e.Hwnd], col, Theme.Text)
+        }
+    }
+
     static Forget(g) {
         dead := []
         for hwnd, e in Theme._hot {
@@ -640,6 +906,15 @@ class Theme {
         }
         for hwnd in dead
             Theme._hot.Delete(hwnd)
+        try Theme._scaled.Delete(g.Hwnd)
+        try {
+            for c in g {
+                for m in [Theme._src, Theme._help, Theme._act, Theme._btn, Theme._roles, Theme._trans, Theme._panels, Theme._frames, Theme._fit] {
+                    if m.Has(c.Hwnd)
+                        m.Delete(c.Hwnd)
+                }
+            }
+        }
         if !Theme._hot.Has(Theme._hoverHwnd)
             Theme._hoverHwnd := 0
     }
@@ -687,9 +962,35 @@ class Theme {
     static Button(g, opts, label, clickFn, kind := "normal") {
         Theme.Font(g, "button")
         c := Theme.Add(g, "Text", opts " +0x100 +0x200 Center", I18n.T(label))
+        Theme._src[c.Hwnd] := String(label)
+        Theme._act[c.Hwnd] := true
+        Theme._btn[c.Hwnd] := 0
+        Theme.FitButton(c)
         Theme._PaintButton(c, kind, false, true)
         Theme.Clickable(c, clickFn, (on) => Theme._PaintButton(c, kind, on, Theme._hot[c.Hwnd].enabled))
         return c
+    }
+
+    ; A button's text keeps BtnPad px clear on each side: a text too wide
+    ; for that (a long translation: fr "Exporter les paramètres") gets the
+    ; button font a point smaller each step, down to 8 pt (Theme.FitFont);
+    ; a shorter text later (SetText) goes back to the full size.
+    static BtnPad := 6
+    static IsButton(ctrl) => Theme._btn.Has(ctrl.Hwnd)
+    static FitButton(c) {
+        try {
+            c.GetPos(, , &w)
+            k := Theme.IsScaled(c.Gui)
+            room := w - 2 * (k ? Theme.S(Theme.BtnPad) : Theme.BtnPad)
+            f := Theme.Fonts["button"]
+            if Theme._btn[c.Hwnd] {                       ; shrunk before: back to the full size
+                c.SetFont(Theme.FontOpt("button", k), f[2])
+                Theme._btn[c.Hwnd] := 0
+                try Theme._fit.Delete(c.Hwnd)
+            }
+            if (Theme.TextW(c) > room)
+                Theme._btn[c.Hwnd] := Theme.FitFont(c, "button", room)
+        }
     }
 
     static SetEnabled(ctrl, enabled, kind := "normal") {
@@ -727,6 +1028,8 @@ class Theme {
             Theme.Font(g, "body")
             lbl := Theme.Add(g, "Text", "x" lx " y" y w " h20 +0x100 +0x200 BackgroundTrans", I18n.T(label))
             Theme._trans[lbl.Hwnd] := true
+            Theme._src[lbl.Hwnd] := String(label)
+            Theme._act[lbl.Hwnd] := true
         }
         return ThemeCheck(box, lbl, value, onChange, style)
     }
@@ -737,7 +1040,7 @@ class Theme {
     ; extra: e.g. "Password", "Number", "Multi ReadOnly VScroll".
     static Edit(g, x, y, w, h := 28, text := "", extra := "") {
         frame := Theme.Rect(g, x, y, w, h, Theme.FrameC)
-        Theme.Rect(g, x + 1, y + 1, w - 2, h - 2, Theme.FieldBg)
+        Theme.Inset(frame, Theme.Rect(g, x + 1, y + 1, w - 2, h - 2, Theme.FieldBg))
         Theme.Font(g, "body")
         multi := InStr(extra, "Multi")
         ey := multi ? y + 6 : y + (h - 20) // 2
@@ -749,8 +1052,8 @@ class Theme {
         if ro
             return e
         Theme._frames[e.Hwnd] := frame
-        e.OnEvent("Focus", (c, *) => Theme.SetColors(Theme._frames[c.Hwnd], Theme.Accent, Theme.Text))
-        e.OnEvent("LoseFocus", (c, *) => Theme.SetColors(Theme._frames[c.Hwnd], Theme.FrameC, Theme.Text))
+        e.OnEvent("Focus", (c, *) => Theme._FrameColor(c, Theme.Accent))
+        e.OnEvent("LoseFocus", (c, *) => Theme._FrameColor(c, Theme.FrameC))
         return e
     }
 
@@ -767,12 +1070,14 @@ class Theme {
     ; The last column fills the rest of the width (FitLastCol). A width may be
     ; "54 Center" (number + ModifyCol options) to centre that column.
     static ListView(g, x, y, w, h, cols, widths, extra := "", colorFn := "") {
-        Theme.Rect(g, x - 1, y - 1, w + 2, h + 2, Theme.FrameC)
-        Theme.Rect(g, x, y, w, h, Theme.FieldBg)
+        frame := Theme.Rect(g, x - 1, y - 1, w + 2, h + 2, Theme.FrameC)
+        fill := Theme.Rect(g, x, y, w, h, Theme.FieldBg)
         Theme.Font(g, "body")
         lv := Theme.Add(g, "ListView", "x" x " y" y " w" w " h" h " -E0x200 -Hdr -Multi +LV0x10000 Background" Theme.FieldBg " c" Theme.Text " " extra, cols)
+        Theme.Inset(frame, fill)                   ; the frame line stays 1 px at every UI size
+        Theme.Inset(frame, lv)
         for i, wd in widths
-            lv.ModifyCol(i, wd)
+            lv.ModifyCol(i, Theme._ColOpt(g, wd))
         Theme.FitLastCol(lv)
         Theme.DarkTheme(lv.Hwnd)
         lv.OnNotify(-12, ObjBindMethod(Theme, "_LvDraw", colorFn))
@@ -800,8 +1105,8 @@ class Theme {
     ; Muted centred hint over an empty ListView's area (the caller hides the
     ; list and shows the hint while it has no rows).
     static EmptyHint(g, lv, text) {
-        lv.GetPos(&x, &y, &w, &h)
-        return Theme.Label(g, "x" x + 8 " y" y + (h - 20) // 2 " w" w - 16 " h20 Center +0x200", text, "muted", Theme.FieldBg)
+        p := Theme.Pos(lv)
+        return Theme.Label(g, "x" p.x + 8 " y" p.y + (p.h - 20) // 2 " w" p.w - 16 " h20 Center +0x200", text, "muted", Theme.FieldBg)
     }
 
     ; Column captions over a header-less ListView (a "54 Center" width centres
@@ -992,3 +1297,6 @@ class ThemeCheck {
         }
     }
 }
+
+; Use and Apply read saved themes through ThemeStore (it includes this file first).
+#Include %A_LineFile%\..\ThemeStore.ahk

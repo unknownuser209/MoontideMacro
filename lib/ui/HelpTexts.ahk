@@ -19,7 +19,7 @@ class HelpTexts {
         m := Map()
         add := (k, t) => m[StrLower(k)] := t
         ; fishing / selling
-        add("General.idleMode", "Start only watches: biomes, auras, chat and the biome clock, with Discord alerts. No clicks or keys, Roblox can stay behind other windows. No tasks run.")
+        add("General.idleMode", "Start only watches biomes, auras, chat and the biome clock, with Discord alerts: no clicks, keys or tasks. No anti-AFK or auto-rejoin either, so Roblox's 20 minute idle kick ends the watch.")
         add("General.fishing", "Fishing is what the macro does whenever no other task is due. Turn it off if you only want hunting, quests or alerts.")
         add("General.sellAll", "On: sells every fish. Off: sells only the fish you ticked in the Fishing Shop.")
         add("General.sellEvery", "How many catches before walking to the Fisher to sell. Lower = more trips, never a full bag.")
@@ -29,10 +29,10 @@ class HelpTexts {
         add("General.fishingFailsafeSec", "If a cast takes longer than this, the macro gives up on it and casts again.")
         add("General.pathingFailsafeSec", "If a walk takes longer than this, the macro respawns and tries again.")
         ; the Portable Crack, not the Portable Device: users mix them up (2026-11-20)
-        add("Limbo.enabled", "Uses the Portable Crack (from The Limbo achievement, not the Portable Device) and waits in Limbo for Eden instead of fishing. Fishing, selling, crafting, quests and merchants are paused while it is on.")
+        add("Limbo.enabled", "Uses the Portable Crack (not the Portable Device) and waits in Limbo for Eden. Every other task pauses, and so do anti ghost and the stuck reset; if the crack cannot be used, they run until the next try.")
         ; crafting
-        add("Craft.enabled", "Crafts the potion set on this page whenever the materials allow.")
-        add("Craft.cauldron", "Also uses Stella's cauldron. Needs the cauldron walk recorded (Setup > Routes).")
+        add("Craft.enabled", "Buys the potions listed on this page at the Fisher shop (Captain Flarg) on start, every 30 min and after each Potion Crafted notification. Stella's cauldron step has its own switch and runs without this one.")
+        add("Craft.cauldron", "Visits Stella's cauldron, with or without the Fish shop. Needs the cauldron walk recorded (Help > Routes).")
         ; quests / merchants
         add("quests.enabled", "Accepts, tracks and turns in quests at the quest board.")
         add("General.questIntervalMin", "How often to visit the quest board, in minutes.")
@@ -48,7 +48,7 @@ class HelpTexts {
         add("Obby.intervalMin", "Minutes between obby runs.")
         add("Obby.retries", "How many times a failed obby run is tried again before waiting for the next one. After 2 obbies in a row that miss, no tries again until it works.")
         add("DailyQuests.enabled", "Opens Daily Quests every few minutes, claims every finished quest (and the Good job today bonus), then closes it.")
-        add("General.joinButton", "Biome and rare biome messages get a Join Server button with your private server link (Private server above). On by default: anyone who can read that Discord channel can join, so turn it off for a public channel.")
+        add("General.joinButton", "Biome, rare and boss messages get a Join Server button with your private server link. Anyone who reads that channel can join, so turn it off for a public one. Without a usable link they go without it.")
         add("DailyQuests.usePotions", "Quests like Use 10 Lucky Potion: uses what the quest still needs, with every potion check (unlock the potion and fill its description on the Potions page; dry run only reports).")
         add("DailyQuests.reroll", "Quests holding one of these words (comma list, e.g. craft, fish) are rerolled with the free rerolls. Buy Reroll (Robux) is never pressed.")
         add("MemoryMatch.enabled", "Plays Memory Match every 12 hours and keeps the best pairs. Needs the memory_match walk recorded.")
@@ -57,7 +57,7 @@ class HelpTexts {
         add("Minions.enabled", "Hunts orbs and minions in biomes like Windy, Rainy or Snowy (not NORMAL, not rare ones) and fishes in between. Orbs show up about 40 s into a biome. Works best with Eden.")
         add("Minions.aura", "The aura worn for fights. Small auras like Eden work best: big ones hide the targets.")
         add("Minions.boss", "Also fights the GRAVEYARD boss when it spawns.")
-        add("Limited.bossAlert", "Sends a 'Boss Spawned - Sinister S. / P.' card with a Join Server button when the chat names Sinister S. or P., even with hunting off. Pings the webhook's Mention.")
+        add("Limited.bossAlert", "Sends a 'Boss Spawned - Sinister S. / P.' card to the webhooks with Boss ticked when the chat names Sinister S. or P., even with hunting off. Join Server button as for biome messages. Pings the webhook's Mention.")
         add("Limited.cursedRune", "Uses ONE Cursed Rune Fragment (it starts Blood Rain) when Graveyard or Pumpkin Moon starts. No second one until the next Graveyard / Pumpkin Moon night.")
         add("Minions.normal", "Also hunts in the NORMAL biome, not only in Windy, Rainy, Snowy and the like.")
         add("Minions.maxSec", "The longest one hunt may take before the macro goes back to fishing.")
@@ -80,7 +80,7 @@ class HelpTexts {
         add("Medal.auraAlwaysCategories", "Aura classes that are always clipped.")
         add("General.windowed", "Yes: Roblox can run in a window at any size you choose (keep it on the screen, not minimized). No: Roblox must be fullscreen.")
         add("Medal.clipCutscenes", "Clips every new aura that plays a roll cutscene (1 in 1,000 and rarer, and new limited auras the macro doesn't know yet), whatever the rarity threshold. Works with or without 'Clip on rare aura'.")
-        add("Medal.delaySec", "Seconds to wait before pressing the clip hotkey, so the moment is inside the clip.")
+        add("Medal.delaySec", "Seconds to wait before pressing the clip hotkey, so the moment is inside the clip. A rolled aura waits as long as the game asks (15 s, after its cutscene).")
         add("Medal.cooldownSec", "The shortest time between two clips.")
         add("Summary.enabled", "Sends one message a day with what the macro did, to the webhooks that have Stop ticked.")
         add("Summary.time", "When the daily summary is sent (24 hour clock, for example 23:55).")
@@ -94,15 +94,13 @@ class HelpTexts {
         add("Schedule.end", "When to stop (24 hour clock). An end before the start means overnight.")
         add("Schedule.maxHours", "Stops after this many hours even inside the window. 0 = no limit.")
         ; recovery
-        add("recovery.enabled", "Rejoins your private server after a disconnect and stops Roblox kicking you for being idle.")
-        add("recovery.antiGhost", "If the game moves you into a server your friends cannot join, rejoins your private server.")
+        add("recovery.enabled", "Rejoins your private server after a disconnect and stops Roblox kicking you for being idle. Off also stops the stuck reset and the anti ghost server rejoin (leaving Limbo still rejoins).")
+        add("recovery.antiGhost", "If the game moves you into a server your friends cannot join, rejoins your private server. Needs Auto-rejoin and anti-AFK on.")
         add("recovery.afkMin", "How often to move a little so Roblox does not kick you for being idle.")
         add("recovery.loadSec", "How long to wait for Roblox to load after a rejoin before checking the screen.")
-        add("recovery.stuckMin", "If nothing has worked for this long, the macro respawns and starts over.")
+        add("recovery.stuckMin", "If nothing has worked for this long, the macro respawns and starts over. Needs Auto-rejoin and anti-AFK on.")
         ; look
         add("UI.animations", "Fades, moving stars and the running pulse. They only move while this window is in front.")
-        add("UI.customBg", "Your own theme: pick the background, panel, text and accent colours (Pick, or type a hex code like 0D1117). The other shades are mixed from them. Start from copies a theme.")
-        add("UI.customPicture", "The custom theme's background: none, a theme's picture, or a picture of your own (darkened so the text stays readable).")
         add("UI.simple","Simple mode shows only the main pages. Turn it off to see every page and option.")
         return m
     }

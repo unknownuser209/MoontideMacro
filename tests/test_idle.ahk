@@ -330,7 +330,7 @@ Test_Idle_ScreenshotOnlyViaWindow() {
     }
 }
 
-; Home > Run: the switch sits in the Potion safety panel, overlaps nothing,
+; Home > Overview: the switch sits in the Potion safety panel, overlaps nothing,
 ; and a flip is saved at once (the Run page has no Save button)
 Test_Idle_DashboardSwitch() {
     dir := UiDashTmp()

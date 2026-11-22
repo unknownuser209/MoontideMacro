@@ -1,4 +1,5 @@
 #Requires AutoHotkey v2.0
+#Include %A_LineFile%\..\GameText.ahk
 ; ---------------------------------------------------------------------------
 ; GameLists: what the game sells and crafts (read off the creator's screenshots,
 ; 2026-10-26). Update these when the game changes.

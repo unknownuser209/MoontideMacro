@@ -17,11 +17,19 @@
 ;                    since the last Run started (no loop of fisher trips).
 ;                    A seen notification is latched until Run happens, so
 ;                    a fading toast is not lost. Without notify_rect only
-;                    the first run happens. false when Craft.enabled = 0.
+;                    the first run and the timed buys happen.
+;                    TIMED BUY: Craft.buyEveryMin (default 30, 0 = off)
+;                    after the last buy the next Sell visit buys again
+;                    (BuyDue), and with no Sell visit for BuyGraceMs more
+;                    the task makes its own trip. The toast alone was not
+;                    enough: live 2026-11-20 it was read 0 times in 4 h, so
+;                    the potions ran out, nothing crafted, no toast came,
+;                    and nothing was bought again (16 Heavenly for 5 h). false when Craft.enabled = 0 and
+;                    Craft.cauldron = 0 (the cauldron runs alone with only it on).
 ;   t.Run(ctx)       -> number of potions whose confirm was clicked with the shop UI seen.
 ;
 ; SETTINGS (settings.ini [Craft]; defaults in Config.IniDefaults)
-;   enabled      1                       task on/off
+;   enabled      1                       Fish shop: buy the potions at the Fisher (task on/off with cauldron 0)
 ;   potions      Lucky Potion                comma list of full names, each must be
 ;                                        sold in the Fisher shop (GameLists.Shop;
 ;                                        Calibrate.Potions()
@@ -30,6 +38,9 @@
 ;   qty          1                       units per potion per visit (1..999)
 ;   minIntervalMin 10                    minutes between notification-triggered
 ;                                        runs (1..1440; else 10)
+;   buyEveryMin  30                      buy again this many minutes after the
+;                                        last buy, toast or not (0 = off,
+;                                        1..1440; else 30)
 ;   qty_<id>     (optional)              per-potion override; <id> is the potion
 ;                                        name lower-cased, non-alphanumerics as "_"
 ;                                        (qty_lucky_potion = 3)
@@ -50,22 +61,30 @@
 ; FLOW
 ;   Preflight (nothing is pressed or clicked unless a part is fully
 ;   configured; each missing item is logged + one errors webhook per session):
-;     buy part: >=1 potion with a fisher_item_<potion> point (its tile),
+;     buy part: >=1 potion (its tile needs NO calibration: a potion with no
+;       fisher_item_<potion> point is placed in the open shop by AutoCal, by
+;       its name under its picture or its place in the grid from the shop's
+;       title; a recorded tile is tried first and still has to read right),
 ;       fisher_buy_button, fisher_qty, fisher_confirm, fisher_purchase_close,
 ;       fisher_open_shop, the fisher_picked_name rect (the picked item's name
 ;       in the shop; nothing is bought without reading it), the craft coords
 ;       and the fisher routes. fisher_leave (Captain Flarg's Leave button) is
 ;       optional.
-;     cauldron part (Craft.cauldron=1): craftTarget, the rects cauldron_gui
-;       (the "Stella's Workshop" title) and cauldron_result (the first search
-;       result card), the points cauldron_search, _open_recipe, _add_all,
-;       _close, and a NON-EMPTY cauldron route.
+;     cauldron part (Craft.cauldron=1): craftTarget, the point
+;       cauldron_add_all and a NON-EMPTY cauldron route. The title
+;       (cauldron_gui), the search box, the result cards, Open Recipe and
+;       the X are FOUND ON SCREEN when they are not recorded, or when the
+;       recorded title box does not read (_Workshop, lib\AutoCal.ahk); a
+;       full calibration whose title box reads is used as before.
 ;   Roblox focus (failure -> log, ctx-aware wait, retry later) -> ResetToSpawn.
 ;   Buy: camera zoom -> toShop route -> dialog clicks -> Captain Flarg shows
 ;     two buttons, Sell Fish and Open Shop: wait up to ShopWaitMs until OCR
 ;     around fisher_open_shop reads "shop" (and not "sell"), then click it.
 ;     Never seen -> nothing else is clicked or typed, the visit reports it
-;     (errors webhook) and goes back. Then per potion:
+;     (errors webhook) and goes back. The walk is checked first (_AtFisher:
+;     his dialog, his buttons or the shop reads after the route's E): not
+;     there -> the "nudge" hops, then respawn + walk again, FisherWalks
+;     walks in all (the last one's shop steps run anyway). Then per potion:
 ;     PICK: the shop grid keeps its scroll position (a player may leave it
 ;     scrolled down), so first scroll it to the top (wheel up over the tile),
 ;     click the potion's tile (fisher_item_<potion>) and READ the picked
@@ -115,8 +134,9 @@
 ;     one whose description shows its Lord (GameLists.DescHint) is used.
 ;     Click it, Open Recipe, Add
 ;     All, close (click out of the cauldron), then
-;     ResetToSpawn: the next task starts from spawn (fishing walks back by
-;     itself when it sees no fishing panel). There is no return route.
+;     ResetToSpawn: the next task starts from spawn (LeftSpot() tells the
+;     App, which runs the sell trip next: it walks to the fishing spot).
+;     There is no return route.
 ;   One `craft` webhook lists what was done.
 ;   NO BLIND CLICKS (live 2026-11-02: a click on an empty spot went through
 ;   a panel into the world and opened Roblox's "Buy Robux" prompt): the
@@ -153,7 +173,41 @@ class CraftTask {
     static OpenKey := "f"
     static TalkKey := "e"          ; talks to Captain Flarg (BuyHere, after the sell)
     static GuiTries := 3
-    static GuiOpenMs := 900
+    static GuiOpenMs := 900        ; first look after F
+    ; F fades the screen to dark first; the Workshop shows ~1-2 s later (live
+    ; 2026-11-21: dark at 0.9 s, open at 2.4 s). One look at 0.9 s missed it
+    ; every time, then S + F walked away: "cauldron GUI did not open" on every
+    ; run, the user's and a tester's. Looked for this long, every GuiPollMs.
+    static GuiWaitMs := 4500
+    static GuiPollMs := 300
+    ; THE PORTAL (live 2026-11-21, four recorded walks): the cauldron route
+    ; walks into the portal of Stella's Sanctuary (~35.3 s), the screen goes
+    ; black for ~0.5 s (the teleport, ~36.2 s) and the player stands inside
+    ; at ~37 s; its last move (A held 1 s from 37.1 s) is meant for inside.
+    ; One walk in four reached the portal and did not go through: the strafe
+    ; then happened outside and F opened nothing ("cauldron GUI did not
+    ; open", the user's and a tester's). So the route is split at the portal:
+    ; walk to it, wait for the teleport (the black frame, or the "Stella's
+    ; Sanctuary" banner, which the aura's name above the player covers to
+    ; 'ell..'s'), then the rest; no teleport: respawn and walk again. The
+    ; split is the route's "portalAt" (steps up to the portal), else the
+    ; shipped route's own (PortalRoute: its step count and length).
+    static PortalRoute := {steps: 88, ms: 38123, at: 86}
+    static TeleportWaitMs := 4500
+    static TeleportPollMs := 100
+    static WalkTries := 3
+    static FisherWalks := 3        ; walks to Captain Flarg per trip (the last one's shop steps run anyway)
+    static FisherNudges := 3       ; "nudge" hops + E after a walk that stopped short (as SellTask.Nudges)
+    static DarkPts := [[640, 360], [1280, 360], [1920, 360], [640, 720], [1920, 720], [640, 1080], [1280, 1080], [1920, 1080]]
+    static DarkMax := 24           ; every channel at or below this = the black teleport frame
+    static BannerBox := {x: 990, y: 225, w: 580, h: 75}
+    static BannerRe := "i)s[ao]nct|e[il1|][il1|d].{0,2}s"
+    static GuiSettleMs := 700      ; after the title reads: the window may still be coming in
+    static SearchTries := 2        ; live 2026-11-21: the first search left the list unfiltered
+    ; The title box as calibrated (preset h 35) cuts the letters: it read ''
+    ; at 1x and 'Workst!pp' at 2x on the live frame; 10 px more above and 15
+    ; below read 'Stello's Workshop'.
+    static GuiPad := {top: 10, bottom: 15}
     static EscMs := 500
     static ChangeTol := 12      ; pre-F vs post-F pixel: beyond this = something opened
     static StepBackMs := 250
@@ -169,11 +223,26 @@ class CraftTask {
     ; his "Open Shop" button reads in that box (not "Sell Fish"): live misreads
     ; 'Open Slpep' (2026-11-10: nothing bought, a whole extra trip to buy)
     ; S read as $ (live 1920x1080, 2026-11-11: 'open$hop')
-    static OpenShopRe := "i)[s$]h[o0]p|\bopen\s*[s$][a-z]"
+    ; live 2026-11-21 08:55: 'Opq6 *hoo' and 'ghøp_ Op' (S as g, o as ø / q,
+    ; n as 6; the two words swapped): nothing bought on a craft trip
+    static OpenShopRe := "i)[s$g]h[o0øq]+[pq]|\bopen\s*[s$][a-z]|\bop[eqo][n6]\b"
     static OpenShopUp(t) => RegExMatch(t, CraftTask.OpenShopRe) && !RegExMatch(t, "i)sell")
     static ScrollTopNotches := 10  ; wheel up over the grid: back to its top row
     static ScrollTries := 8        ; then one notch down at a time to find a potion
     static ScrollMs := 250
+    ; The shop's BUY grid (design coords 2560x1440; live frame 2026-11-21
+    ; 03:17, tests\screens\fishshop_buy_tab.jpg): 4 columns of tall tiles 243
+    ; apart, rows 304 apart, tile 1's centre 1125,596 (tiles 229 x 293). Two
+    ; rows are in sight (8 of GameLists.Shop's 15 items), the rest comes up
+    ; with the wheel. It is NOT the Sell tab's grid (5 columns, 190 apart),
+    ; which this was first measured on: a tile worked out for row 3 was a
+    ; click under the grid.
+    static TilePitch := 243        ; columns
+    static TilePitchY := 304       ; rows
+    static GridCols := 4
+    static GridBox := {x: 1005, y: 442, w: 973, h: 665}
+    static GridEdge := 60          ; a tile's centre this far inside the box's top / bottom: enough of it shows to click
+    static LabelScales := [1, 2]   ; the names under the pictures: row 2's smaller names read at 2x only
     static NameScales := [1, 2]    ; the item name is OCR'd at 1x, then 2x if that did not match
     static CloseTries := 3         ; clicks on a close button before reporting
     static DialogRe := "i)shop|sell|leave"     ; Captain Flarg's buttons
@@ -189,11 +258,34 @@ class CraftTask {
     static DialogBody := {x: 960, y: 915, w: 940, h: 265, scale: 2
         , words: ["skip", "click", "flarg", "florg", "captain", "want", "avvv", "arrr"]}
     static DefaultMinIntervalMin := 10
+    static DefaultBuyEveryMin := 30
+    static BuyGraceMs := 900000    ; timed buy not done by a Sell visit 15 min later: own trip
     static CauldronIds := ["cauldron_search", "cauldron_open_recipe", "cauldron_add_all", "cauldron_close"]   ; points
     static CauldronRects := ["cauldron_gui", "cauldron_result"]
     static ResultCards := 3        ; Godly Potion: three cards share the title
     static GuiRe := "i)workshop"
     static StellaRe := "i)\bstel"
+    ; Both through the game-font fold (GameText): "workshop" has a k, which
+    ; the font draws as l< / I< ('Worl<shop'), and "Stella" may read 'Gtello'
+    ; (S as G). Live 2026-11-19 / 11-20: 0 of 6 cauldron opens read, and
+    ; StellaRe never matched. The title wording itself has no frame yet.
+    static WorkshopUp(t) => RegExMatch(String(t), CraftTask.GuiRe) > 0 || GameText.Has(t, "workshop")
+    ; The Workshop title box (cauldron_gui) with GuiPad, read at 1x then 2x.
+    ; -> the text that matched, else the 1x read.
+    _GuiText(gui) {
+        pd := CraftTask.GuiPad
+        y := Max(0, gui.y - pd.top), h := gui.h + pd.top + pd.bottom
+        first := ""
+        for sc in [1, 2] {
+            t := String((this._env.ocrFn)(gui.x, y, gui.w, h, sc))
+            if (A_Index = 1)
+                first := t
+            if CraftTask.WorkshopUp(t)
+                return t
+        }
+        return first
+    }
+    static StellaSeen(t) => RegExMatch(String(t), CraftTask.StellaRe) > 0 || GameText.StartsWord(t, "stel")
     static CraftInts := ["dialog.aClicks", "dialog.aGapMs", "dialog.aAfterMs", "dialog.bPreMs"
         , "dialog.bAfterMs", "stepMs", "closePreMs", "closeMoveMs", "closePostMs"]
     static CameraInts := ["wheelUp", "wheelDown", "wheelGapMs", "pauseMs", "afterMs"]
@@ -212,7 +304,14 @@ class CraftTask {
         this._notifyReadAt := ""     ; env.Now() of the last notify_rect read
         this._retry := false         ; last Run was cut short
         this._lastRunAt := ""        ; env.Now() when the last Run started
+        this._lastBuyAt := ""        ; env.Now() of the last buy (Run with buying, or BuyHere)
         this._skipBuy := false       ; BuyHere bought during the sell visit
+        this._portalAt := ""         ; the cauldron route's "portalAt" (steps up to the portal), "" = PortalRoute
+        this._ws := ""               ; Stella's Workshop as found on screen this run (_Workshop)
+        this._cur := ""              ; ... the parts in use while it is open
+        this._wsTold := false
+        this._guiRead := ""
+        this._leftSpot := false      ; the last Run respawned and did not walk the "back" route to its end
         this._aborts := 0            ; runs in a row that ended early with no stop asked
         this._abortAt := 0           ; env.Now() when the last of them ended
     }
@@ -236,14 +335,44 @@ class CraftTask {
         return Integer(m) * 60000
     }
 
+    ; Craft.buyEveryMin (0 = off, 1..1440, else 30) in ms; 0 when off.
+    _BuyEveryMs() {
+        env := this._env
+        m := CraftTask.DefaultBuyEveryMin
+        if IsObject(env.cfg)
+            try m := env.cfg.Get("Craft.buyEveryMin", CraftTask.DefaultBuyEveryMin)
+        if !(IsInteger(m) && m >= 0 && m <= 1440)
+            m := CraftTask.DefaultBuyEveryMin
+        return Integer(m) * 60000
+    }
+
+    ; Is a timed buy due (extraMs later than buyEveryMin after the last buy)?
+    _TimedBuyDue(extraMs := 0) {
+        every := this._BuyEveryMs()
+        if (every <= 0 || this._lastBuyAt = "")
+            return false
+        return this._env.Now() - this._lastBuyAt >= every + extraMs
+    }
+
+    ; The buy part is the "Fish shop" switch (Craft.enabled), the cauldron
+    ; part its own (Craft.cauldron). The cauldron never ran with the Fish
+    ; shop (then "Craft cycle") off, 2026-11-19: only both off stops the task.
+    _BuyOn() => (IsObject(this._env.cfg) && !this._env.cfg.Get("Craft.enabled", 1)) ? false : true
+    _CauldronOn() => (IsObject(this._env.cfg) && this._env.cfg.Get("Craft.cauldron", 0)) ? true : false
+
     CanRun(state) {
         env := this._env
-        if (IsObject(env.cfg) && !env.cfg.Get("Craft.enabled", 1))
+        if (!this._BuyOn() && !this._CauldronOn())
             return false
         if (this._aborts > 0 && env.Now() - this._abortAt < this._RetryGapMs())
             return false
         if (!this._ranOnce || this._notified || this._retry)
             return true
+        ; a timed buy no Sell visit picked up: its own trip
+        if (this._BuyOn() && this._TimedBuyDue(CraftTask.BuyGraceMs)) {
+            env.Log("craft: timed buy due and no Sell visit did it: going to the Fisher")
+            return true
+        }
         ; minimum interval between notification-triggered runs
         if (this._lastRunAt !== "" && env.Now() - this._lastRunAt < this._MinIntervalMs())
             return false
@@ -258,19 +387,21 @@ class CraftTask {
         if (this._notifyReadAt !== "" && now - this._notifyReadAt < CraftTask.NotifyPollMs)
             return false
         this._notifyReadAt := now
-        if !RegExMatch((env.ocrFn)(r.x, r.y, r.w, r.h), CraftTask.NotifyRe)
+        t := (env.ocrFn)(r.x, r.y, r.w, r.h)
+        if !RegExMatch(t, CraftTask.NotifyRe)
             return false
         this._notified := true
+        env.Log("craft: crafted notification seen ('" SubStr(RegExReplace(t, "\s+", " "), 1, 50) "'): buying again")
         return true
     }
 
     ; Sell hook: is a Fisher buy due (the first one since Start, a "crafted"
-    ; notification, a cut-short run)? Sell then buys in the same visit.
+    ; notification, a cut-short run, buyEveryMin since the last buy)? Sell
+    ; then buys in the same visit.
     BuyDue() {
-        env := this._env
-        if (IsObject(env.cfg) && !env.cfg.Get("Craft.enabled", 1))
+        if !this._BuyOn()
             return false
-        return !this._ranOnce || this._notified || this._retry
+        return !this._ranOnce || this._notified || this._retry || this._TimedBuyDue()
     }
 
     ; Buys while already standing at Captain Flarg (Sell just closed its
@@ -307,8 +438,11 @@ class CraftTask {
             return 0
         }
         this._lastRunAt := env.Now()
+        this._lastBuyAt := env.Now()
         this._notified := false
         this._retry := false
+        for line in lines
+            env.Log("craft: " line)
         if plan.cauldron
             this._skipBuy := true                ; Run does the cauldron only
         else
@@ -320,8 +454,16 @@ class CraftTask {
         return r
     }
 
+    ; The last Run left the player away from the fishing spot (respawned,
+    ; and the "back" route was not walked to its end): the App then runs the
+    ; sell trip next, which walks there, instead of fishing failing first.
+    LeftSpot() => this._leftSpot
+
     Run(ctx) {
+        this._leftSpot := false
         this._lastRunAt := this._env.Now()
+        if (this._BuyOn() && !this._skipBuy)
+            this._lastBuyAt := this._lastRunAt
         this._ranOnce := true
         this._notified := false
         this._retry := false
@@ -361,7 +503,10 @@ class CraftTask {
         if !FishLogic.FocusOrWait(d, ctx, "craft")
             return 0
         env.Log("craft: starting")
+        if !plan.buy
+            env.Log("craft: cauldron only" (this._BuyOn() ? "" : " (Fish shop off)"))
         io := env.io
+        this._leftSpot := true                   ; from here until the "back" route is walked
         if !Input.ResetToSpawn(ctx, io)
             return 0
         lines := []
@@ -376,15 +521,18 @@ class CraftTask {
                     return 0
             } else if !Input.PlayRoute(plan.back, ctx, io) {
                 return 0
-            }
+            } else
+                this._leftSpot := false          ; back at the fishing spot
         }
         if plan.cauldron {
             if !this._CauldronPhase(ctx, plan, lines)
                 return 0
         }
         desc := ""
-        for line in lines
+        for line in lines {
             desc .= (desc = "" ? "" : "`n") "- " line
+            env.Log("craft: " line)
+        }
         env.Report("craft", "Auto craft", desc)
         env.Log("craft: done")
         done := true
@@ -401,7 +549,8 @@ class CraftTask {
             env.Problem("craft:cfg", "craft: no config bound: skipped")
             return plan
         }
-        this._PlanBuy(plan)
+        if this._BuyOn()
+            this._PlanBuy(plan)
         this._PlanCauldron(plan)
         return plan
     }
@@ -410,9 +559,10 @@ class CraftTask {
         env := this._env
         items := []
         for name in this._Potions() {
-            pt := env.Point(Calibrate.PotionId(name))
-            if IsObject(pt)
-                items.Push({name: name, pt: pt, qty: this._Qty(name)})
+            ; no tile recorded: placed in the shop's grid once it is open
+            ; (_AutoTile); a recorded tile is tried first
+            pt := env.cal.Point(Calibrate.PotionId(name))
+            items.Push({name: name, pt: IsObject(pt) ? pt : "", qty: this._Qty(name)})
         }
         qtyPt := env.Point("fisher_qty")
         confPt := env.Point("fisher_confirm")
@@ -478,18 +628,19 @@ class CraftTask {
             ok := false
         }
         for id in CraftTask.CauldronIds {
-            pt := env.Point(id)
+            ; not recorded: found on screen once the Workshop is open
+            ; (_Workshop); Add All has no text to find it by
+            auto := AutoCal.IsAuto(id)
+            pt := auto ? env.cal.Point(id) : env.Point(id)
             if IsObject(pt)
                 plan.cpts[id] := pt
-            else
+            else if !auto
                 ok := false
         }
         for id in CraftTask.CauldronRects {
-            r := env.Rect(id)
+            r := env.cal.Rect(id)
             if IsObject(r)
                 plan.cpts[id] := r
-            else
-                ok := false
         }
         route := this._NonEmptyRoute("cauldron")
         if !IsObject(route)
@@ -505,6 +656,95 @@ class CraftTask {
         plan.cRoute := route
     }
 
+    ; The cauldron route split at the portal: {to: steps up to the portal
+    ; (the last one's wait dropped: the teleport is waited for instead),
+    ; inside: the rest}, or "" (no split known: played whole).
+    static PortalSplit(steps, at := "") {
+        if !(steps is Array)
+            return ""
+        if (at = "") {
+            pr := CraftTask.PortalRoute
+            total := 0
+            for st in steps
+                total += st.ms
+            if (steps.Length != pr.steps || total != pr.ms)
+                return ""
+            at := pr.at
+        }
+        if (at < 1 || at >= steps.Length)
+            return ""
+        a := [], b := []
+        for st in steps
+            (A_Index <= at ? a : b).Push(st)
+        last := a[a.Length].Clone()
+        last.ms := 0
+        a[a.Length] := last
+        return {to: a, inside: b}
+    }
+
+    ; The black teleport frame: every DarkPts sample dark.
+    _Dark() {
+        for pt in CraftTask.DarkPts {
+            c := (this._sample)(pt[1], pt[2])
+            if (((c >> 16) & 0xFF) > CraftTask.DarkMax || ((c >> 8) & 0xFF) > CraftTask.DarkMax || (c & 0xFF) > CraftTask.DarkMax)
+                return false
+        }
+        return true
+    }
+
+    ; After the walk to the portal: the teleport seen (the black frame, then
+    ; light again; or the banner) within TeleportWaitMs. -> 1, 0 not, -1 stopped
+    _WaitTeleport(ctx) {
+        env := this._env
+        b := CraftTask.BannerBox
+        waited := 0, dark := false
+        Loop {
+            if this._Dark() {
+                dark := true
+            } else if dark {
+                return 1                            ; through the black frame
+            } else if (Mod(A_Index, 4) = 1 && RegExMatch((env.ocrFn)(b.x, b.y, b.w, b.h), CraftTask.BannerRe)) {
+                return 1
+            }
+            if (waited >= CraftTask.TeleportWaitMs)
+                return dark ? 1 : 0
+            if !env.Wait(CraftTask.TeleportPollMs, ctx)
+                return -1
+            waited += CraftTask.TeleportPollMs
+        }
+    }
+
+    ; Walks the cauldron route: to the portal, the teleport waited for, then
+    ; inside. No teleport: respawn and walk again (WalkTries); after the last
+    ; try the rest is walked anyway (F then reports what it finds).
+    ; -> true, false stopped
+    _WalkToCauldron(ctx, steps) {
+        env := this._env
+        io := env.io
+        split := CraftTask.PortalSplit(steps, this._portalAt)
+        if !IsObject(split)
+            return Input.PlayRoute(steps, ctx, io)
+        Loop CraftTask.WalkTries {
+            if (A_Index > 1 && !Input.ResetToSpawn(ctx, io))
+                return false
+            if !Input.PlayRoute(split.to, ctx, io)
+                return false
+            t := this._WaitTeleport(ctx)
+            if (t < 0)
+                return false
+            if t {
+                if (A_Index > 1)
+                    env.Log("craft: through the portal on walk " A_Index)
+                if !env.Wait(300, ctx)
+                    return false
+                return Input.PlayRoute(split.inside, ctx, io)
+            }
+            env.Log("craft: the walk did not go through the portal into Stella's Sanctuary (walk " A_Index "/" CraftTask.WalkTries ")"
+                . (A_Index < CraftTask.WalkTries ? ": respawning to walk again" : ""))
+        }
+        return Input.PlayRoute(split.inside, ctx, io)
+    }
+
     ; Parsed steps of a route that exists and has steps, else "" (logged).
     _NonEmptyRoute(name) {
         env := this._env
@@ -516,6 +756,7 @@ class CraftTask {
             env.Problem("route:" name ":empty", "route '" name "' is empty (record it in game): cauldron step skipped")
             return ""
         }
+        this._portalAt := (raw is Map && raw.Has("portalAt") && CraftTask._IsInt(raw["portalAt"])) ? Integer(raw["portalAt"]) : ""
         return steps
     }
 
@@ -557,11 +798,57 @@ class CraftTask {
     _BuyPhase(ctx, plan, lines) {
         env := this._env
         io := env.io
-        if !FishLogic.Zoom(io, ctx, plan.coords["sell"]["camera"])
-            return -1
-        if !Input.PlayRoute(plan.toShop, ctx, io)
-            return -1
+        ; THE WALK TO THE FISHER (2026-11-21 route audit): the craft trip
+        ; played the route once and, with no dialog after its E, reported
+        ; "Captain Flarg's dialog not seen" and bought nothing. The sell trip
+        ; walks the same route with a check (live: 1 walk in 241 missed him,
+        ; the walk after it arrived): the same here. No dialog, no Open Shop
+        ; button and no shop: the "nudge" hops (as Sell), then a respawn and
+        ; the walk again, FisherWalks walks in all; after the last one the
+        ; shop steps run anyway and report what they find, as before.
+        Loop CraftTask.FisherWalks {
+            if (A_Index > 1) {
+                env.Log("craft: Captain Flarg's dialog did not open, the walk missed the Fisher (walk " (A_Index - 1) "/" CraftTask.FisherWalks "): respawning to walk again")
+                if !Input.ResetToSpawn(ctx, io)
+                    return -1
+            }
+            if !FishLogic.Zoom(io, ctx, plan.coords["sell"]["camera"])
+                return -1
+            if !Input.PlayRoute(plan.toShop, ctx, io)
+                return -1
+            r := this._AtFisher(ctx, plan)
+            nudge := CraftTask._Steps(FishLogic._Dig(env.cfg.Data("routes"), "nudge.steps"))
+            Loop (IsObject(nudge) ? CraftTask.FisherNudges : 0) {
+                if (r != 0)
+                    break
+                env.Log("craft: not at the Fisher yet - hopping forward (" A_Index "/" CraftTask.FisherNudges ")")
+                if !Input.PlayRoute(nudge, ctx, io)
+                    return -1
+                r := this._AtFisher(ctx, plan)
+            }
+            if (r < 0)
+                return -1
+            if r {
+                if (A_Index > 1)
+                    env.Log("craft: at the Fisher on walk " A_Index)
+                break
+            }
+            if (A_Index = 1) {
+                shot := HasMethod(io, "Shot") ? io.Shot() : ""
+                if (shot != "")
+                    env.Log("craft: screen where the walk missed the Fisher saved to " shot)
+            }
+        }
         return this._ShopPhase(ctx, plan, lines)
+    }
+
+    ; After the walk's E: Captain Flarg's dialog, his Open Shop button or the
+    ; Fishing Shop reads (the dialog waited for, DialogWaitMs).
+    ; -> 1 | 0 not there | -1 stopped
+    _AtFisher(ctx, plan) {
+        if (this._ShopIsOpen() || this._ShopButtonUp(plan))
+            return 1
+        return this._WaitDialog(ctx, plan)
     }
 
     ; At Captain Flarg with his dialog open (the toShop route's E, or E
@@ -750,11 +1037,8 @@ class CraftTask {
         if RegExMatch((env.ocrFn)(pt.x + b.dx, pt.y + b.dy, b.w, b.h), CraftTask.DialogRe)
             return true
         d := CraftTask.DialogBody
-        t := StrLower((env.ocrFn)(d.x, d.y, d.w, d.h, d.scale))
-        for w in d.words
-            if InStr(t, w)
-                return true
-        return false
+        ; folded (GameText): the real popup reads "wont" for want, l< for k
+        return GameText.HasAny((env.ocrFn)(d.x, d.y, d.w, d.h, d.scale), d.words)
     }
 
     ; Polls _DialogUp up to DialogWaitMs (after E his dialog can take a
@@ -906,44 +1190,214 @@ class CraftTask {
 
     ; Scrolls the grid to the top, clicks the potion's tile and reads the
     ; picked name; not it -> one notch down, click, read again (ScrollTries).
+    ; A potion with no recorded tile is looked for by its name under its
+    ; picture (else by its place in the two rows in sight at the top). A
+    ; tile that did not show the potion: its name is looked for again, there
+    ; and after every notch down, recorded tile or not (the rows below the
+    ; two in sight only come up with the wheel).
     ; -> {found, read} (read = the first name read), {found, read, why} when
     ; a tile click was refused or brought up a purchase prompt, or "" when
     ; stopped.
     _PickItem(ctx, plan, item) {
         env := this._env
         io := env.io
-        gap := plan.coords["craft"]["stepMs"]
-        r := plan.nameR
         read := ""
+        auto := !IsObject(item.pt)
+        readAt := ""                                ; the tile whose click gave `read`
+        b := CraftTask.GridBox
+        mid := {x: b.x + b.w // 2, y: b.y + b.h // 2}      ; the wheel needs the mouse over the grid
+        clicked := false
         Loop CraftTask.ScrollTries + 2 {
             if ctx.ShouldStop()
                 return ""
-            io.MoveTo(item.pt.x, item.pt.y)
+            at := IsObject(item.pt) ? item.pt : mid
+            io.MoveTo(at.x, at.y)
             if (A_Index = 1)
                 Input.Wheel("up", CraftTask.ScrollTopNotches, io)
             else if (A_Index > 2)                  ; try 2: the same tile again (a click can be lost)
                 Input.Wheel("down", 1, io)
             if !env.Wait(CraftTask.ScrollMs, ctx)
                 return ""
-            ; the tile only while the shop's title reads (no blind clicks)
-            if ((why := env.Unsafe("craft")) != "")
-                return {found: false, read: read, why: why}
-            if !this._ShopIsOpen()
-                return {found: false, read: read, why: "the Fishing Shop is not open (its title did not read): tile not clicked"}
-            env.Click(item.pt)
-            if !env.Wait(gap, ctx)
+            if ((auto && A_Index = 1) || A_Index >= 2) {
+                t := this._AutoTile(item.name, A_Index = 1)
+                if (IsObject(t) && !(IsObject(item.pt) && t.x = item.pt.x && t.y = item.pt.y)) {
+                    env.Log("craft: " item.name ": tile found on screen at " t.x "," t.y " (" t.how (A_Index > 2 ? ", " (A_Index - 2) " down the list" : "") ")"
+                        . (auto ? "" : "; its recorded tile shows '" SubStr(Trim(RegExReplace(read, "\s+", " ")), 1, 30) "': recalibrate " Calibrate.PotionId(item.name) " (or delete it: the tile is found on screen)"))
+                    item := {name: item.name, pt: {x: t.x, y: t.y}, qty: item.qty, auto: true, k: t.k}
+                }
+            }
+            if !IsObject(item.pt)
+                continue                            ; not in sight yet: the next notch
+            clicked := true
+            res := this._ClickRead(ctx, plan, item.pt, item.name)
+            if !IsObject(res)
                 return ""
-            if env.BuyPrompt("craft")
-                return {found: false, read: read, why: "a Roblox purchase prompt came up after the tile click (closed with Esc)"}
-            for sc in CraftTask.NameScales {
-                t := (env.ocrFn)(r.x, r.y, r.w, r.h, sc)
-                if (A_Index = 1 && read = "")
-                    read := t
-                if CraftTask.IsItem(t, item.name)
-                    return {found: true, read: t}
+            if (read = "" && res.read != "")
+                read := res.read, readAt := item.pt
+            if res.HasOwnProp("why")
+                return {found: false, read: read, why: res.why}
+            if res.found
+                return {found: true, read: res.found}
+            if (A_Index = 2 && IsObject(readAt)) {
+                ; the tile shows another shop item: the other tiles in
+                ; sight, found from where that item sits in the grid (a
+                ; tester's Potion of Bound tile showed Rainy Bottle, 2026-11-21)
+                at := {name: item.name, pt: readAt, qty: item.qty}
+                for k in ["auto", "k"]
+                    if (item.HasOwnProp(k) && item.pt = readAt)
+                        at.%k% := item.%k%
+                g := this._GridSearch(ctx, plan, at, read)
+                if !IsObject(g)
+                    return ""
+                if (g.found || g.HasOwnProp("why"))
+                    return g
             }
         }
+        if !clicked
+            return {found: false, read: "", why: "its tile could not be placed in the shop's grid: its name did not read there, at the top or " CraftTask.ScrollTries " notches down (not a Fisher shop item?)"}
         return {found: false, read: read}
+    }
+
+    ; Where the potion's tile is, found on screen (lib\AutoCal.ahk; the shop
+    ; is open): its name under its picture in the grid when that reads (at
+    ; 1x, then 2x), else, with place = true (the grid is at its top), its
+    ; place in the grid (GameLists.Shop's order, the two rows in sight) from
+    ; the shop's title, else from the shop's usual place (the title reads in
+    ; its fixed box before any tile click). The pick is still checked by the
+    ; name read.
+    ; -> {x, y, k (its place in the grid, 0 = by its name), how} or "" (not
+    ; a shop item / not in sight)
+    _AutoTile(name, place := true) {
+        b := CraftTask.GridBox, t := CraftTask.ShopTitle
+        inBox := (q) => IsObject(q) && q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h
+        x0 := t.x - 60, y0 := t.y - 40
+        title := ""
+        for sc in CraftTask.LabelScales {
+            lines := this._env.Lines({x: x0, y: y0, w: b.x + b.w + 40 - x0, h: b.y + b.h + 40 - y0}, sc)
+            tl := AutoCal.ShopTitle(lines)
+            if !IsObject(title)
+                title := tl
+            lab := AutoCal.ShopLabel(lines, IsObject(tl) ? tl : title, (txt) => CraftTask.IsItem(txt, name))
+            if inBox(lab)
+                return {x: lab.x, y: lab.y, k: 0, how: "its name read in the grid"}
+        }
+        if !place
+            return ""
+        k := 0
+        for n in GameLists.Shop
+            if (GameLists.Fold(n) = GameLists.Fold(name))
+                k := A_Index
+        q := k ? AutoCal.ShopTile(title, k) : ""
+        if !inBox(q)
+            return ""
+        return {x: q.x, y: q.y, k: k, how: "tile " k " of the grid" (IsObject(title) ? ", from the shop's title" : "")}
+    }
+
+    ; Clicks pt (only while the shop's title reads, no Roblox prompt) and
+    ; reads the picked name. -> {found (the matching read or ""), read} |
+    ; {found: "", read, why} | "" when stopped.
+    _ClickRead(ctx, plan, pt, name) {
+        env := this._env
+        gap := plan.coords["craft"]["stepMs"]
+        r := plan.nameR
+        if ((why := env.Unsafe("craft")) != "")
+            return {found: "", read: "", why: why}
+        if !this._ShopIsOpen()
+            return {found: "", read: "", why: "the Fishing Shop is not open (its title did not read): tile not clicked"}
+        env.Click(pt)
+        if !env.Wait(gap, ctx)
+            return ""
+        if env.BuyPrompt("craft")
+            return {found: "", read: "", why: "a Roblox purchase prompt came up after the tile click (closed with Esc)"}
+        first := ""
+        for sc in CraftTask.NameScales {
+            t := (env.ocrFn)(r.x, r.y, r.w, r.h, sc)
+            if (A_Index = 1)
+                first := t
+            if CraftTask.IsItem(t, name)
+                return {found: t, read: first}
+        }
+        return {found: "", read: first}
+    }
+
+    ; Index (1-based) in GameLists.Shop of the item the text names, else 0.
+    static ShopIndex(text) {
+        for n in GameLists.Shop
+            if CraftTask.IsItem(text, n)
+                return A_Index
+        return 0
+    }
+
+    ; The shop tiles IN SIGHT, in design coords, when the tile at pt shows
+    ; shop item k: [{i, x, y}] for every GameLists.Shop item whose tile lies
+    ; in the grid box (4 columns; the rows above / below the box are under
+    ; the wheel and left out), or [] when pt or a column falls outside the
+    ; box (another layout: nothing is clicked).
+    static GridTiles(pt, k) {
+        PX := CraftTask.TilePitch, PY := CraftTask.TilePitchY, C := CraftTask.GridCols
+        b := CraftTask.GridBox, e := CraftTask.GridEdge
+        if (!IsObject(pt) || k < 1 || k > GameLists.Shop.Length)
+            return []
+        x0 := pt.x - Mod(k - 1, C) * PX, y0 := pt.y - ((k - 1) // C) * PY
+        if (x0 < b.x || x0 + (C - 1) * PX > b.x + b.w || pt.y < b.y || pt.y > b.y + b.h)
+            return []
+        out := []
+        Loop GameLists.Shop.Length {
+            x := x0 + Mod(A_Index - 1, C) * PX, y := y0 + ((A_Index - 1) // C) * PY
+            if (y >= b.y + e && y <= b.y + b.h - e)
+                out.Push({i: A_Index, x: x, y: y})
+        }
+        return out
+    }
+
+    ; The calibrated tile read another shop item: click the potion's own
+    ; place in the grid first, then the other tiles, reading each name.
+    ; A tile placed on the grid by the macro (no calibration) that read
+    ; nothing, or no shop item: the grid is known from its own place, the
+    ; other tiles are read the same way.
+    ; -> {found, read} | "" when stopped.
+    _GridSearch(ctx, plan, item, read) {
+        none := {found: false, read: read}
+        k := CraftTask.ShopIndex(read)
+        if (!k && item.HasOwnProp("k"))
+            k := item.k
+        if !k
+            return none
+        tiles := CraftTask.GridTiles(item.pt, k)
+        if !tiles.Length
+            return none
+        want := 0
+        for n in GameLists.Shop
+            if (GameLists.Fold(n) = GameLists.Fold(item.name))
+                want := A_Index
+        order := []
+        for t in tiles
+            if (want && want != k && t.i = want)    ; (its own place was just tried when the macro placed it)
+                order.Push(t)
+        ; its place is below the rows in sight: the wheel search finds it
+        ; by its name, no scan of the tiles that cannot be it
+        if (want && want != k && !order.Length)
+            return none
+        for t in tiles
+            if (t.i != k && t.i != want)
+                order.Push(t)
+        for t in order {
+            if ctx.ShouldStop()
+                return ""
+            res := this._ClickRead(ctx, plan, {x: t.x, y: t.y}, item.name)
+            if !IsObject(res)
+                return ""
+            if res.HasOwnProp("why")
+                return {found: false, read: read, why: res.why}
+            if res.found {
+                shows := "'" SubStr(Trim(RegExReplace(read, "\s+", " ")), 1, 30) "'"
+                this._env.Log("craft: " item.name " found on another shop tile (" t.x "," t.y "); "
+                    . (item.HasOwnProp("auto") ? "the place worked out for it shows " shows " (the shop's order changed)"
+                    : "its calibrated tile shows " shows ": recalibrate " Calibrate.PotionId(item.name) " (or delete it: the tile is found on screen)"))
+                return {found: true, read: res.found}
+            }
+        }
+        return none
     }
 
     ; -> 1 the button at fisher_open_shop reads "shop" (not "sell"), 0 not
@@ -1065,8 +1519,8 @@ class CraftTask {
     ; "a", "I<" for "k", l/1/| for "i": "Worp Potion" is "Warp Potion"); a
     ; longer name does ("Fortune Potion I" is not "Fortune Potion II").
     static IsRecipe(text, target) {
-        norm := (s) => Trim(RegExReplace(StrReplace(RegExReplace(RegExReplace(StrLower(String(s))
-            , "[il1|]<", "k"), "[l1|!]", "i"), "o", "a"), "[^a-z0-9]+", " "))
+        norm := (s) => Trim(RegExReplace(StrReplace(RegExReplace(StrLower(GameText.FixK(s))
+            , "[l1|!]", "i"), "o", "a"), "[^a-z0-9]+", " "))
         t := norm(target)
         if (t = "")
             return false
@@ -1079,14 +1533,78 @@ class CraftTask {
         return false
     }
 
+    ; Every part the calibrated Workshop needs is recorded.
+    static CalParts := ["cauldron_gui", "cauldron_search", "cauldron_result", "cauldron_open_recipe", "cauldron_close"]
+    static _Full(c) {
+        for id in CraftTask.CalParts
+            if !(c.Has(id) && IsObject(c[id]))
+                return false
+        return true
+    }
+
+    ; Stella's Workshop on screen right now -> its parts (a Map by step id),
+    ; or "". The calibrated ones while the calibrated title box reads and
+    ; every part is recorded (a full calibration works as before). Else
+    ; FOUND ON SCREEN (AutoCal.Workshop, one read of the screen): the
+    ; title's own line places the search box, the X and the result cards,
+    ; "Open Recipe" is found by its words; the title is read once more at
+    ; the place found before anything is used. this._guiRead = the title read.
+    _Workshop(plan) {
+        env := this._env
+        c := plan.cpts
+        gui := c.Has("cauldron_gui") ? c["cauldron_gui"] : ""
+        this._guiRead := ""
+        if IsObject(gui) {
+            this._guiRead := this._GuiText(gui)
+            if (CraftTask.WorkshopUp(this._guiRead) && CraftTask._Full(c))
+                return c
+        }
+        ws := AutoCal.Workshop(env.Lines())
+        if !IsObject(ws)
+            return ""
+        t := this._GuiText(ws.gui)
+        if !CraftTask.WorkshopUp(t)
+            return ""
+        this._guiRead := t
+        p := Map("cauldron_gui", ws.gui, "cauldron_search", ws.search, "cauldron_close", ws.close
+            , "cauldron_open_recipe", IsObject(ws.open) ? ws.open : (c.Has("cauldron_open_recipe") ? c["cauldron_open_recipe"] : "")
+            , "cauldron_add_all", c.Has("cauldron_add_all") ? c["cauldron_add_all"] : "", "auto", ws)
+        if !this._wsTold {
+            this._wsTold := true
+            env.Log("craft: Stella's Workshop found on screen (its title at " ws.title.x "," ws.title.y "): the search box, the result cards, Open Recipe and its X are placed from it"
+                . (IsObject(gui) ? " (the calibrated title box did not read it)" : ""))
+        }
+        this._ws := p
+        return p
+    }
+
     ; The result card to click, or "" (read = the first card's text). Plain
     ; recipes: the first card only. A Godly Potion: the first of up to
     ; ResultCards cards whose title matches and whose description shows its
     ; Lord; cards past the first need the cauldron_result_2 offset.
-    _FindCard(plan, &read) {
+    ; p found on screen (p["auto"]): the cards are found by their titles in
+    ; the list (AutoCal.Card), the one picked is read again as a card.
+    _FindCard(plan, p, &read) {
         env := this._env
-        res := plan.cpts["cauldron_result"]
-        r2 := plan.cpts.Has("cauldron_result_2") ? plan.cpts["cauldron_result_2"] : ""
+        if p.Has("auto") {
+            ws := p["auto"]
+            lines := env.Lines(ws.list)
+            read := ""
+            for L in lines
+                if (A_Index <= 2)
+                    read .= (read = "" ? "" : "`n") L.text
+            card := AutoCal.Card(lines, (t) => CraftTask.IsRecipe(t, plan.search), plan.hint, ws)
+            if !IsObject(card)
+                return ""
+            t := (env.ocrFn)(card.x, card.y, card.w, card.h)
+            if (!CraftTask.IsRecipe(t, plan.search) || (plan.hint != "" && !InStr(GameLists.Fold(t), GameLists.Fold(plan.hint)))) {
+                read := t
+                return ""
+            }
+            return card
+        }
+        res := p["cauldron_result"]
+        r2 := (p.Has("cauldron_result_2") && IsObject(p["cauldron_result_2"])) ? p["cauldron_result_2"] : ""
         n := (plan.hint != "" && IsObject(r2)) ? CraftTask.ResultCards : 1
         read := ""
         Loop n {
@@ -1112,7 +1630,7 @@ class CraftTask {
     _CauldronClick(ctx, gui, pt, what) {
         env := this._env
         why := env.Unsafe("craft")
-        if (why = "" && !RegExMatch((env.ocrFn)(gui.x, gui.y, gui.w, gui.h), CraftTask.GuiRe))
+        if (why = "" && !CraftTask.WorkshopUp(this._GuiText(gui)))
             why := "Stella's Workshop is not open (its title did not read)"
         if (why != "") {
             env.Log("craft: " what " not clicked: " why)
@@ -1125,9 +1643,10 @@ class CraftTask {
     }
 
     _CauldronPhase(ctx, plan, lines) {
+        this._cur := ""                         ; the Workshop's parts once it is open
         if this._CauldronSteps(ctx, plan, lines)
             return true
-        this._CloseCauldron(ctx, plan.cpts)
+        this._CloseCauldron(ctx, IsObject(this._cur) ? this._cur : plan.cpts)
         return false
     }
 
@@ -1136,7 +1655,8 @@ class CraftTask {
     ; Roblox gone) clicks cauldron_close first, only while its title reads
     ; (_CauldronClick); a halt sends nothing.
     _CloseCauldron(ctx, p) {
-        if (!ctx.ShouldStop() || CleanupCtx.Halted(ctx) || !this._WorkshopUp(p))
+        if (!ctx.ShouldStop() || CleanupCtx.Halted(ctx) || !this._WorkshopUp(p)
+            || !(p.Has("cauldron_close") && IsObject(p["cauldron_close"])))
             return
         this._env.Log("craft: preempted at the cauldron: closing Stella's Workshop first")
         this._CauldronClick(CleanupCtx(ctx), p["cauldron_gui"], p["cauldron_close"], "cauldron_close")
@@ -1145,20 +1665,25 @@ class CraftTask {
     ; Stella's Workshop title (cauldron_gui) reads right now.
     _WorkshopUp(p) {
         gui := (p is Map && p.Has("cauldron_gui")) ? p["cauldron_gui"] : ""
-        return IsObject(gui) && RegExMatch((this._env.ocrFn)(gui.x, gui.y, gui.w, gui.h), CraftTask.GuiRe) > 0
+        return IsObject(gui) && CraftTask.WorkshopUp(this._GuiText(gui))
     }
 
     ; The App's between-tasks check (Tidy): Stella's Workshop (cauldron_close,
-    ; only while its title reads). Not calibrated: nothing.
+    ; only while its title reads). Not calibrated: where it was found on
+    ; screen this run (_Workshop), else nothing.
     Leftovers() {
         env := this._env
         p := Map()
         for id in ["cauldron_gui", "cauldron_close"] {
             v := ""
             try v := (id = "cauldron_gui") ? env.cal.Rect(id) : env.cal.Point(id)
-            if !IsObject(v)
+            if IsObject(v)
+                p[id] := v
+        }
+        if (p.Count < 2) {
+            if !IsObject(this._ws)
                 return []
-            p[id] := v
+            p := this._ws
         }
         return [{up: () => this._WorkshopUp(p) ? "cauldron panel" : ""
             , close: (label, ctx) => (r := this._CauldronClick(ctx, p["cauldron_gui"], p["cauldron_close"], "cauldron_close")) < 0 ? -1 : r ? 1 : 2}]
@@ -1167,9 +1692,10 @@ class CraftTask {
     _CauldronSteps(ctx, plan, lines) {
         env := this._env
         io := env.io
-        if !Input.PlayRoute(plan.cRoute, ctx, io)
+        if !this._WalkToCauldron(ctx, plan.cRoute)
             return false
-        gui := plan.cpts["cauldron_gui"]
+        this._wsTold := false
+        p := "", gt := ""
         stellaR := env.cal.Rect("stella_dialog")      ; optional: no missing-step report
         opened := false
         Loop CraftTask.GuiTries {
@@ -1178,20 +1704,36 @@ class CraftTask {
             Input.Key(CraftTask.OpenKey, 80, io)
             if !env.Wait(CraftTask.GuiOpenMs, ctx)
                 return false
-            if RegExMatch((env.ocrFn)(gui.x, gui.y, gui.w, gui.h), CraftTask.GuiRe) {
-                opened := true
-                break
+            waited := CraftTask.GuiOpenMs
+            Loop {
+                p := this._Workshop(plan)        ; calibrated, or found on screen
+                gt := this._guiRead
+                if IsObject(p) {
+                    opened := true
+                    break
+                }
+                if (waited >= CraftTask.GuiWaitMs)
+                    break
+                if !env.Wait(CraftTask.GuiPollMs, ctx)
+                    return false
+                waited += CraftTask.GuiPollMs
             }
+            if opened
+                break
             ; Esc only when Stella's dialog is recognised by her name (Esc with
             ; nothing open opens the Roblox menu).
-            stella := IsObject(stellaR) && RegExMatch((env.ocrFn)(stellaR.x, stellaR.y, stellaR.w, stellaR.h), CraftTask.StellaRe)
+            st := IsObject(stellaR) ? String((env.ocrFn)(stellaR.x, stellaR.y, stellaR.w, stellaR.h)) : ""
+            stella := CraftTask.StellaSeen(st)
+            ; what the title box and her name box read, for the next look at
+            ; why it did not open (no frame of her window yet)
+            reads := " (title read: '" SubStr(Trim(RegExReplace(gt, "\s+", " ")), 1, 40) "'" (IsObject(stellaR) ? ", name read: '" SubStr(Trim(RegExReplace(st, "\s+", " ")), 1, 30) "'" : "") ")"
             if stella {
-                env.Log("craft: cauldron GUI not open (attempt " A_Index "/" CraftTask.GuiTries "), Stella's dialog seen: Esc")
+                env.Log("craft: cauldron GUI not open (attempt " A_Index "/" CraftTask.GuiTries "), Stella's dialog seen: Esc" reads)
                 Input.Key("Esc", 80, io)
                 if !env.Wait(CraftTask.EscMs, ctx)
                     return false
             } else {
-                env.Log("craft: cauldron GUI not open (attempt " A_Index "/" CraftTask.GuiTries "), nothing opened: no Esc")
+                env.Log("craft: cauldron GUI not open (attempt " A_Index "/" CraftTask.GuiTries "), nothing opened: no Esc" reads)
             }
             if (A_Index < CraftTask.GuiTries) {
                 Input.Key("s", CraftTask.StepBackMs, io)
@@ -1200,18 +1742,36 @@ class CraftTask {
             }
         }
         if opened {
-            p := plan.cpts
-            env.Click(p["cauldron_search"])
-            if !env.Wait(CraftTask.SettleMs, ctx)
+            this._cur := p
+            gui := p["cauldron_gui"]
+            if !env.Wait(CraftTask.GuiSettleMs, ctx)
                 return false
-            ; the box keeps the last visit's text: typed on top of it the
-            ; search finds nothing (2026-10-27 review)
-            Input.ClearText(io)
-            Input.TypeText(plan.search, io)
-            if !env.Wait(CraftTask.SettleMs, ctx)
-                return false
-            card := this._FindCard(plan, &read)
+            card := "", read := ""
+            Loop CraftTask.SearchTries {
+                if (A_Index > 1)
+                    env.Log("craft: the first search result is not " plan.target " (read: '" SubStr(Trim(RegExReplace(read, "\s+", " ")), 1, 40) "'): searching again")
+                if !this._WorkshopUp(p)
+                    break
+                env.Click(p["cauldron_search"])
+                if !env.Wait(CraftTask.SettleMs, ctx)
+                    return false
+                ; the box keeps the last visit's text: typed on top of it the
+                ; search finds nothing (2026-10-27 review)
+                Input.ClearText(io)
+                Input.TypeText(plan.search, io)
+                ; the list filters when the box lets go of the text (live
+                ; 2026-11-21: "Heavenly Potion" typed, list unchanged)
+                Input.Key("Enter", 50, io)
+                if !env.Wait(CraftTask.SettleMs, ctx)
+                    return false
+                card := this._FindCard(plan, p, &read)
+                if IsObject(card)
+                    break
+            }
             if !IsObject(card) {
+                shot := HasMethod(io, "Shot") ? io.Shot() : ""
+                if (shot != "")
+                    env.Log("craft: screen at the cauldron search saved to " shot)
                 msg := (plan.hint = "" ? "the first search result is not " : "no search result is ") plan.target
                     . " (read: '" SubStr(Trim(RegExReplace(read, "\s+", " ")), 1, 60) "'); nothing added"
                 env.Log("craft: " msg)
@@ -1225,6 +1785,11 @@ class CraftTask {
             for id in ["cauldron_open_recipe", "cauldron_add_all", "cauldron_close"] {
                 if (r < 1)
                     break
+                if !IsObject(p[id]) {           ; "Open Recipe" did not read and is not recorded
+                    env.Log("craft: " id " not clicked: it was not found on screen and is not calibrated")
+                    r := 0
+                    break
+                }
                 r := this._CauldronClick(ctx, gui, p[id], id)
             }
             if (r < 0)
@@ -1233,6 +1798,9 @@ class CraftTask {
                 : "cauldron: " plan.target " found, but Stella's Workshop went away (or a purchase prompt came up): stopped before Add All was confirmed")
         } else {
             msg := "cauldron GUI did not open after " CraftTask.GuiTries " tries (Stella's dialog?); nothing crafted"
+            shot := HasMethod(io, "Shot") ? io.Shot() : ""
+            if (shot != "")
+                env.Log("craft: screen where the cauldron did not open saved to " shot)
             env.Log("craft: " msg)
             env.Report("errors", "Cauldron not opened", msg, 0xE74C3C)
             lines.Push("cauldron: " msg)

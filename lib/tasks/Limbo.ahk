@@ -18,6 +18,15 @@
 ;   items; biome webhooks and clips go on as usual). state.inLimbo says
 ;   where the player is; while it is true only limbo and recovery run (buffs
 ;   and the island do not work in Limbo).
+;   t.Held(state) -> true while the crack could not be used and the next try
+;   is RetryMin away (on the island, Limbo on): the App then clears
+;   limboMode and sets state.limboHeld, so fishing and the other island
+;   tasks run until the next try (2026-11-20: a user read the bare "Idle" of
+;   those 10 minutes as idle mode). t.HoldClock() = that try's HH:MM.
+;   Not held while an inventory the try could not close is still open.
+;   THE LIMBO is in the same server (no join in the Roblox log): the App
+;   keeps inLimbo across restarts with the Roblox session (App._LimboRestore)
+;   and never lets island tasks run during a hold after a non-private join.
 ;
 ; The Portable Crack is the permanent item from The Limbo achievement, not
 ; the Portable Device (a placeable luck item). The inventory draws it in the
@@ -44,7 +53,7 @@
 ;     when no tile reads as the crack (IsCrackTile), the description must
 ;     be the crack's (IsCrackDesc), else nothing is used, what the tile read
 ;     and a screenshot go to the log / errors webhook, the inventory is
-;     closed (checked) and no new try for RetryMin).
+;     closed (checked) and no new try for RetryMin: Held()).
 ;     state.inLimbo := true the moment Use is clicked, the
 ;     inventory is closed (checked), then EnterMs, then closed again if it
 ;     still reads open (during the loading screen its tabs do not read,
@@ -89,6 +98,7 @@ class LimboTask {
     static ReportGapMin := 10
     static RouteName := "limbo_eden"
     static RetryMin := 10           ; after the crack could not be used
+    static LeaveRetryMs := 120000   ; after a failed rejoin to leave for a rare biome
     static SearchTries := 3         ; typed search attempts (a dropped letter finds nothing)
 
     name := "limbo"
@@ -106,7 +116,11 @@ class LimboTask {
         this._state := ""
         this._reportedAt := ""
         this._holdUntil := 0        ; env.Now() before which no new crack attempt
+        this._holdClock := ""       ; that time as HH:MM (status, log)
         this._shotRead := Chr(1)    ; the tile read last sent with a screenshot (one per distinct read)
+        this._invLeftOpen := false  ; the last try could not close the inventory: no island tasks behind it
+        this._leaveUntil := 0       ; env.Now() before which no new rejoin to leave for a rare biome
+        this._leaveTold := false    ; that failure was reported (until a way back works)
         this._walkDue := false      ; the crack was used, the walk to Eden not done yet
         this._usedAt := 0           ; env.Now() of the last Use click
     }
@@ -116,6 +130,19 @@ class LimboTask {
     static FoldText(text) => StrReplace(QuestMatch.Fold(StrLower(QuestMatch.FixK(text))), "0", "o")
     static IsCrackTile(text) => RegExMatch(LimboTask.FoldText(text), LimboTask.TileRe) > 0
     static IsCrackDesc(text) => RegExMatch(LimboTask.FoldText(text), LimboTask.DescRe) > 0
+
+    ; The crack could not be used and its next try is still ahead (on the
+    ; island, Limbo on): the island tasks may run until then.
+    Held(state := "") {
+        if (!this.Enabled() || this._invLeftOpen)
+            return false
+        if (IsObject(state) && HasProp(state, "inLimbo") && state.inLimbo)
+            return false
+        return this._env.Now() < this._holdUntil
+    }
+
+    ; HH:MM of the next crack try ("" when none is held)
+    HoldClock() => (this._env.Now() < this._holdUntil) ? this._holdClock : ""
 
     Enabled() {
         cfg := this._env.cfg
@@ -131,8 +158,10 @@ class LimboTask {
         if !this.Enabled()
             return inLimbo
         rare := HasProp(state, "rareActive") && state.rareActive
+        ; a failed way back waits LeaveRetryMs: it restarted every tick for the
+        ; whole rare biome (no / bad link, rejoin limit; 2026-11-20 audit H2)
         if (inLimbo && rare)
-            return IsObject(this._toIsland)
+            return IsObject(this._toIsland) && this._env.Now() >= this._leaveUntil
         if (!inLimbo && this._env.Now() < this._holdUntil)
             return false
         return !rare
@@ -151,13 +180,25 @@ class LimboTask {
                 try ok := this._toIsland.Call(ctx)
             if ok {
                 st.inLimbo := false
+                this._leaveUntil := 0, this._leaveTold := false
                 env.Report("biome", "Left Limbo", off ? "Back on Sol's Island: Limbo is off." : "Back on Sol's Island for **" st.biome "**.")
+            } else if (!off && !ctx.ShouldStop()) {
+                this._leaveUntil := env.Now() + LimboTask.LeaveRetryMs
+                msg := "could not rejoin Sol's Island for the rare biome (check the private server link in Settings; the rejoin limit may be reached): trying again in "
+                    . (LimboTask.LeaveRetryMs // 60000) " min"
+                env.Log("limbo: " msg)
+                if !this._leaveTold
+                    env.Report("errors", "Limbo: could not leave", msg, 0xE74C3C)
+                this._leaveTold := true
             } else if (off && !ctx.ShouldStop()) {
                 ; Limbo is off and will not come back for this: inLimbo would
-                ; block every other task for good, so the user rejoins
+                ; block every other task for good, so the user rejoins; paused
+                ; first, else the island tasks ran inside Limbo (live 2026-11-20)
                 st.inLimbo := false
-                env.Log("limbo: could not rejoin Sol's Island; Limbo is off, so the island tasks run again (rejoin yourself if still in Limbo)")
-                env.Report("errors", "Limbo is off", "Could not rejoin Sol's Island after Limbo was switched off. If the player is still in THE LIMBO, rejoin the private server yourself.", 0xE74C3C)
+                env.Log("limbo: could not rejoin Sol's Island with Limbo off: PAUSED - you are not in your private server (still in THE LIMBO): rejoin it yourself, then press F2")
+                env.Report("errors", "Limbo is off", "Could not rejoin Sol's Island after Limbo was switched off: the macro is paused. You are still in THE LIMBO, not your private server: rejoin it yourself, then press F2.", 0xE74C3C)
+                if HasMethod(ctx, "Pause")
+                    try ctx.Pause()
             }
             return ok ? 1 : 0
         }
@@ -165,8 +206,11 @@ class LimboTask {
             return this._Watch(ctx, st)
         if !st.inLimbo {
             if !this._Enter(ctx, st) {
-                if (!st.inLimbo && !ctx.ShouldStop())
+                if (!st.inLimbo && !ctx.ShouldStop()) {
                     this._holdUntil := env.Now() + LimboTask.RetryMin * 60000
+                    this._holdClock := FormatTime(DateAdd(A_Now, LimboTask.RetryMin, "Minutes"), "HH:mm")
+                    env.Log("limbo: the Portable Crack could not be used: fishing and the other tasks run until the next try at " this._holdClock)
+                }
                 return 0
             }
         } else {
@@ -262,6 +306,7 @@ class LimboTask {
             if (c.%id% == "")
                 return false
         }
+        this._invLeftOpen := false
         ; already open (left by a stop, or by the user): a click on its
         ; button would close it, then read "did not open" (2026-11-20 review)
         if !env.InvOpen(c.inv_items_tab) {
@@ -397,7 +442,12 @@ class LimboTask {
             try env.wh.Send("errors", "Limbo: Portable Crack not used", why, 0xE74C3C, {screenshot: shot})
         } else
             env.Report("errors", "Limbo: Portable Crack not used", why, 0xE74C3C)
-        env.CloseInv(c.inv_open, c.inv_items_tab, ctx)
+        ; still open (CloseInv checked): no island task may click behind it;
+        ; Held() stays false until the next try (2026-11-20 review)
+        if (!env.CloseInv(c.inv_open, c.inv_items_tab, ctx) && !(IsObject(ctx) && ctx.ShouldStop())) {
+            this._invLeftOpen := true
+            env.Report("errors", "Inventory left open", "the inventory did not close after the Portable Crack try: the other tasks wait for the next try", 0xE74C3C)
+        }
         return false
     }
 }

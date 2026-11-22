@@ -90,7 +90,9 @@ Test_Ghost_Decision() {
     AssertEq(RecoveryTask.GhostDecision("other", st, cfg), "ghost", "teleport join -> ghost")
     AssertEq(RecoveryTask.GhostDecision("private", st, cfg), "clear", "private join -> clear")
     AssertEq(RecoveryTask.GhostDecision("other", st, QmCfg(Map("recovery.antiGhost", 0))), "", "switched off")
-    AssertEq(RecoveryTask.GhostDecision("other", st, QmCfg(Map("Limbo.enabled", 1))), "", "Limbo mode: the Portable Crack is a teleport too")
+    ; the Portable Crack stays in the same server (live 2026-11-20): with
+    ; Limbo on a non-private join is a ghost server too (audit H1)
+    AssertEq(RecoveryTask.GhostDecision("other", st, QmCfg(Map("Limbo.enabled", 1))), "ghost", "Limbo mode, not in Limbo: a ghost server")
     st.inLimbo := true
     AssertEq(RecoveryTask.GhostDecision("other", st, cfg), "", "in THE LIMBO")
 }

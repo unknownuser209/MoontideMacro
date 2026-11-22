@@ -757,3 +757,186 @@ Test_Reel_ScanDimGreyEmptyPartIsNotTheFish() {
     AssertTrue(FishLogic.ReelDark(0x3E4750) && FishLogic.ReelDark(0x221919), "dim grey / black are empty")
     AssertTrue(!FishLogic.ReelDark(0x8489FF) && !FishLogic.ReelDark(0x4B9CFF) && !FishLogic.ReelDark(0x01FFFF), "fish colours are not")
 }
+
+; ---- real reel frames at 2560x1440 (night recordings, 2026-11-15) ----------
+; tests\screens\reel1440_<biome>_<clip>_t<sec>_x1000_y1000.png: 560x100 crops
+; whose top left is screen (1000,1000), from video\raw\night\<clip>.ts at
+; <sec> s (the recording is lossy, so colours are a little off a live
+; BitBlt; the ones that matter are far from the thresholds). The true fish
+; box (p1..p2) of each frame was read off its bar row (y 1044), where the
+; box's tint starts and ends; it is noted at each check (+-12 px allowed).
+RlShot(name) => MatchFileGrab(A_ScriptDir "\screens\reel1440_" name "_x1000_y1000.png")
+
+; a grab(x1, x2, ys, stride) in screen px over a crop at (1000,1000)
+RlShotGrab(g) => (x1, x2, ys, stride) => RlShotRows(g, x1, x2, ys, stride)
+RlShotRows(g, x1, x2, ys, stride) {
+    sy := []
+    for y in ys
+        sy.Push(y - 1000)
+    return g.Call(x1 - 1000, x2 - 1000, sy, stride)
+}
+
+RlShotScan(name, emptyMax := 0) {
+    rows := RlShotRows(RlShot(name), 1042, 1517, [1025, 1044], 2)
+    return emptyMax ? FishLogic.ReelScan(rows[1], rows[2], 1042, 2, emptyMax) : FishLogic.ReelScan(rows[1], rows[2], 1042, 2)
+}
+
+RlFishAt(s, p1, p2, what) {
+    AssertTrue(s.m > 0, what ": arrow found")
+    AssertTrue(Abs(s.p1 - p1) <= 12 && Abs(s.p2 - p2) <= 12, what ": fish " s.p1 ".." s.p2 " (true box " p1 ".." p2 ")")
+    AssertTrue(s.p2 - s.p1 <= 110, what ": fish width " (s.p2 - s.p1) " (a fish is ~76)")
+}
+
+; STARFALL, 062120.ts t427-431 (lost, progress drained to 0): the bar's empty
+; part over the cyan sky reads navy (26,51,75), not "dark", so the main code
+; took the empty right end (1432..1516) for the fish and chased it.
+Test_Reel_FrameStarfallEmptyBarIsNotTheFish() {
+    ; "Ready!": the arrow at 1279, the fish under the bar's end (its right
+    ; edge 1318, empty from 1320; the text hides where it starts). The bar
+    ; right of the arrow is long enough to read the empty level from.
+    s := RlShotScan("starfall_ready_062120_t4273")
+    AssertTrue(Abs(s.p2 - 1318) <= 12 && s.p1 >= 1230 && s.p2 - s.p1 <= 110, "Ready: fish at the bar's end " s.p1 ".." s.p2 ", not the empty end")
+    AssertTrue(s.own && s.empty >= 76 && s.empty <= 120, "Ready: empty level read from the bar (" s.empty ")")
+    em := s.empty
+    ; the arrow at 1373 / 1443: too little bar right of it, the level from
+    ; "Ready!" is used. True boxes: tint 1248..1322, 1236..1312.
+    RlFishAt(RlShotScan("starfall_062120_t4293", em), 1248, 1322, "t429.3")
+    RlFishAt(RlShotScan("starfall_062120_t4305", em), 1236, 1312, "t430.5")
+}
+
+; HEAVEN, 031120.ts t340 / 022120.ts t125-128 (both lost): over the bright
+; warm scene the empty part reads tan (73,62,43): the fish ran on into it
+; (1200..1424) or the empty end won (1434..1516).
+Test_Reel_FrameHeavenEmptyBarIsNotTheFish() {
+    ; pale yellow fish under the blue bar from 1200, its part past the
+    ; arrow and the timer digits to 1278, empty from 1280
+    RlFishAt(RlShotScan("heaven_031120_t3403"), 1200, 1278, "031120 t340.3")
+    ; mint tint from 1224, green past the arrow to 1300, empty from 1302
+    s := RlShotScan("heaven_022120_t1253")
+    RlFishAt(s, 1224, 1300, "022120 t125.3")
+    AssertTrue(s.own, "t125.3: level read from the bar")
+    ; arrow at 1417: mint box 1150..1230 under the bar
+    RlFishAt(RlShotScan("heaven_022120_t1278", s.empty), 1150, 1230, "022120 t127.8")
+}
+
+; SNOWY, 095120.ts t295-297 (lost, progress 0): the arrow never left the
+; right part of the bar, so only a short stretch of empty bar is there to
+; read; that is enough while the reel has no better level.
+Test_Reel_FrameSnowyEmptyBarIsNotTheFish() {
+    ; pink tint from 1316, red past the arrow to 1390, empty from 1392
+    s := RlShotScan("snowy_095120_t2953")
+    RlFishAt(s, 1316, 1390, "t295.3")
+    AssertTrue(!s.own && s.empty > 0, "t295.3: a short read only (" s.empty ")")
+    ; arrow at 1451: pink box 1222..1296 under the bar
+    RlFishAt(RlShotScan("snowy_095120_t2973", s.empty), 1222, 1296, "t297.3")
+}
+
+; NORMAL, 003755.ts t274 / t276 (caught): a dark empty part, nothing changes.
+Test_Reel_FrameNormalFishAsBefore() {
+    ; light blue tint from 1222, dark blue past the arrow to 1298
+    RlFishAt(RlShotScan("normal_003755_t2743"), 1222, 1298, "t274.3")
+    ; tint from 1376, dark blue to 1450, empty from 1452
+    RlFishAt(RlShotScan("normal_003755_t2763"), 1376, 1450, "t276.3")
+}
+
+; One wide reading (fish run together with the empty part) must not spoil
+; the aim for the rest of the reel: the remembered width is capped.
+Test_Reel_DecideWidthIsCappedToAFish() {
+    st := {}
+    FishLogic.ReelDecide({m: 1100, p1: 1200, p2: 1424}, st, 0, 100, 0.15)
+    AssertEq(st.w, 110, "a 224 px box is remembered as a fish's width")
+    st := {}
+    FishLogic.ReelDecide({m: 1100, p1: 1200, p2: 1276}, st, 0, 100, 0.15)
+    AssertEq(st.w, 76, "a fish-sized box as it is")
+}
+
+; The bar's frame: a bright top border, a bar row that is not white. In
+; SNOWY after the reel (041120.ts t109.3, the card is up) the snow gives an
+; arrow-sized white run (m 1377) and a "bar colour", so the old check kept
+; the reel up to the 9 s cap; the frame is not there on any border row.
+Test_Reel_FrameSnowAfterTheReelIsNotTheBar() {
+    rc := FsRead("coords")["fishing"]["reel"]
+    ys := [1025, 1044]
+    for y in rc["borderYs"]
+        ys.Push(y)
+    on := RlShotRows(RlShot("snowy_092120_t3473"), 1042, 1517, ys, 2)
+    s := FishLogic.ReelScan(on[1], on[2], 1042, 2)
+    AssertTrue(s.m && (s.p2 || s.fill != ""), "SNOWY mid reel: arrow + bar")
+    seen := false
+    Loop on.Length - 2
+        seen := seen || FishLogic.ReelFrame(on[A_Index + 2], on[2])
+    AssertTrue(seen, "SNOWY mid reel (092120 t347.3): the bar's frame is seen")
+    off := RlShotRows(RlShot("snowy_after_041120_t1093"), 1042, 1517, ys, 2)
+    s := FishLogic.ReelScan(off[1], off[2], 1042, 2)
+    AssertTrue(s.m && (s.p2 || s.fill != ""), "after the reel: snow still passes arrow + bar (the old check)")
+    Loop off.Length - 2
+        AssertTrue(!FishLogic.ReelFrame(off[A_Index + 2], off[2]), "after the reel: no frame on border row " ys[A_Index + 2])
+}
+
+; The whole reel loop on those frames: the SNOWY reel for 3 s, then the snow
+; after it. It ends ~FrameGoneMs after the reel, not at the 9 s cap, and
+; logs one line about the reel.
+Test_Reel_SnowAfterTheReelEndsTheLoop() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    try {
+        io := FsIO()
+        logs := []
+        d := FsDeps(io, "", true, logs)
+        on := RlShotGrab(RlShot("snowy_092120_t3473"))
+        off := RlShotGrab(RlShot("snowy_after_041120_t1093"))
+        d.grab := (x1, x2, ys, stride) => (io.clock < 3000 ? on : off).Call(x1, x2, ys, stride)
+        task := FishingTask(t.cfg, SchedState(), d)
+        r := task._Reel(SchedCtx(), FishLogic.Settings(t.cfg, task._CoordsNow()))
+        AssertEq(r, "ok", "reel done")
+        AssertTrue(io.clock < 4600, "ended " io.clock " ms in (snow from 3000), not at the 9 s cap")
+        line := ""
+        for l in logs
+            if InStr(l, "fishing: reel ")
+                line := l
+        AssertTrue(RegExMatch(line, "^fishing: reel \d+ ms \(ended\), polls \d+, avg gap \d+ ms, max gap \d+ ms, clicks \d+, empty up to \d+.*, frame seen$"), "one reel line: " line)
+    } finally
+        FsClean(t.dir)
+}
+
+; Something drawn over the bar's border for a moment mid-reel does not end
+; the reel; the border gone for longer than FrameGoneMs (with the arrow and
+; bar still read, as snow does) does.
+Test_Reel_BorderGoneEndsTheReelOnlyAfterFrameGoneMs() {
+    o := RlBorderGone(500)
+    AssertTrue(o.last > 8000, "border gone 500 ms: the reel went on (last click at " o.last " ms; " FsJoin(o.logs) ")")
+    o := RlBorderGone(3000)
+    AssertTrue(o.last < 3000 + FishingTask.FrameGoneMs + 100 && o.card < 6500,"border gone 3000 ms: the reel ended (last click at " o.last " ms, card closed at " o.card " ms)")
+}
+
+; RlSim with the bar's top border (y 1030) scenery-coloured from 3 s for
+; goneMs. -> {last: last reel click, card: card close click (ms after the
+; first grab), logs}
+RlBorderGone(goneMs) {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := FsIO()
+        sim := RlSim(io)
+        FsScreen.fn := (x, y) => (y = 1030 && sim.firstGrab >= 0 && io.clock >= sim.firstGrab + 3000 && io.clock < sim.firstGrab + 3000 + goneMs) ? 0x6A7C90 : sim.Pixel(x, y)
+        logs := []
+        FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        return {last: io.lastClick["click@1263,1177"] - sim.firstGrab, card: io.firstClick["click@1457,491"] - sim.firstGrab, logs: logs}
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; Every reel logs one line (polls, gaps, clicks, empty level): to measure
+; slow-PC losses and controller losses from the log later.
+Test_Reel_LogsOneLinePerReel() {
+    RlRun(0, 0, &sim, &logs)
+    n := 0, line := ""
+    for l in logs
+        if InStr(l, "fishing: reel ")
+            n++, line := l
+    AssertEq(n, 1, "one reel line")
+    AssertTrue(RegExMatch(line, "polls (\d+), avg gap (\d+) ms, max gap (\d+) ms, clicks (\d+)", &m) && m[1] > 50 && m[4] > 5, "polls and clicks counted: " line)
+}

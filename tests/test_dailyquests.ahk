@@ -389,3 +389,16 @@ Test_DailyQuests_WindowedFrameReads() {
     } finally
         Screen.Reset()
 }
+
+; 2026-11-18 (user screenshot): "Use 5 Speed Potion" goes the same way as the
+; Lucky one: the potion named on the row and the uses its bar still needs.
+Test_DailyQuests_UseSpeedPotion() {
+    win := DqWin(DqRows(["Use 5 Speed Potion", false], ["Roll 100 times", false], ["Play Sol's RNG for 30 minutes", false]))
+    io := DqIO(win), calls := []
+    w := DailyQuestsTask.BarX1 - DailyQuestsTask.BarX0 + 1
+    t := DailyQuestsTask({cfg: QmCfg(Map("DailyQuests.enabled", 1, "DailyQuests.usePotions", 1)), io: io, webhook: QmWh()
+        , cal: QmCal(), log: (s) => 0, ocr: (x, y, wd, h, scale := 1) => win.Ocr(x, y, wd, h, scale)
+        , now: () => 0, rect: (x, y, wd, h) => DqFill(w, w * 2 // 5), potionQuest: (p, n) => (calls.Push(p "|" n), true)})
+    t.Run(SchedCtx())
+    AssertEq(calls.Length ? calls[1] : "", "Speed Potion|3", "2/5 done: 3 Speed Potions asked for")
+}

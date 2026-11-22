@@ -1,6 +1,6 @@
 #Requires AutoHotkey v2.0
 ; Offline tests for lib\Profiles.ahk (one-click profiles, settings export /
-; import) and the Setup > Profiles page. Temp folders under A_Temp. Helpers
+; import) and the Settings > Profiles page. Temp folders under A_Temp. Helpers
 ; are prefixed Pf.
 #Include ..\lib\Profiles.ahk
 #Include ..\lib\ui\Dashboard.ahk
@@ -201,10 +201,10 @@ Test_Profiles_DashboardPage() {
     d := ""
     try {
         cfg := PfCfg(dir)
-        AssertEq(Dashboard.Pages[Dashboard.Pages.Length], "Profiles", "Profiles appended last")
-        AssertEq(Dashboard.Builders[Dashboard.Pages.Length], "_PageProfiles", "its builder")
+        AssertEq(Dashboard.Pages[24], "Profiles", "Profiles keeps its index (later pages are appended after it)")
+        AssertEq(Dashboard.Builders[Dashboard.PageIndex("Profiles")], "_PageProfiles", "its builder")
         AssertEq(Dashboard.Pages[Dashboard.LogPage], "Log", "LogPage unchanged")
-        AssertEq(Dashboard.HubOf("Profiles"), 5, "in the Setup hub")
+        AssertEq(Dashboard.HubOf("Profiles"), 6, "in the Settings hub")
         saved := [0]
         d := Dashboard(cfg, Map("saved", (page) => saved[1]++))
         for name in Profiles.Names
@@ -212,7 +212,7 @@ Test_Profiles_DashboardPage() {
         AssertEq(d.PageOf(d.Ctrl("profile:AFK fishing")), "Profiles", "buttons on the page")
         AssertTrue(IsObject(d.Ctrl("export")) && IsObject(d.Ctrl("import")), "export and import buttons")
         d.SelectPage(Dashboard.PageIndex("Profiles"))
-        AssertEq(d.ActiveHub, 5, "Setup hub")
+        AssertEq(d.ActiveHub, 6, "Settings hub")
         AssertTrue(d.Ctrl("tab:Profiles").Visible, "Profiles tab shown")
         AssertEq(d.Ctrl("exportShow").Visible, false, "Show it hidden before an export")
 
@@ -277,5 +277,28 @@ Test_Profiles_ImportRangesHeadersAndTurnedOn() {
         AssertTrue(r.on.Length = 1 && r.on[1] = "MemoryMatch.enabled", "what was switched on")
     } finally {
         try DirDelete(dir, true)
+    }
+}
+
+; Ruling (final review): the theme in use and the migration mark are never
+; exported or imported: a shared file must not switch the user's theme.
+Test_Profiles_ThemeNeverShared() {
+    dir := PfDir(), src := PfDir()
+    try {
+        cfg := PfCfg(dir)
+        cfg.Set("UI.theme", "Galaxy")
+        cfg.Set("UI.themesMigrated", 1)
+        AssertEq(Profiles.Shareable("UI", "theme", "Galaxy"), "", "UI.theme not shareable")
+        AssertEq(Profiles.Shareable("UI", "themesMigrated", "1"), "", "UI.themesMigrated not shareable")
+        text := Profiles.ExportText(cfg)
+        AssertTrue(!RegExMatch(text, "im)^theme="), "no theme= in the export")
+        AssertTrue(!RegExMatch(text, "im)^themesMigrated="), "no themesMigrated= in the export")
+        FileAppend("[UI]`r`ntheme=Rose`r`nthemesMigrated=0`r`nanimations=0`r`n", src "\theirs.ini", "UTF-8")
+        r := Profiles.Import(cfg, src "\theirs.ini")
+        AssertEq(cfg.Get("UI.theme", ""), "Galaxy", "own theme kept")
+        AssertEq(String(cfg.Get("UI.themesMigrated", "")), "1", "own migration mark kept")
+    } finally {
+        try DirDelete(dir, true)
+        try DirDelete(src, true)
     }
 }

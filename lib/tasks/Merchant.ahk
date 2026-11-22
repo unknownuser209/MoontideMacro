@@ -183,12 +183,16 @@ class MerchantTask {
     ; (the p cut off), the X was not clicked and the shop stayed open; 06:53
     ; 'Mori's stin': any "<name>'s s..." in the title box is her shop; 07:32
     ; 'Mori•s$hop': "hop" alone too
-    static ShopRe := "i)h[ao0]p|sh[ao0]|(?:'|\b)s\s*s[a-z]"   ; live misreads: 'Mori's sho', 'Mori's stin', 'Morl s stib' (apostrophe lost)
+    ; 2026-11-19 21:45 and 11-20 09:22 'Mori's Gno' (S read as G, h as n):
+    ; the X was not clicked and her shop stayed open. "<name>'s" + an S or G
+    ; word is her shop too.
+    static ShopRe := "i)h[ao0]p|sh[ao0]|(?:'|\b)s\s*[sg][a-z]|\b(?:m[ao]r[il1|]|j[ae]st[ae]r)\W{0,2}s\s+[a-z]"   ; live misreads: 'Mori's sho', 'Mori's stin', 'Morl s stib' (apostrophe lost), 'Mori's Gno'
 
     ; Letters only, lower case, with the game font's look-alikes folded
-    ; ("I<" as "k", "o" as "a", l/1/| as "i"), so OCR text and item names
-    ; compare ("LucI<Y Potion" = "Lucky Potion").
-    static Norm(s) => GameLists.Fold(s)
+    ; (GameText.Fold: "I<" as "k", "a" as "o", l/1/| as "i", rn as m, G as S,
+    ; V as P), so OCR text and item names compare ("LucI<Y Potion" = "Lucky
+    ; Potion", "Gpeed Votion L" = "Speed Potion L").
+    static Norm(s) => GameText.Fold(s)
 
     ; Letters a misread may cost on a folded name ("Everythino" = everything).
     static Slack(want) => StrLen(want) >= 14 ? 2 : StrLen(want) >= 8 ? 1 : 0
@@ -214,11 +218,11 @@ class MerchantTask {
     static Tier(text) {
         words := []
         for w in StrSplit(StrReplace(String(text), "|", " | "), [" ", "`t", "`r", "`n"])
-            if (GameLists.Fold(w) != "")
+            if (MerchantTask.Norm(w) != "")
                 words.Push(w)
         k := 0
         for i, w in words {
-            if (i > 1 && RegExMatch(GameLists.Fold(w), "^i+$")) {
+            if (i > 1 && RegExMatch(MerchantTask.Norm(w), "^i+$")) {
                 k := i
                 break
             }
@@ -226,11 +230,11 @@ class MerchantTask {
         if !k {
             base := ""
             for w in words
-                base .= GameLists.Fold(w)
+                base .= MerchantTask.Norm(w)
             return {name: base, tier: 0, cut: false}
         }
         j := k
-        while (j <= words.Length && RegExMatch(GameLists.Fold(words[j]), "^i+$"))
+        while (j <= words.Length && RegExMatch(MerchantTask.Norm(words[j]), "^i+$"))
             j++
         last := j - 1                           ; the run is words[k..j-1]
         if (j <= words.Length) {                ; the rarity follows: drop the separator
@@ -243,10 +247,10 @@ class MerchantTask {
         }
         tier := 0
         Loop last - k + 1
-            tier += StrLen(GameLists.Fold(words[k + A_Index - 1]))
+            tier += StrLen(MerchantTask.Norm(words[k + A_Index - 1]))
         base := ""
         Loop k - 1
-            base .= GameLists.Fold(words[A_Index])
+            base .= MerchantTask.Norm(words[A_Index])
         return {name: base, tier: tier, cut: true}
     }
 
@@ -523,9 +527,17 @@ class MerchantTask {
         env := this._env
         if !env.Wait(MerchantTask.AfterTeleMs, ctx)
             return -1
+        cal := this._InvCal()
         Loop MerchantTask.DialogTries {
             if ctx.ShouldStop()
                 return -1
+            ; the inventory back over the screen (live 2026-11-21 06:45: closed
+            ; "checked" during the teleport's fade, it was still up after it,
+            ; over her dialog: E three times, nothing read, Leave clicks lost)
+            if (IsObject(cal) && Screen.WithMode("C", () => env.InvOpen(cal.inv_items_tab))) {
+                env.Log("merchant: the inventory is still open after the teleport: closing it before E")
+                Screen.WithMode("C", () => env.CloseInv(cal.inv_open, cal.inv_items_tab, ctx))
+            }
             Input.Key(MerchantTask.OpenKey, 80, env.io)
             seen := this._See(MerchantTask.Layout.dialogName, MerchantTask.NameRe[name], ctx, MerchantTask.NameScale, MerchantTask.DialogMs)
             if (seen != 0)
@@ -730,7 +742,12 @@ class MerchantTask {
             texts.Push(this._Ocr(r))
         i := MerchantTask.FindTab(texts, spec.name)
         if !i {
-            env.Log("merchant: " spec.name " is not in " who "'s shop this visit")
+            ; the tab reads, so a shop whose names never match shows why
+            ; (about 30 Mari visits found none of 10 items, 11-19 / 11-20)
+            seen := ""
+            for t in texts
+                seen .= (A_Index > 1 ? " | " : "") SubStr(Trim(RegExReplace(t, "\s+", " ")), 1, 24)
+            env.Log("merchant: " spec.name " is not in " who "'s shop this visit (tabs read: " seen ")")
             return spec.name ": not sold this visit"
         }
         tab := L.tabs[i]
@@ -738,8 +755,18 @@ class MerchantTask {
         if !env.Wait(MerchantTask.SettleMs, ctx)
             return ""
         title := this._Ocr(L.item)
-        if !MerchantTask.TitleNames(title, spec.name) {
-            env.Log("merchant: picked the " spec.name " tab but the shop shows '" SubStr(title, 1, 40) "': skipped")
+        ; Mari's titles read cut at 1x ('I Epic', 'Lucky', 'Void?0i', live
+        ; 11-19 / 11-20): read once more at SmallScale. Still the same proof
+        ; (TitleNames), never a looser one.
+        ; Each read must name it on its own (two reads are never joined).
+        named := MerchantTask.TitleNames(title, spec.name)
+        if !named {
+            t2 := this._Ocr(L.item, MerchantTask.SmallScale)
+            named := MerchantTask.TitleNames(t2, spec.name)
+            title := named ? t2 : title (t2 != "" ? " / " t2 : "")
+        }
+        if !named {
+            env.Log("merchant: picked the " spec.name " tab but the shop shows '" SubStr(RegExReplace(title, "\s+", " "), 1, 80) "': skipped")
             return spec.name ": tab did not open it, skipped"
         }
         qty := spec.qty
@@ -764,12 +791,16 @@ class MerchantTask {
         env.Click(L.buy)
         waited := 0
         Loop {
-            if RegExMatch(this._Ocr(L.notice), "i)purch[ao]sed")
+            n := this._Ocr(L.notice)
+            if (RegExMatch(n, "i)purch[ao]sed") || GameText.Has(n, "purchased")) {
+                env.Log("merchant: bought " qty " " spec.name " from " who " (the 'You purchased' notice read)")
                 return "bought " qty " " spec.name
+            }
             if (waited >= MerchantTask.NoticeMs || !env.Wait(MerchantTask.PollMs, ctx))
                 break
             waited += MerchantTask.PollMs
         }
+        env.Log("merchant: Purchase clicked for " qty " " spec.name " at " who " (no 'You purchased' notice seen)")
         return "Purchase clicked for " qty " " spec.name " (no 'You purchased' notice seen)"
     }
 

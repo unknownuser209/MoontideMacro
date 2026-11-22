@@ -4,8 +4,9 @@
 ; I18n: translations of the dashboard, the setup wizard and the overlay.
 ;
 ;   I18n.Use(lang)   "en" (default), "es" Spanish, "pt" Brazilian Portuguese,
-;                    "fil" Filipino, "fr" French, "de" German (any case; an
-;                    unknown code, a missing or broken file -> English).
+;                    "fil" Filipino, "fr" French, "de" German, "vi"
+;                    Vietnamese (any case; an unknown code, a missing or
+;                    broken file -> English).
 ;                    Call before any window is built (App.Boot, next to
 ;                    Theme.Use): texts are translated when controls are made.
 ;                    -> the code used.
@@ -14,6 +15,9 @@
 ;                    ALL CAPS text is also found through its normal-case key
 ;                    ("STATUS" -> the translation of "Status", in capitals).
 ;   I18n.F(text, args*)  Format(I18n.T(text), args*): "Step {1} of {2}".
+;   I18n.TC(text, ctx)   the translation of key "<text> (<ctx>)" when the
+;                    language has one, else I18n.T(text) (a short column
+;                    word: fil "Potions (column)" -> "Potion").
 ;   I18n.Codes / I18n.Names   the languages in Settings > Look order.
 ;
 ; Dictionaries: lang\<code>.json (program files, shipped and replaced by the
@@ -29,8 +33,8 @@
 ; ---------------------------------------------------------------------------
 
 class I18n {
-    static Codes := ["en", "es", "pt", "fil", "fr", "de"]
-    static Names := ["English", "Español", "Português (BR)", "Filipino", "Français", "Deutsch"]
+    static Codes := ["en", "es", "pt", "fil", "fr", "de", "vi"]
+    static Names := ["English", "Español", "Português (BR)", "Filipino", "Français", "Deutsch", "Tiếng Việt"]
     static Lang := "en"
     static Raw := false        ; true while building controls that must stay English (tiny column codes)
     static Folder := RegExReplace(A_LineFile, "\\lib\\[^\\]+$", "") "\lang"
@@ -103,6 +107,15 @@ class I18n {
     }
 
     static F(text, args*) => Format(I18n.T(text), args*)
+
+    ; The translation of `text` in context `ctx`: key "<text> (<ctx>)" when
+    ; the language has it (a shorter column word, a singular where the usual
+    ; translation is plural), else I18n.T(text). English: text.
+    static TC(text, ctx) {
+        k := String(text) " (" ctx ")"
+        t := I18n.T(k)
+        return (t == k) ? I18n.T(text) : t
+    }
 
     ; Number of translations in use (0 in English).
     static Count => I18n._dict.Count

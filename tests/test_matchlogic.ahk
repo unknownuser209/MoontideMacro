@@ -94,3 +94,26 @@ Test_MatchLogic_PlaysAFullBoard() {
     AssertEq(pairs, 5, "pairs")
     AssertTrue(godlike, "godlike pair matched")
 }
+
+; live 2026-11-20: a white and a cream x100 potion read alike and were picked
+; as a pair 29 times. Not matched once -> never that pair again; each still
+; pairs with its real partner.
+Test_MatchLogic_NotPairIsNeverPickedAgain() {
+    b := MatchLogic.NewBoard()
+    for i in [2, 3]
+        MatchLogic.Record(b, i, "w42#1")
+    AssertEq(MatchLogic.First(b, 5), 2, "a known pair first")
+    MatchLogic.NotPair(b, 2, 3)
+    AssertEq(MatchLogic.First(b, 5), 1, "no pair known: a hidden tile")
+    AssertEq(MatchLogic.Second(b, 2, 5), 1, "2's partner is not 3: a hidden tile")
+    MatchLogic.Record(b, 17, "w42#1")
+    AssertEq(MatchLogic.First(b, 5), 2, "2 pairs with 17")
+    AssertEq(MatchLogic.Second(b, 2, 5), 17, "its partner 17")
+    AssertEq(MatchLogic.Second(b, 3, 5), 17, "3 may pair with 17 too")
+    ; a board without the "not" maps (older callers) still works
+    b2 := [Map("state", "seen", "key", "k"), Map("state", "seen", "key", "k")]
+    AssertEq(MatchLogic.First(b2, 5), 1, "plain board")
+    MatchLogic.NotPair(b2, 1, 2)
+    AssertEq(MatchLogic.First(b2, 5), 1, "no pair: the first seen tile")
+    AssertEq(MatchLogic.Second(b2, 1, 5), 2, "only tile left")
+}

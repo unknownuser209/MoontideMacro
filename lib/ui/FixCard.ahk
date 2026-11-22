@@ -11,6 +11,15 @@
 ;       "zip"  ()     -> makes the support zip; returns a line for the card
 ;       "dismiss" (key)
 ;   c.Ctrl(id), c.Destroy()
+;   c.ShowAt(x, y) / c.Hide()   App places it (FixCard.Spot): never over the
+;                               Roblox client while the macro runs
+;   FixCard.Spot(w, h, game, mons, pref) -> {x, y} or "" (no room)
+;
+; Live 2026-11-20: the card sat over the game's bottom right from 12:51 to
+; past 15:49. It hid the "no merchant spawned" toast (Jester's visit read
+; nothing) and the quests read its title as a game notification
+; ("Moontide: something needs a fix", 13:53). So: off the game, else hidden
+; while the macro runs, and closed when its problem stops showing (App).
 ; ---------------------------------------------------------------------------
 
 class FixCard {
@@ -50,7 +59,54 @@ class FixCard {
     Show() {
         MonitorGetWorkArea(MonitorGetPrimary(), , , &r, &b)
         p := FixCard.Pos(r, b)
-        this._gui.Show("x" p.x " y" p.y " w" FixCard.W " h" FixCard.H " NA")
+        this.ShowAt(p.x, p.y)
+    }
+
+    at := ""                        ; "x,y" while shown, "" hidden
+    ShowAt(x, y) {
+        if (this.at = x "," y)
+            return
+        this._gui.Show("x" x " y" y " w" FixCard.W " h" FixCard.H " NA")
+        this.at := x "," y
+    }
+
+    Hide() {
+        if (this.at = "")
+            return
+        try this._gui.Hide()
+        this.at := ""
+    }
+
+    ; Where a w x h card goes (screen px). game: the Roblox client {x, y, w,
+    ; h} ("" = none); mons: the monitors' work areas [{l, t, r, b}]; pref:
+    ; its usual top-left. -> pref when it covers no game; else the bottom
+    ; right of a monitor clear of the game; else beside the game on a
+    ; monitor; else "" (no room: App hides it while the macro runs).
+    static Spot(w, h, game, mons, pref) {
+        clear := (x, y) => !IsObject(game) || x >= game.x + game.w || x + w <= game.x || y >= game.y + game.h || y + h <= game.y
+        inside := (x, y) => FixCard._OnAMonitor(x, y, w, h, mons)
+        if (clear(pref.x, pref.y) && inside(pref.x, pref.y))
+            return {x: pref.x, y: pref.y}
+        g := 24
+        for m in mons {
+            x := m.r - w - g, y := m.b - h - g
+            if (clear(x, y) && inside(x, y))
+                return {x: x, y: y}
+        }
+        if !IsObject(game)
+            return ""
+        ty := game.y + game.h - h
+        for c in [[game.x + game.w + 8, ty], [game.x - 8 - w, ty], [game.x + game.w - w, game.y - 8 - h], [game.x + game.w - w, game.y + game.h + 8]]
+            if (clear(c[1], c[2]) && inside(c[1], c[2]))
+                return {x: c[1], y: c[2]}
+        return ""
+    }
+
+    static _OnAMonitor(x, y, w, h, mons) {
+        for m in mons
+            if (x >= m.l && y >= m.t && x + w <= m.r && y + h <= m.b)
+                return true
+        return false
     }
 
     ; its top-left for a work area ending at r, b (screen px): the size in
@@ -80,6 +136,7 @@ class FixCard {
     }
 
     Destroy() {
+        this.at := ""
         try Theme.Forget(this._gui)     ; the hovered Dismiss button must not be painted after it is gone
         try this._gui.Destroy()
     }

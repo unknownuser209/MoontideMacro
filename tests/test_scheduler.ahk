@@ -16,10 +16,11 @@ class SchedFakeTask {
 
 SchedTestAllTasks(canMap := "") {
     ; Every task runnable unless canMap[name] says false; limbo (off unless
-    ; Limbo.enabled) only when canMap says so.
+    ; Limbo.enabled) and autocal (InvFindTask: only while an inventory step
+    ; is missing) only when canMap says so.
     tasks := []
     for name, prio in Sched.Priority {
-        can := (canMap is Map && canMap.Has(name)) ? canMap[name] : (name != "limbo")
+        can := (canMap is Map && canMap.Has(name)) ? canMap[name] : (name != "limbo" && name != "autocal")
         tasks.Push(SchedFakeTask(name, prio, can))
     }
     return tasks

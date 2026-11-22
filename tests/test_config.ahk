@@ -236,11 +236,11 @@ Test_Config_ShippedDataMatchesDefaults() {
     for t in q {
         AssertEq(t["enabled"], 1, t["name"] " type enabled")
         for qq in t["quests"] {
-            AssertEq(qq["enabled"], 1, qq["name"] " enabled")
+            AssertEq(qq["enabled"], (qq["name"] = "Your First Gear") ? 0 : 1, qq["name"] " enabled (Your First Gear: the macro cannot craft gear)")
             n++
         }
     }
-    AssertEq(n, 25, "25 quests (3+5+1+1+5+4+1+1+1, spec 4.4, + Meditation I-III seen on the 2026 board)")
+    AssertEq(n, 27, "27 quests (3+5+1+1+5+4+1+1+1, spec 4.4, + Meditation I-III seen on the 2026 board, + To the Temple, Your First Gear)")
 }
 
 ; ---- Config: webhooks ------------------------------------------------------

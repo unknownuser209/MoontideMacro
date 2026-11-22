@@ -6,6 +6,8 @@
 #Include %A_LineFile%\..\..\Pixel.ahk
 #Include %A_LineFile%\..\..\Ocr.ahk
 #Include %A_LineFile%\..\..\Calibrate.ahk
+#Include %A_LineFile%\..\..\UiStuck.ahk
+#Include %A_LineFile%\..\..\AutoCal.ahk
 ; ---------------------------------------------------------------------------
 ; TaskEnv: the injectable dependencies shared by the quest and merchant tasks
 ; (and ChatWatch). Every side effect goes through here so tests can swap it.
@@ -17,13 +19,18 @@
 ;     io       Input io backend (Down/Up/MoveTo/ClickHere/Wait)  (default real)
 ;     cal      object with Point(id) / Rect(id)                  (default Calibrate)
 ;     ocr      callable ocr(x, y, w, h [, scale]) -> String      (default Ocr.Read)
+;     lines    callable lines(x, y, w, h [, scale]) -> Array of {text, x, y,
+;              l, t, r, b}: every line read with its place (default
+;              Ocr.Lines; with a faked ocr and no lines: [], so a test
+;              never reads the real screen). For lib\AutoCal.ahk.
 ;     pixel    callable pixel(x, y, color, tol) -> bool          (default Pixel.Is)
 ;     rect     callable rect(x, y, w, h) -> Array of w*h 0xRRGGBB (default Pixel._grabber)
 ;     now      callable now() -> ms                              (default A_TickCount)
 ;
 ;   env.Point(id) / env.Rect(id) -> calibration or "". A missing step is
-;     logged and reported ONCE per id as an `errors` webhook; the caller must
-;     skip the action. Coordinates are never guessed.
+;     logged and reported ONCE per id and run as an `errors` webhook (again
+;     after each Calibrate load: every Start, a calibration change); the
+;     caller must skip the action. Coordinates are never guessed.
 ;   env.Route(name) -> validated route steps or "" (logged once when absent).
 ;     Routes come from cfg.Data("routes") (data\routes.json, Task 8): either
 ;     {"name": [...steps]} or {"routes": {"name": [...steps]}}.
@@ -61,6 +68,10 @@ class TaskEnv {
         this.ocrFn := TaskEnv.Dep(deps, "ocr", "")
         if !IsObject(this.ocrFn)
             this.ocrFn := (x, y, w, h, scale := 1) => Ocr.Read(x, y, w, h, scale)
+        this.linesFn := TaskEnv.Dep(deps, "lines", "")
+        if !IsObject(this.linesFn)
+            this.linesFn := IsObject(TaskEnv.Dep(deps, "ocr", "")) ? ((x, y, w, h, scale := 1) => [])
+                : ((x, y, w, h, scale := 1) => Ocr.Lines(x, y, w, h, scale))
         this.pixelFn := TaskEnv.Dep(deps, "pixel", "")
         if !IsObject(this.pixelFn)
             this.pixelFn := (x, y, c, tol) => Pixel.Is(x, y, c, tol)
@@ -71,6 +82,7 @@ class TaskEnv {
         if !IsObject(this.nowFn)
             this.nowFn := () => A_TickCount
         this._warned := Map()
+        this._warnGen := Calibrate.UseCount
     }
 
     static Dep(deps, key, default) {
@@ -92,8 +104,13 @@ class TaskEnv {
     }
 
     ; Logs and sends the errors webhook once per key (polling callers such as
-    ; ChatWatch would otherwise log every poll).
+    ; ChatWatch would otherwise log every poll) and run: the task objects
+    ; live as long as the app, so a missing step was told about only on the
+    ; first Start after launching it (audit 2026-11-20). Each Calibrate load
+    ; (every Start, a calibration change) starts the list over.
     Problem(key, text) {
+        if (this._warnGen != Calibrate.UseCount)
+            this._warned := Map(), this._warnGen := Calibrate.UseCount
         if this._warned.Has(key)
             return
         this._warned[key] := true
@@ -101,16 +118,18 @@ class TaskEnv {
         this.Report("errors", "Task skipped", text, 0xE74C3C)
     }
 
+    ; (a step the macro finds on screen by itself, AutoCal.IsAuto, is not
+    ; reported: the one that looks for it says so when it cannot)
     Point(id) {
         p := this.cal.Point(id)
-        if (p == "")
+        if (p == "" && !AutoCal.IsAuto(id))
             this.Problem("cal:" id, "calibration step '" id "' missing: action skipped")
         return p
     }
 
     Rect(id) {
         r := this.cal.Rect(id)
-        if (r == "")
+        if (r == "" && !AutoCal.IsAuto(id))
             this.Problem("cal:" id, "calibration step '" id "' missing: action skipped")
         return r
     }
@@ -159,8 +178,10 @@ class TaskEnv {
     Unsafe(who, invTab := "") {
         if this.BuyPrompt(who)
             return "a Roblox purchase prompt was on screen (closed with Esc, never clicked): stopped"
-        if (IsObject(invTab) && !this.InvOpen(invTab))
+        if (IsObject(invTab) && !this.InvOpen(invTab)) {
+            UiStuck.Fail("inventory")           ; the stuck-UI escape (lib\UiStuck.ahk)
             return "the inventory is not open (its Gears / Items tabs did not read): nothing clicked"
+        }
         return ""
     }
 
@@ -171,7 +192,10 @@ class TaskEnv {
     InvOpen(tabPt) {
         if !IsObject(tabPt)
             return false
-        return RegExMatch((this.ocrFn)(tabPt.x - 90, tabPt.y - 25, 180, 50, 2), "i)item|gear") > 0
+        if !RegExMatch((this.ocrFn)(tabPt.x - 90, tabPt.y - 25, 180, 50, 2), "i)item|gear")
+            return false
+        UiStuck.Ok("inventory")                 ; its tabs read: the inventory works
+        return true
     }
 
     ; Closes the inventory: clicks inv_open while its tabs still read (a
@@ -193,6 +217,14 @@ class TaskEnv {
     }
 
     Wait(ms, ctx := "") => this.io.Wait(ms, ctx)
+
+    ; Every line on the screen with its place (one read of the whole client;
+    ; ~125 ms at 2560x1440), or of the rect r. [] when nothing reads.
+    Lines(r := "", scale := 1) {
+        out := ""
+        try out := IsObject(r) ? (this.linesFn)(r.x, r.y, r.w, r.h, scale) : (this.linesFn)(0, 0, Screen.DesignW, Screen.DesignH, scale)
+        return (out is Array) ? out : []
+    }
 
     ; deps "respawnAfter" (default yes): a task that walked away respawns at
     ; its end unless the App says the next task (the sell trip back to the

@@ -98,6 +98,13 @@ class MemoryMatchTask {
     static WalkTries := 2          ; respawn + walk + E when no notification shows
     static TitleRe := "i)mem[ao]ry"
     static CloseRe := "i)cl[o0]se"
+    ; red Close on the see-through board over a bright sky reads nothing
+    ; plain (live 2026-11-20 00:11 and 13:18, Snowy / Heaven: "no Close
+    ; button under the board", the board left open for 6 h 25 min); its red
+    ; ink alone reads "Close" (tests\screens mm_end_live_snowy_1440.png;
+    ; "Closa" / "Clo??" off the clip's JPEG): "Cl" and a round letter
+    static InkCloseRe := "i)c\s?[lI1|]\s?[o0aDQ]"
+    static CloseInkScale := 2
     static OpenWaitMs := 6000      ; returns as soon as it reads (a slow server: 4 s was not always enough)
     static DealMs := 8000          ; the tiles deal in (~2 s on the clip)
     static FlipReadMs := 2500
@@ -318,6 +325,24 @@ class MemoryMatchTask {
                 env.Log("memory match: the button read '" Trim(btn) "'; after E again: '" Trim(btn2) "'")
                 if r
                     btn := btn2
+                ; no notification after E again (live 2026-11-21: 'Available
+                ; after Ready!' then '' every hour for 15 h; the one round that
+                ; played, at 02:23, came right after a fresh walk there):
+                ; respawn, walk there again, E once more
+                if (!r && !ctx.ShouldStop()) {
+                    env.Log("memory match: no notification after E again: respawning to walk there once more")
+                    if !(Input.ResetToSpawn(ctx, io) && Input.PlayRoute(steps, ctx, io))
+                        return 0
+                    Input.Key(MemoryMatchTask.OpenKey, 80, io)
+                    r := this._WaitNotify(MemoryMatchTask.OpenWaitMs, ctx)
+                    if (r < 0)
+                        return 0
+                    this._notify := r ? true : false
+                    if r {
+                        btn := this._Read(L.startBox)
+                        env.Log("memory match: after the walk the button reads '" Trim(btn) "'")
+                    }
+                }
             }
             if RegExMatch(btn, MemoryMatchTask.CooldownRe) {
                 secs := MemoryMatchTask.ParseCooldown(btn)
@@ -371,7 +396,7 @@ class MemoryMatchTask {
             try {
                 if this._notify
                     this._CloseNotify(ctx)
-                if (this._board && RegExMatch(this._Read(L.closeBox), MemoryMatchTask.CloseRe))
+                if (this._board && this._CloseShows())
                     this._Close(cctx)
                 if (entered && !this._wrote)
                     this._Write(MemoryMatchTask.RetryMin * 60)
@@ -544,26 +569,88 @@ class MemoryMatchTask {
         this._notify := false
     }
 
+    ; Close under the board reads: plain, or by its red ink (InkCloseRe).
+    _CloseShows() {
+        b := MemoryMatchTask.Layout.closeBox
+        if RegExMatch(this._Read(b), MemoryMatchTask.CloseRe)
+            return true
+        t := ""
+        try t := String((this._env.inkFn)(b.x, b.y, b.w, b.h, MemoryMatchTask.CloseInkScale, "r"))
+        return RegExMatch(t, MemoryMatchTask.InkCloseRe) > 0
+    }
+
+    ; -> 1 Close shows | 0 not within ms | -1 stopped
+    _WaitClose(ms, ctx) {
+        waited := 0
+        Loop {
+            if this._CloseShows()
+                return 1
+            if (waited >= ms)
+                return 0
+            if !this._env.Wait(MemoryMatchTask.PollMs, ctx)
+                return -1
+            waited += MemoryMatchTask.PollMs
+        }
+    }
+
+    ; The round is over: the board is up and no tile is face down (the game
+    ; shows every tile after the last chance, live 2026-11-20 02:35).
+    _RoundOver() {
+        if !this._BoardUp()
+            return false
+        Loop 20
+            if (this._vis.State(A_Index) = "hidden")
+                return false
+        return true
+    }
+
     ; Waits for Close under the board, clicks it until the title is gone.
+    ; Close that never reads while every tile is shown is clicked where it
+    ; is (below the board: nothing else there). Still open, not stopped:
+    ; the stuck-UI escape rejoins (_LeftOpen).
     _Close(ctx) {
         env := this._env
         L := MemoryMatchTask.Layout
-        if (this._WaitRead(L.closeBox, MemoryMatchTask.CloseRe, MemoryMatchTask.CloseWaitMs, ctx) != 1) {
-            env.Log("memory match: no Close button under the board")
-            return false
+        if (this._WaitClose(MemoryMatchTask.CloseWaitMs, ctx) != 1) {
+            if (ctx.ShouldStop() || !this._RoundOver()) {
+                env.Log("memory match: no Close button under the board")
+                this._LeftOpen(ctx)
+                return false
+            }
+            env.Log("memory match: Close does not read, but every tile is shown (the round is over): clicking where Close is")
         }
         Loop MemoryMatchTask.CloseTries {
             env.Click(L.close)
             stopped := !env.Wait(MemoryMatchTask.SettleMs, ctx)
             if !RegExMatch(this._Read(L.title), MemoryMatchTask.TitleRe) {
                 this._board := false
+                UiStuck.Ok("memory match board")    ; closed: no rejoin needed for it
                 return true
             }
             if stopped
                 return false
         }
         env.Log("memory match: the board is still open after " MemoryMatchTask.CloseTries " clicks on Close")
+        this._LeftOpen(ctx)
         return false
+    }
+
+    ; The board stays up (it locked every Aura Storage and inventory use out
+    ; for 6 h 25 min, 2026-11-20): not stopped -> the stuck-UI escape trips
+    ; at once (App asks the recovery task for a rejoin).
+    _LeftOpen(ctx) {
+        if (ctx.ShouldStop() || !this._BoardUp())
+            return
+        this._env.Log("memory match: the board is left open: the stuck-UI escape rejoins to clear it")
+        UiStuck.Fail("memory match board", UiStuck.TripAt)
+    }
+
+    ; The App's tidy after this task: a board left open is closed by Close
+    ; (read, or every tile shown); one that cannot be closed trips the
+    ; stuck-UI escape. -> 1 closed | 2 still up
+    Leftovers() {
+        return [{up: () => RegExMatch(this._Read(MemoryMatchTask.Layout.title), MemoryMatchTask.TitleRe) ? "Memory Match board" : ""
+            , close: (label, ctx) => this._Close(ctx) ? 1 : 2}]
     }
 
     ; Tiles i (and j) reach state `want` and stay there two polls in a row.
@@ -733,8 +820,12 @@ class MemoryMatchTask {
                 won.Push(ka)
                 env.Log("memory match: matched " MemoryMatchTask.Label(ka))
             } else {
-                if (ka != "" && ka == kb)
-                    env.Log("memory match: tiles " a " and " b " looked alike but did not turn green; not counted")
+                if (ka != "" && ka == kb) {
+                    ; never the same two again (live 2026-11-20: tiles 2 and 3
+                    ; flipped together 29 times, no pair matched all round)
+                    MatchLogic.NotPair(board, a, b)
+                    env.Log("memory match: tiles " a " and " b " looked alike but did not turn green; not counted, not tried together again")
+                }
                 ; the last chance shows the whole board instead of flipping back
                 if (turns > 0 && !this._WaitState(ctx, "hidden", MemoryMatchTask.FlipBackMs, a, b)) {
                     if (this._vis.State(a) = "matched" && this._vis.State(b) = "matched") {
@@ -752,9 +843,15 @@ class MemoryMatchTask {
             ; the macro's count is used up: the game says when the round is
             ; over (Close). No Close: a flip did not count in the game.
             if (turns = 0 && extra < MemoryMatchTask.MaxExtraTurns && !ctx.ShouldStop()) {
-                r := this._WaitRead(MemoryMatchTask.Layout.closeBox, MemoryMatchTask.CloseRe, MemoryMatchTask.EndCheckMs, ctx)
+                r := this._WaitClose(MemoryMatchTask.EndCheckMs, ctx)
                 if (r < 0)
                     break
+                if (r = 0 && this._RoundOver()) {
+                    ; no tile face down: the game shows the whole board, the
+                    ; round is over whether Close reads or not (_Close)
+                    env.Log("memory match: every tile is shown: the round is over")
+                    break
+                }
                 if (r = 0) {
                     extra += 1, turns := 1
                     env.Log("memory match: no Close after " (MemoryMatchTask.Turns + extra - 1) " chances, the game has more (a click did not count): playing on")
@@ -767,7 +864,7 @@ class MemoryMatchTask {
                     ; it and the mouse stayed pinned)
                     if (!(board[a]["state"] = "matched" && board[b]["state"] = "matched")
                         && !this._WaitState(ctx, "hidden", MemoryMatchTask.FlipBackMs, a, b)) {
-                        r := this._WaitRead(MemoryMatchTask.Layout.closeBox, MemoryMatchTask.CloseRe, MemoryMatchTask.CloseWaitMs, ctx)
+                        r := this._WaitClose(MemoryMatchTask.CloseWaitMs, ctx)
                         if (r < 0)
                             break
                         if r {

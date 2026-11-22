@@ -9,7 +9,7 @@
 ;              EditText(handle, content)
 ;     cfg      Get(path, default): General.privateServer (the link)
 ;     ghost    callable ghost() -> true in a ghost server (App: state.ghost
-;              or the last join "other"). No ghost dep = unknown = NO send.
+;              or the last join "other"). No ghost dep = unknown = no link.
 ;     log      callable log(text); text never holds the link or a URL
 ;     now      callable now() -> ms (default A_TickCount)
 ;     hook     one webhook Map: post to it only (tools\sinister_test.ahk),
@@ -20,8 +20,11 @@
 ;                    same key again posts nothing (one message per spawn,
 ;                    whether it was posted or skipped). Posts a card like
 ;                    the biome cards ("Boss Spawned - Sinister S." + Join
-;                    Server) on the "sinister" event, unless the link is empty or not a
-;                    https://www.roblox.com/ link, or ghost() is not false.
+;                    Server) on the "sinister" event. The Join Server link
+;                    is left out (the card still goes, as the biome cards)
+;                    when General.joinButton is off, the link is empty or
+;                    not a roblox.com link, or ghost() is not false (audit
+;                    2026-11-20: these sent no boss card at all).
 ;   rep.Note(fill, seen [, now])  a fight tick: fill = the boss plate's HP
 ;                    fill (0..1) read this tick, "" = none read; seen = its
 ;                    plate (any bar, or the boss bar UI) in sight
@@ -119,19 +122,18 @@ class SinisterReport {
         this._boss := b
         this._open := true
         link := this._LinkNow()
-        ; General.joinButton off (Alerts): the card goes out without the
-        ; private server link, as the biome cards (BiomeEvents._JoinLink)
+        ; General.joinButton off (Alerts), no usable link or not in the
+        ; private server: the card goes out without the link, as the biome
+        ; cards (BiomeEvents._JoinLink)
         off := false
         try off := !this._cfg.Get("General.joinButton", 1)
         if off
             link := ""
-        else if (link = "") {
-            this._Log("sinister: no usable private server link - no Discord message")
-            return false
-        }
-        if this._Ghost() {
-            this._Log("sinister: ghost server (or not known) - no Discord message")
-            return false
+        else if (link = "")
+            this._Log("sinister: no usable private server link - the boss message goes without the Join Server link")
+        else if this._Ghost() {
+            link := ""
+            this._Log("sinister: not in your private server (or not known) - the boss message goes without the Join Server link")
         }
         if !IsObject(this._wh)
             return false
@@ -202,10 +204,13 @@ class SinisterReport {
         return true
     }
 
-    ; the private server link, "" when unset or not a roblox.com https link
+    ; the private server link, "" when unset or not a roblox.com link; one
+    ; pasted without https:// is made clickable (as BiomeEvents.JoinUrl)
     _LinkNow() {
         link := ""
-        try link := Trim(String(this._cfg.Get("General.privateServer", "")))
+        try link := Trim(String(this._cfg.Get("General.privateServer", "")), " `t`r`n<>")
+        if RegExMatch(link, "i)^(?:https?://)?((?:www\.)?roblox\.com/[^\s()\[\]]+)$", &m)
+            link := "https://" (SubStr(m[1], 1, 4) = "www." ? "" : "www.") m[1]
         return RegExMatch(link, SinisterReport.LinkRe) ? link : ""
     }
 

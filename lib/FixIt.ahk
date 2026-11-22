@@ -9,6 +9,11 @@
 ;                             Reset / Dismiss)
 ;   f.Dismiss(key)         -> that card is not shown again this session
 ;   f.Reset()              -> counts cleared (App.Start)
+;   f.QuietFor(key, now)   -> ms since the rule's line was last seen (Seen's
+;                             `now`); -1 never seen. App closes a card whose
+;                             line stopped coming (the problem is gone).
+;   f.Forget(key)          -> the card may show again (it was closed because
+;                             the problem went away, not dismissed)
 ;
 ; A rule: {key, re (log line regex), n (lines before the card), title, fix
 ; (what to do, plain words), page (a dashboard page to open, or ""), act
@@ -26,7 +31,7 @@ class FixIt {
             , fix: "Something pulled Roblox to the back (the log line says what was in front). Close that app or turn off its overlay or toolbar, then press F2.", page: "Check", act: ""},
         {key: "nolink", re: "i)no (usable )?private server link", n: 1
             , title: "No private server link"
-            , fix: "Without your private server link the macro cannot rejoin after a disconnect. Paste it in Setup > Settings (Private server).", page: "Settings", act: ""},
+            , fix: "Without your private server link the macro cannot rejoin after a disconnect. Paste it in Settings > General (Private server).", page: "Settings", act: ""},
         {key: "badlink", re: "i)private server link refused", n: 1
             , title: "The private server link is not right"
             , fix: "Copy the link again from your private server's Share / Copy Link button. It starts with https://www.roblox.com/.", page: "Settings", act: ""},
@@ -38,13 +43,13 @@ class FixIt {
             , fix: "Check your internet and Roblox's status page. The macro tries again by itself in a few minutes.", page: "", act: ""},
         {key: "inventory", re: "i)the inventory did not open", n: 2
             , title: "The inventory did not open"
-            , fix: "The inventory buttons are not where the macro expects. Open Setup > Calibrate and press Apply preset, or record the inventory steps.", page: "Calibrate", act: ""},
+            , fix: "The inventory buttons are not where the macro expects. Open Help > Calibrate and press Apply preset, or record the inventory steps.", page: "Calibrate", act: ""},
         {key: "calib", re: "i)not calibrated", n: 2
             , title: "A click spot is not set up"
-            , fix: "A step the macro needs has no calibration. Open Setup > Calibrate and press Apply preset (or record the step named in the log).", page: "Calibrate", act: ""},
+            , fix: "A step the macro needs has no calibration. Open Help > Calibrate and press Apply preset (or record the step named in the log).", page: "Calibrate", act: ""},
         {key: "webhook", re: "i)Webhook .*send failed .*giving up", n: 1
             , title: "A Discord webhook does not work"
-            , fix: "Discord refused a message. Copy the webhook link again in Discord (channel settings > Integrations > Webhooks) and paste it in Alerts > Discord.", page: "Webhooks", act: ""},
+            , fix: "Discord refused a message. Copy the webhook link again in Discord (channel settings > Integrations > Webhooks) and paste it in Discord & Clips > Discord.", page: "Webhooks", act: ""},
         {key: "update", re: "i)Update check failed", n: 2
             , title: "Updates cannot be checked"
             , fix: "The macro could not reach GitHub. Check your internet, or download the newest zip from the releases page by hand.", page: "", act: ""}
@@ -53,12 +58,14 @@ class FixIt {
     __New() {
         this.counts := Map()
         this.shown := Map()
+        this.last := Map()
     }
 
-    Seen(line) {
+    Seen(line, now := "") {
         for r in FixIt.Rules {
             if !RegExMatch(String(line), r.re)
                 continue
+            this.last[r.key] := (now = "") ? A_TickCount : now
             n := (this.counts.Has(r.key) ? this.counts[r.key] : 0) + 1
             this.counts[r.key] := n
             if (n >= r.n && !this.shown.Has(r.key)) {
@@ -78,6 +85,15 @@ class FixIt {
     Reset() {
         this.counts := Map()
         this.shown := Map()
+        this.last := Map()
+    }
+
+    QuietFor(key, now) => this.last.Has(key) ? now - this.last[key] : -1
+
+    Forget(key) {
+        for m in [this.counts, this.shown, this.last]
+            if m.Has(key)
+                m.Delete(key)
     }
 
     static Rule(key) {

@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Json.ahk
+#Include %A_LineFile%\..\GameText.ahk
 ; ---------------------------------------------------------------------------
 ; PotionSafety: pure potion-use rules (spec 4.6a). No clicks, no screen I/O.
 ; Default is REFUSE: anything missing, malformed or unexpected gives qty 0.
@@ -39,6 +40,8 @@
 ; CANON (PotionSafety.Canon): the game font draws "a" like "o", and OCR
 ; mixes I/l/1/|. Both sides are lower-cased and mapped to one character per
 ; class, then compared EXACTLY (same length, same classes):
+;   first (GameText): l< / I< / l« -> k, rn -> m, a U+FFFD or "-" glued
+;   to the front of a word dropped
 ;   whitespace runs -> one space, trimmed
 ;   a A o O 0 n N             -> o     ("Hoste" = "Haste", "Wnrp" = "Warp")
 ;   I i L l 1 | !             -> i     (roman numerals: "Il" = "II"; L too,
@@ -333,6 +336,12 @@ class PotionSafety {
     static Canon(s) {
         if !(s is String)
             return ""
+        ; the shared game-font rules first (GameText): l< / I< / l« = k
+        ; ('Lucl<y Potion' can never equal "lucky potion" otherwise), rn = m
+        ; ('rninute'), and a stray U+FFFD / "-" glued to the front of a word
+        ; dropped (tile 1 of the real frame inv_lucky_tiles_6digit reads
+        ; 'Lucky -Potion L'). Still EXACT after that: no letter is guessed.
+        s := StrReplace(GameText.DropJunk(GameText.FixK(s)), "rn", "m")
         s := Trim(RegExReplace(s, "[\s\x{00A0}]+", " "), " ")
         out := ""
         Loop Parse s

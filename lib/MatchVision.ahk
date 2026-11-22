@@ -13,13 +13,15 @@
 ;   MatchVision.Center(i)    -> {x, y}: where a flip is clicked
 ;   v.State(i)               the tile's corner against its bottom right ->
 ;                            "hidden" (face down) | "open" (face up, or the
-;                            cursor on it) | "matched" (green, 0x56BB5E) |
+;                            cursor on it) | "matched" (green: 0x56BB5E on
+;                            the clip, 0x83FF9D live, IsGreen) |
 ;                            "" (animating)
 ;   v.Sig(i)                 -> {icon, prof, width}: sampled pixels of the
 ;                            icon; the amount line as a column profile (white
 ;                            pixels per screen column, trimmed to the text),
 ;                            and the text's width in px
-;   MatchVision.Same(a, b)   two Sigs show the same reward and amount
+;   MatchVision.Same(a, b)   two Sigs show the same reward and amount (the
+;                            samples, their mean tint and the amount line)
 ;   MatchVision.Stable(a, b) two Sigs of ONE tile taken a moment apart are
 ;                            equal (its flip animation is over)
 ;
@@ -39,6 +41,12 @@ class MatchVision {
     static ProfMaxDiff := 0.035  ; amount profiles: real pairs 0.00-0.01, x3,000 vs x5,000 0.08 (clip)
     static ProfShift := 2        ; px of slack when lining the profiles up
     static Bright := 0xB0        ; amount text: every channel at least this
+    ; the icons' mean tint (each channel against the grey of the three, over
+    ; the inked samples): a white and a cream x100 potion pass PixTol on
+    ; every sample but differ by 8.0 here; real pairs 1.0 at most (live
+    ; board 2026-11-20 02:35 and the clip; the board was read as pair 2-3
+    ; 29 times and no pair was ever matched)
+    static TintMax := 3.5
 
     __New(grab := "") {
         this._grab := IsObject(grab) ? grab : (x1, x2, ys, stride) => StripGrab.Rows(x1, x2, ys, stride)
@@ -62,14 +70,18 @@ class MatchVision {
     ; a game update: the fixed 0x212121 read every tile as "open" and the
     ; board never counted as dealt). Face up (or the cursor on a face-down
     ; tile): a lighter corner and a near-black bottom right (0x444444 /
-    ; 0x010101 on the clip). Green corner: matched.
+    ; 0x010101 on the clip). Green corner: matched. The green changed with
+    ; a game update like the greys did: 0x56BB5E on the clip, 0x83FF9D live
+    ; 2026-11-21 02:23 (four real pairs turned green, every one was logged
+    ; "looked alike but did not turn green", the green tiles were clicked
+    ; again and the round ended at 4 / 10). Any clear green counts (IsGreen).
     static DownStep := [6, 42]     ; corner minus bottom right, face down (clip 15, live 25)
     static DownMax := 0x58         ; a face-down corner is no lighter than this
     State(i) {
         t := MatchVision.Tile(i)
         rows := (this._grab)(t.x + 10, t.x + 105, [t.y + 10, t.y + 118], 95)
         c := rows[1][1], lr := rows[2][rows[2].Length]
-        if MatchVision._Near(c, MatchVision.Colors["matched"], MatchVision.CornerTol)
+        if MatchVision.IsGreen(c)
             return "matched"
         if !(MatchVision._Grey(c) && MatchVision._Grey(lr))
             return ""
@@ -79,6 +91,14 @@ class MatchVision {
         if (d > MatchVision.DownStep[2])
             return "open"
         return ""
+    }
+
+    ; A matched tile's corner: green well above red and blue (clip 86,187,94;
+    ; live 131,255,157). No grey tile corner, and no face (the corner is
+    ; tile background), comes near.
+    static IsGreen(c) {
+        r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+        return g >= 150 && g - r >= 60 && g - b >= 50
     }
 
     ; r, g, b within 10 of each other
@@ -140,7 +160,32 @@ class MatchVision {
         }
         if (ink = 0 || ok < MatchVision.IconMin * ink)
             return false
+        if (MatchVision.TintDiff(a.icon, b.icon) > MatchVision.TintMax)
+            return false
         return MatchVision.ProfDiff(a.prof, b.prof) <= MatchVision.ProfMaxDiff
+    }
+
+    ; Two icons' mean colours over the samples either inks, each channel
+    ; less the grey of its three -> the largest channel difference (a tint
+    ; that every sample carries, which the per-sample tolerance lets pass;
+    ; a brighter or darker copy of the same icon stays near 0).
+    static TintDiff(p, q) {
+        sa := [0, 0, 0], sb := [0, 0, 0], n := 0
+        for k, c in p {
+            d := q[k]
+            if !(MatchVision._IsInk(c) || MatchVision._IsInk(d))
+                continue
+            n++
+            sa[1] += (c >> 16) & 0xFF, sa[2] += (c >> 8) & 0xFF, sa[3] += c & 0xFF
+            sb[1] += (d >> 16) & 0xFF, sb[2] += (d >> 8) & 0xFF, sb[3] += d & 0xFF
+        }
+        if (n = 0)
+            return 0
+        ga := (sa[1] + sa[2] + sa[3]) / 3, gb := (sb[1] + sb[2] + sb[3]) / 3
+        best := 0
+        Loop 3
+            best := Max(best, Abs((sa[A_Index] - ga) - (sb[A_Index] - gb)) / n)
+        return best
     }
 
     ; Amount profiles -> the smallest differing share over shifts of up to

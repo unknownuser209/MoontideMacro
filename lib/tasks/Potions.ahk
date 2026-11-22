@@ -175,7 +175,7 @@ class PotionsTask {
         "unknown", "potion id is not in potions.json",
         "never_use", "never used by the macro (Heavenly Potion I/II, Sizemax, Sizemin)",
         "never_use_prefix", "its tile can be a never-use potion's (e.g. Heavenly Potion I with the I unread) and nothing rules that out: never used",
-        "locked", "potion is locked (unlock it in Alerts > Biomes)",
+        "locked", "potion is locked (unlock it in Biomes & Potions > Potions)",
         "no_desc", "potion has no desc in potions.json: copy a distinctive part of its in-game description there",
         "desc_not_unique", "this desc is part of another potion's desc (or the other way round): make both distinct in potions.json",
         "bad_event", "malformed biome event key",

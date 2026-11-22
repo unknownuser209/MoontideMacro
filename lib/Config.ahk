@@ -100,9 +100,10 @@ class Config {
         ; each must match a name in data\potions.json.
         cr := Config._CIMap()
         cr["potions"] := "Lucky Potion"
-        cr["enabled"] := "1"          ; craft task on/off
+        cr["enabled"] := "0"          ; Fish shop buys on/off: off for a new install (it spends in-game money; audit 2026-11-20). Only a NEW settings.ini gets these; a missing key still reads 1 (the code defaults), so no existing user changes
         cr["qty"] := "1"              ; units bought per potion per visit (1..999)
         cr["minIntervalMin"] := "10"  ; minutes between notification-triggered craft runs
+        cr["buyEveryMin"] := "30"     ; buy again this many minutes after the last buy, crafted toast or not (0 = off)
         ; Optional per-potion override: qty_<id> = number, <id> = the potion
         ; name lower-cased with non-alphanumerics as "_" (qty_lucky_potion = 3).
         cr["cauldron"] := "0"         ; 1 = also visit Stella's cauldron (needs recorded routes)
@@ -215,10 +216,10 @@ class Config {
         u := Config._CIMap()
         u["animations"] := "1"        ; 0 = no UI animations
         u["setupDone"] := "0"         ; 1 = the first-run setup wizard was finished or skipped
-        u["theme"] := "Moontide"      ; colour theme (Theme.Choices): Moontide, Overdrive, Galaxy, Boss, Equinox, Matrix, Radiant, Illusionary, Contrast, Custom
+        u["theme"] := "Moontide"      ; the theme in use: a preset (Theme.Names) or a saved theme (ThemeStore, Settings > Look)
         u["simple"] := "0"            ; 1 = simple mode: only the main dashboard pages (new installs start with it on)
-        u["lang"] := "en"             ; window language (lib/I18n.ahk, lang\<code>.json): en, es, pt, fil, fr, de
-        ; theme = Custom (Settings > Look > Edit custom, Theme.Derive): 4 base colours RRGGBB, the rest is mixed from them
+        u["lang"] := "en"             ; window language (lib/I18n.ahk, lang\<code>.json): en, es, pt, fil, fr, de, vi
+        ; the old custom theme (before saved themes): ThemeStore.Migrate turns these into the theme "My theme" once
         u["customBg"] := "0D1117"     ; window background
         u["customPanel"] := "0B2A5B"  ; panels and borders
         u["customText"] := "F7F1E8"   ; text
@@ -514,8 +515,40 @@ class Config {
         }
         if (status != "ok")
             result := Config.Defaults(name)
+        else if (name = "quests")
+            Config._AddMissingQuests(result)
         this.dcache[name] := result
         this.dstat[name] := status
+    }
+
+    ; A quests.json from an older version lacks quests added since (To the
+    ; Temple, Your First Gear: 2026-11-18). Known default quests missing by
+    ; name are appended DISABLED, in memory (saved with the next SaveData).
+    static _AddMissingQuests(data) {
+        if !(data.Has("types") && data["types"] is Array)
+            return
+        have := Map()
+        have.CaseSense := "Off"
+        for t in data["types"]
+            if (t is Map && t.Has("quests") && t["quests"] is Array)
+                for q in t["quests"]
+                    if (q is Map && q.Has("name"))
+                        have[String(q["name"])] := 1
+        for dt in Config._DefQuests()["types"] {
+            for dq in dt["quests"] {
+                if have.Has(dq["name"])
+                    continue
+                dest := ""
+                for t in data["types"]
+                    if (t is Map && t.Has("name") && t["name"] = dt["name"] && t.Has("quests") && t["quests"] is Array)
+                        dest := t
+                if (dest = "") {
+                    dest := Map("name", dt["name"], "enabled", 1, "quests", [])
+                    data["types"].Push(dest)
+                }
+                dest["quests"].Push(Map("name", dq["name"], "enabled", 0))
+            }
+        }
     }
 
     Data(name) {
@@ -616,13 +649,15 @@ class Config {
             ["Finding a Person", ["Finding a Person"]],
             ["Lucky Clover", ["Lucky Clover"]],
             ["Time of Patience", ["Time of Patience"]],
-            ["Meditation", ["Meditation I", "Meditation II", "Meditation III"]]   ; "play for N minutes" (2026 board)
+            ["Meditation", ["Meditation I", "Meditation II", "Meditation III"]],   ; "play for N minutes" (2026 board)
+            ["Obby", ["To the Temple"]],        ; complete the obby, get a Basic Blessing (user list 2026-11-18)
+            ["Gear", ["Your First Gear"]]       ; visit Jake, craft a Luck Glove: the macro cannot, so off
         ]
         out := []
         for t in types {
             qs := []
             for q in t[2]
-                qs.Push(Map("name", q, "enabled", 1))
+                qs.Push(Map("name", q, "enabled", (q = "Your First Gear") ? 0 : 1))
             out.Push(Map("name", t[1], "enabled", 1, "quests", qs))
         }
         return Map("types", out)

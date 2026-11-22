@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\FishLogic.ahk
+#Include %A_LineFile%\..\..\GameText.ahk
 ; ---------------------------------------------------------------------------
 ; FishingTask: the default loop (priority 99, always runnable).
 ;
@@ -228,11 +229,14 @@ class FishingTask {
     static CloseGoneMs := 1500
 
     ; General.fishing = 0: never fish (the user runs only the other tasks).
-    ; Limbo.enabled = 1: LimboTask is the idle task instead.
+    ; Limbo.enabled = 1: LimboTask is the idle task instead, except while
+    ; the crack is on hold (state.limboHeld: it could not be used; fishing
+    ; until the next try, 2026-11-20).
     CanRun(state) {
         if !(IsObject(this.cfg) && HasMethod(this.cfg, "Get"))
             return true
-        return (this.cfg.Get("General.fishing", 1) && !this.cfg.Get("Limbo.enabled", 0)) ? true : false
+        held := IsObject(state) && HasProp(state, "limboHeld") && state.limboHeld
+        return (this.cfg.Get("General.fishing", 1) && (!this.cfg.Get("Limbo.enabled", 0) || held)) ? true : false
     }
 
     Run(ctx) {
@@ -523,24 +527,40 @@ class FishingTask {
     _arrowRow := ""
     _ArrowY(rc) => (this._arrowRow != "" && !Screen.IsIdentity()) ? this._arrowRow : rc["arrowY"]
 
-    ; The reel's [arrow row, bar row]. Below 1440p every ArrowTries row is
-    ; grabbed and the first that shows the arrow is used: the row found at
-    ; the bite (the panel still sliding in) was a few px off once it settled.
-    _ReelRows(rc) {
-        if Screen.IsIdentity()
-            return this.deps.grab.Call(rc["x1"], rc["x2"], [rc["arrowY"], rc["barY"]], rc["stride"])
+    ; The reel's [arrow row, bar row, border rows...] (borderYs: rows of the
+    ; bar's top border to read, [] = none). They sit inside the same copy of
+    ; the screen as the arrow and bar rows (StripGrab blits their bounding
+    ; box), so they cost no extra screen read. Below 1440p every ArrowTries
+    ; row is grabbed and the first that shows the arrow is used: the row
+    ; found at the bite (the panel still sliding in) was a few px off once
+    ; it settled.
+    _ReelRows(rc, borderYs := "") {
+        bys := IsObject(borderYs) ? borderYs : []
+        if Screen.IsIdentity() {
+            ys := [rc["arrowY"], rc["barY"]]
+            for y in bys
+                ys.Push(y)
+            return this.deps.grab.Call(rc["x1"], rc["x2"], ys, rc["stride"])
+        }
         ys := []
         for d in FishingTask.ArrowTries
             ys.Push(rc["arrowY"] + d)
         ys.Push(rc["barY"])
+        for y in bys
+            ys.Push(y)
         all := this.deps.grab.Call(rc["x1"], rc["x2"], ys, rc["stride"])
         n := FishingTask.ArrowTries.Length
+        pick := 1
         for i, d in FishingTask.ArrowTries
             if FishLogic.ReelArrow(all[i], rc["x1"], rc["stride"]) {
                 this._arrowRow := rc["arrowY"] + d
-                return [all[i], all[n + 1]]
+                pick := i
+                break
             }
-        return [all[1], all[n + 1]]
+        out := [all[pick], all[n + 1]]
+        Loop bys.Length
+            out.Push(all[n + 1 + A_Index])
+        return out
     }
 
     _ReelUp() {
@@ -644,7 +664,7 @@ class FishingTask {
                     if !FishLogic.ClickAt(io, ctx, pt, fs["gapMs"], fs["gapMs"])
                         return "stopped"
                 }
-                if (checked && InStr(StrLower(io.Ocr(btn*)), fc["fishButton"]["word"])) {
+                if (checked && FishingTask.IsFish(io.Ocr(btn*), fc["fishButton"]["word"])) {
                     this.deps.log.Call("fishing: the button reads Fish after the failsafe - casting again")
                     if !FishLogic.ClickAt(io, ctx, fc["rod"], fc["rodPreMs"], fc["rodSettleMs"])
                         return "stopped"
@@ -868,7 +888,7 @@ class FishingTask {
         while ((st := this._PanelState()) != "exit") {
             if (waited >= waitMs || !io.Wait(250, cctx)) {
                 t := Trim(RegExReplace(String(io.Ocr(b*)), "\s+", " "))
-                if InStr(StrLower(t), "fish")
+                if FishingTask.IsFish(t)
                     return                      ; the line is in
                 if blind {
                     this.deps.log.Call("fishing: next task: the button reads '" SubStr(t, 1, 30) "', not Exit - clicked once to reel the line in")
@@ -883,11 +903,20 @@ class FishingTask {
         FishLogic.ClickAt(io, cctx, [b[1] + b[3] // 2, b[2] + b[4] // 2], 80, 300)
     }
 
+    ; The Fish / Exit button reads Exit. Live 2026-11-20 it read 'EX it' (a
+    ; space inside) and 'Exim' (t as m): plain "exit" missed both, so the
+    ; line was left out before the next task and the failsafe click reeled
+    ; it in. Folded (GameText) and t / m alike.
+    static IsExit(t) => RegExMatch(GameText.Fold(t), "exi[tm]") > 0
+
+    ; The button reads Fish (the line is in); folded like IsExit.
+    static IsFish(t, word := "fish") => GameText.Has(t, word)
+
     _PanelState() {
         io := this.deps.io
         fc := this._Fc()
         b := fc["fishButton"]["rect"]
-        if InStr(StrLower(io.Ocr(b[1], b[2], b[3], b[4])), "exit")
+        if FishingTask.IsExit(io.Ocr(b[1], b[2], b[3], b[4]))
             return "exit"
         t := fc["panelTitle"]
         r := t["rect"]
@@ -898,6 +927,17 @@ class FishingTask {
     ; -> "ok" | "stopped" | "error" | "nobar" (neither the click bar nor the
     ; fish within FishLogic.ReelSeenMs: not a real bite, nothing clicked; a
     ; screenshot is saved when the io can take one)
+    ; The reel is over once the arrow + bar are gone for endMs, or, when the
+    ; bar's frame (FishLogic.ReelFrame) read steady for FrameSteady passes
+    ; this reel, once the frame is gone for FrameGoneMs: snow kept arrow +
+    ; "bar" up after SNOWY reels until the 9 s cap (16 of 19 capped reels,
+    ; log 2026-11-15..18). A reel whose frame never reads steady (a dim
+    ; screen, an odd size) ends as before, and its border rows are no
+    ; longer read after FrameLookPolls passes. The longer FrameGoneMs lets
+    ; a frame that flickers mid-reel (something drawn over the border) pass.
+    static FrameSteady := 10
+    static FrameGoneMs := 1000
+    static FrameLookPolls := 60
     _Reel(ctx, opt) {
         fc := this._Fc()
         rc := fc["reel"]
@@ -908,11 +948,19 @@ class FishingTask {
         seen := false
         lastUp := 0
         lastClick := -100000
+        ; empty level learnt from the bar (FishLogic.ReelScan), its source
+        em := 0, emOwn := false
+        ; the bar's frame: rows to read (narrowed to the one that shows it),
+        ; passes in a row it read, steady this reel, last time it read
+        bys := rc["borderYs"], frameRun := 0, frameSteady := false, lastFrame := 0
+        ; one line per reel (fishing: reel ...): passes, gaps between them,
+        ; clicks; to tell a slow PC (fewer passes) from a slow controller
+        polls := 0, firstT := 0, prevT := 0, maxGap := 0, clicks := 0, how := "cap"
         while (now.Call() - start <= fc["minigameCapMs"]) {
             if ctx.ShouldStop()
                 return "stopped"
             try {
-                rows := this._ReelRows(rc)
+                rows := this._ReelRows(rc, bys)
             } catch as e {
                 this._LogOnce("fishing: strip capture failed (" e.Message "); abandoning this catch")
                 return "error"
@@ -921,15 +969,43 @@ class FishingTask {
                 this._LogOnce("fishing: strip capture is all black (exclusive fullscreen?); not clicking")
                 return "error"
             }
-            s := FishLogic.ReelScan(rows[1], rows[2], rc["x1"], rc["stride"])
-            if (s.m && (s.p2 || s.fill != "")) {
+            t := now.Call()
+            if (polls++)
+                maxGap := Max(maxGap, t - prevT)
+            else
+                firstT := t
+            prevT := t
+            s := FishLogic.ReelScan(rows[1], rows[2], rc["x1"], rc["stride"], em)
+            if (s.empty && (s.own || !emOwn))
+                em := s.empty, emOwn := emOwn || s.own
+            frame := false
+            Loop rows.Length - 2 {
+                if FishLogic.ReelFrame(rows[A_Index + 2], rows[2]) {
+                    frame := true
+                    if (bys.Length > 1)
+                        bys := [bys[A_Index]]
+                    break
+                }
+            }
+            if (!frame && bys.Length = 1 && rc["borderYs"].Length > 1)
+                bys := rc["borderYs"]                   ; lost it: every row again
+            if (!frameSteady && polls >= FishingTask.FrameLookPolls)
+                bys := []                               ; never steady: stop reading it (old end rule)
+            up := s.m && (s.p2 || s.fill != "")
+            frameRun := (frame && up) ? frameRun + 1 : 0
+            if (frameRun >= FishingTask.FrameSteady)
+                frameSteady := true
+            if (frame && up)
+                lastFrame := t
+            if up {
                 seen := true                            ; arrow + bar up (also "Ready!")
-                lastUp := now.Call()
-            } else if (seen && now.Call() - lastUp >= rc["endMs"]) {
-                return "ok"                             ; the reel is over (caught or not)
+                lastUp := t
+            }
+            if (seen && (t - lastUp >= rc["endMs"] || (frameSteady && t - lastFrame >= FishingTask.FrameGoneMs))) {
+                how := "ended"
+                break                                   ; the reel is over (caught or not)
             }
             scan := (s.m && s.p2) ? s : ""
-            t := now.Call()
             if !IsObject(scan) {
                 if (!seen && t - start >= FishLogic.ReelSeenMs) {
                     shot := HasMethod(io, "Shot") ? io.Shot() : ""
@@ -942,11 +1018,16 @@ class FishingTask {
                 if (FishLogic.ReelDecide(scan, st, t, rc["leadMs"], rc["aim"]) && t - lastClick >= rc["clickGapMs"]) {
                     io.ClickHere()
                     lastClick := t
+                    clicks++
                 }
             }
             if !io.Wait(rc["pollMs"], ctx)
                 return "stopped"
         }
+        ms := now.Call() - start
+        this.deps.log.Call(Format("fishing: reel {} ms ({}), polls {}, avg gap {} ms, max gap {} ms, clicks {}, empty up to {}{}, frame {}"
+            , ms, how, polls, polls > 1 ? Round((prevT - firstT) / (polls - 1)) : 0, maxGap, clicks
+            , em, em ? (emOwn ? " (bar)" : " (short)") : "", frameSteady ? "seen" : "not seen"))
         return "ok"
     }
 

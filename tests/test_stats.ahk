@@ -338,7 +338,7 @@ Test_DailySummary_build() {
     AssertEq(e.fields[3]["value"], "n/a", "no attempts")
 }
 
-; review 2026-11-12: a restart inside the window (theme Apply now) started a
+; review 2026-11-12: a restart inside the window (theme Apply) started a
 ; run the user had stopped: the used window is kept in a file
 Test_Schedule_UsedWindowSurvivesRestart() {
     p := A_Temp "\vesper_sched_" A_TickCount "_" Random(1, 99999) ".txt"
