@@ -322,8 +322,10 @@ class LimboTask {
         if !env.InvOpen(c.inv_items_tab) {
             if !env.Wait(LimboTask.InvMs, ctx)
                 return false
-            if !env.InvOpen(c.inv_items_tab)
+            if !env.InvOpen(c.inv_items_tab) {
+                CalHealth.Fail("inv_open", "the inventory did not open after a click on it (or its tabs did not read at inv_items_tab)", c.inv_open)
                 return this._Fail(c, "the inventory did not open (check the inv_open point)", ctx)
+            }
         }
         ; Roblox drops a typed letter now and then ("Portble Crack"): no crack
         ; tile -> clear the search and type it again, as the merchant does

@@ -413,6 +413,19 @@ class Input {
     ; notification OCR ran inside CanRun every tick).
     static InRoute := false
 
+    ; True while the fishing reel runs (FishingTask._Reel). The reel polls
+    ; every ~10 ms for ~8 s and any pause there lets the arrow drift off the
+    ; fish: the App's tick ran every task's CanRun mid-reel, and Recovery's
+    ; 1000x560 disconnect OCR (every 5 s) took ~1 s on a tester's PC. Reels
+    ; with a pause of ~1 s lost the fish 6 times in 8, reels without none
+    ; in 7 (tester log 2026-11-23, 60 % caught; the owner's PC: 98 %, max
+    ; pause 63 ms). The tick leaves its slow work until the reel is over.
+    static InReel := false
+
+    ; A route walks or the reel runs: work on the App's tick that can wait
+    ; (log reads, webhooks, OCR checks in CanRun, remote polls) waits.
+    static Hot() => Input.InRoute || Input.InReel
+
     static PlayRoute(steps, ctx, io := "") {
         Prof.Begin("walk")
         try

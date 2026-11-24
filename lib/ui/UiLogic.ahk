@@ -18,6 +18,10 @@
 ;   UiLogic.ApplyUnlock(p, confirmed) / Relock(p)
 ;   UiLogic.Uptime(ms)             "H:MM:SS"
 ;   UiLogic.UInt(text, default)    non-negative Integer or default.
+;   UiLogic.QtyOrAll(text, default)  a qty box: "all" for all / max (any
+;                                  case), else a whole number >= 1
+;   UiLogic.IsAllQty(v)            v is "all" / "max" (any case)
+;   UiLogic.QtyText(v)             a qty as a list shows it ("all" or v)
 ;   UiLogic.CsvToArray(s) / ArrayToCsv(arr)
 ;   UiLogic.NormState(s)           "running" -> "Running", "" -> "Stopped"
 ;   UiLogic.TitleCase(s)           first letter of each space-separated word
@@ -139,6 +143,25 @@ class UiLogic {
     static UInt(text, default) {
         t := Trim(String(text))
         return (t != "" && RegExMatch(t, "^\d{1,9}$")) ? Integer(t) : default
+    }
+
+    ; Merchant and biome potion qty (2026-11-22 tester ask): "all" buys the
+    ; whole stock / uses every one owned.
+    static IsAllQty(v) => (v is String) && RegExMatch(Trim(v), "i)^(all|max)$")
+
+    static QtyOrAll(text, default := 1) {
+        return UiLogic.IsAllQty(String(text)) ? "all" : Max(1, UiLogic.UInt(text, default))
+    }
+
+    static QtyText(v) => UiLogic.IsAllQty(v) ? "all" : v
+
+    ; A merchant want-list item paused on the Merchants page ("paused": 1 or
+    ; true, 2026-11-22 tester ask) stays on the list and is not bought.
+    static MerchPaused(it) {
+        if !(it is Map && it.Has("paused"))
+            return false
+        v := it["paused"]
+        return IsNumber(v) ? (v != 0) : (StrLower(Trim(String(v))) = "true")
     }
 
     static CsvToArray(s) {

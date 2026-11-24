@@ -954,3 +954,153 @@ Test_Embed_StopSummaryCountsTheSession() {
     t.app.Start()
     AssertEq(t.app.state.stats.Count, 0, "Start resets the counters")
 }
+
+; ---- role / user ping per rare biome (General.biomePings, 2026-11-22) ------
+
+; allowed_mentions[key] ("roles" / "users") as "id,id", "" when missing
+WfIds(p, key) {
+    am := p["allowed_mentions"]
+    s := ""
+    if am.Has(key) {
+        for id in am[key]
+            s .= (s = "" ? "" : ",") id
+    }
+    return s
+}
+
+Test_Wf_BiomePings_ParseAndValidate() {
+    r := Webhook.ParseBiomePings(" SINGULARITY = &111 , glitched=<@&222>; Radiant  Forest=@333,  ,dreamspace=<@!444>")
+    AssertEq(r.bad.Length, 0, "every entry good")
+    AssertEq(r.pings["singularity"][1], "<@&111>", "&id -> role")
+    AssertEq(r.pings["glitched"][1], "<@&222>", "<@&id> -> role")
+    AssertEq(r.pings["radiant forest"][1], "<@333>", "@id -> user, spaces folded")
+    AssertEq(r.pings["dreamspace"][1], "<@444>", "<@!id> -> user")
+    AssertEq(Webhook.ParseBiomePings("").pings.Count, 0, "empty text: nothing")
+    two := Webhook.ParseBiomePings("SINGULARITY=&1,singularity=&2")
+    AssertEq(two.pings["singularity"].Length, 2, "two roles for one biome")
+    AssertEq(Webhook.BiomePings("Singularity=&1", "SINGULARITY")[1], "<@&1>", "lookup any case")
+    AssertEq(Webhook.BiomePings("Singularity=&1", "GLITCHED").Length, 0, "no mapping: empty")
+    AssertEq(Webhook.BiomePings("Singularity=&1", "").Length, 0, "no name: empty")
+    bad := Webhook.ParseBiomePings("SINGULARITY=@everyone, GLITCHED, =&5, CYBERSPACE=role, DREAMSPACE=@here, HELL=&6")
+    AssertEq(bad.bad.Length, 5, "five bad entries")
+    AssertEq(bad.bad[1], "SINGULARITY=@everyone", "@everyone refused")
+    AssertEq(bad.pings.Count, 1, "the good one kept")
+    AssertEq(Dashboard.BiomePingsProblem(""), "", "empty is fine")
+    AssertEq(Dashboard.BiomePingsProblem("SINGULARITY=&123456789012345678, GLITCHED=987"), "", "good list")
+    why := Dashboard.BiomePingsProblem("SINGULARITY=&1, GLITCHED")
+    AssertTrue(InStr(why, '"GLITCHED"') && InStr(why, "BIOME=ID"), "names the bad entry: " why)
+}
+
+Test_Wf_BiomePings_RoleUserAndNone() {
+    r := WfRig(Map("General.biomePings", "singularity=&111, Radiant Forest=999"))
+    try {
+        p := r.Rare("SINGULARITY")
+        AssertEq(WfContent(p), "<@424242> <@&111>", "role: after the webhook's own mention")
+        AssertEq(WfIds(p, "roles"), "111", "role allowed")
+        AssertEq(WfIds(p, "users"), "424242", "the webhook's user allowed")
+        AssertTrue(!WfHasEveryone(p), "not an @everyone biome")
+        p := r.Rare("RADIANT FOREST", "2026-10-25T02:00:00.000Z")
+        AssertEq(WfContent(p), "<@424242> <@999>", "user mapping")
+        AssertEq(WfIds(p, "users"), "424242,999", "both users allowed")
+        AssertEq(WfIds(p, "roles"), "", "no role allowed")
+        p := r.Rare("CYBERSPACE", "2026-10-25T03:00:00.000Z")
+        AssertEq(WfContent(p), "@everyone <@424242>", "no mapping: as before")
+        AssertEq(WfIds(p, "roles"), "", "no mapping: no role")
+        ; a normal biome's card never pings, mapped or not
+        r.cfg.Set("General.biomePings", "WINDY=&555")
+        AssertEq(r.Rare("WINDY", "2026-10-25T04:00:00.000Z"), "", "no rare message for WINDY")
+        for x in WfRecs(r.wh)
+            AssertTrue(!InStr(x.rec.json, "555"), "no role on a biome card")
+    } finally {
+        r.Done()
+    }
+    ; a webhook with no Mention: the role alone
+    r2 := WfRig(Map("General.biomePings", "SINGULARITY=<@&111>"))
+    try {
+        r2.cfg.SetWebhooks([WhMake("Plain", WhFakeUrl("plain"), "", 1, ["rare"])])
+        p := r2.Rare("SINGULARITY")
+        AssertEq(WfContent(p), "<@&111>", "role alone")
+        AssertEq(WfIds(p, "roles"), "111", "role allowed")
+        AssertTrue(!p["allowed_mentions"].Has("users") && !p["allowed_mentions"].Has("parse"), "nothing else allowed")
+    } finally {
+        r2.Done()
+    }
+}
+
+Test_Wf_BiomePings_WithEveryoneAndDeduped() {
+    r := WfRig(Map("General.biomePings", "GLITCHED=&222, SINGULARITY=424242, DREAMSPACE=<@&333>, dreamspace=&333"))
+    try {
+        p := r.Rare("GLITCHED")
+        AssertEq(WfContent(p), "@everyone <@424242> <@&222>", "@everyone, the webhook's mention, the role")
+        AssertTrue(WfHasEveryone(p), "everyone allowed")
+        AssertEq(WfIds(p, "roles"), "222", "role allowed")
+        AssertEq(WfIds(p, "users"), "424242", "user allowed")
+        p := r.Rare("SINGULARITY", "2026-10-25T02:00:00.000Z")
+        AssertEq(WfContent(p), "<@424242>", "same id as the webhook's Mention: once")
+        AssertEq(WfIds(p, "users"), "424242", "allowed once")
+        p := r.Rare("DREAMSPACE", "2026-10-25T03:00:00.000Z")
+        AssertEq(WfContent(p), "@everyone <@424242> <@&333>", "the same role twice: once")
+        AssertEq(WfIds(p, "roles"), "333", "role allowed once")
+    } finally {
+        r.Done()
+    }
+}
+
+Test_Wf_BiomePings_NeverOnTestOrGhost() {
+    r := WfRig(Map("General.biomePings", "SINGULARITY=&111, GLITCHED=&222"))
+    try {
+        p := r.Rare("SINGULARITY", "TEST-20261025010000-123")
+        AssertEq(WfContent(p), "", "TEST- ts: no ping")
+        AssertEq(WfIds(p, "roles"), "", "TEST- ts: no role allowed")
+        p := r.Rare("GLITCHED", "2026-10-25T01:00:00.000Z", Map("test", 1))
+        AssertEq(WfContent(p), "", "ev.test: no ping")
+        r.state.ghost := true
+        p := r.Rare("SINGULARITY", "2026-10-25T02:00:00.000Z")
+        AssertTrue(!InStr(WfContent(p), "<@&111>"), "ghost server: no role ping")
+        AssertEq(WfIds(p, "roles"), "", "ghost server: no role allowed")
+    } finally {
+        r.Done()
+    }
+    ; Webhook.Send: a [TEST] title drops opts.pings; bad ones are dropped
+    cfg := WfCfg(Map(), [WhMake("A", WhFakeUrl("a"), "&777", 1, ["rare"])])
+    wh := Webhook(cfg)
+    wh.dryRun := true
+    wh.Send("rare", "[TEST] t", "d", 0, {mention: true, pings: ["&111"]})
+    wh.Send("rare", "t", "d", 0, {mention: true, pings: ["@everyone", "&111", "<@&777>", "x"]})
+    wh.Send("rare", "t", "d", 0, {pings: ["&111"]})
+    wh.Flush()
+    recs := WfRecs(wh)
+    AssertEq(WfContent(recs[1].p), "", "[TEST]: no ping")
+    AssertEq(WfParse(recs[1].p).Length, 0, "[TEST]: strict")
+    AssertEq(WfContent(recs[2].p), "<@&777> <@&111>", "bad pings dropped, the webhook's role once")
+    AssertEq(WfIds(recs[2].p, "roles"), "777,111", "both roles allowed")
+    AssertTrue(!WfHasEveryone(recs[2].p), "@everyone in pings never allowed")
+    AssertEq(WfContent(recs[3].p), "<@&111>", "pings without mention: the pings only")
+    AssertEq(Webhook.JoinMentions("", ""), "", "nothing")
+    AssertEq(Webhook.JoinMentions("<@1>", ["1", "<@!1>", "&1"]), "<@1> <@&1>", "user 1 once, role 1 is another id")
+}
+
+Test_Wf_BiomePings_DashboardField() {
+    dir := UiDashTmp()
+    d := "", d2 := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg, Map())
+        AssertEq(d.PageOf(d.Ctrl("General.biomePings")), "Settings", "on the Settings page")
+        AssertEq(d.Ctrl("General.biomePings").Value, "", "empty by default")
+        d.Ctrl("General.biomePings").Value := "SINGULARITY=@everyone"
+        AssertTrue(!d.SavePage("Settings"), "bad entry refused")
+        AssertEq(cfg.Get("General.biomePings", ""), "", "nothing stored")
+        d.Ctrl("General.biomePings").Value := "SINGULARITY=&123456789012345678, GLITCHED=<@&987654321098765432>"
+        AssertTrue(d.SavePage("Settings"), "good list saved")
+        c2 := Config.Load(dir)
+        AssertEq(c2.Get("General.biomePings", ""), "SINGULARITY=&123456789012345678, GLITCHED=<@&987654321098765432>", "persisted as typed")
+        AssertEq(Webhook.BiomePings(c2.Get("General.biomePings", ""), "glitched")[1], "<@&987654321098765432>", "reads back")
+        d2 := Dashboard(c2, Map())
+        AssertEq(d2.Ctrl("General.biomePings").Value, "SINGULARITY=&123456789012345678, GLITCHED=<@&987654321098765432>", "reload shows it")
+    } finally {
+        UiDashClose(d)
+        UiDashClose(d2)
+        try DirDelete(dir, true)
+    }
+}

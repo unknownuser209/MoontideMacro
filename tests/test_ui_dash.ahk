@@ -107,6 +107,12 @@ Test_Dashboard_TabsSaveAndReload() {
         d.Ctrl("merch.name").Value := "Some Item"
         d.Ctrl("merch.qty").Value := "3"
         d.MerchAdd()
+        d.Ctrl("merch.name").Value := "Paused Item"
+        d.MerchAdd()
+        d.Ctrl("merch:Mari").Modify(2, "Select")
+        AssertTrue(d.MerchPause(), "row 2 paused")
+        AssertTrue(InStr(d.Ctrl("merch:Mari").GetText(2), "(Paused)"), "the row shows it is paused")
+        AssertEq(d.Ctrl("merch.pause").Text, "Resume", "the button turns into Resume")
         AssertTrue(d.SavePage("Merchants"), "merchants saved")
 
         AssertTrue(d.SelectBiome("WINDY"), "select biome")
@@ -158,6 +164,9 @@ Test_Dashboard_TabsSaveAndReload() {
         m := c2.Data("merchants")["Mari"][1]
         AssertEq(m["name"] "|" m["qty"], "Some Item|3", "merchant item (found by name in the shop, no position)")
         AssertEq(m.Has("x"), false, "no x/y stored")
+        m2 := c2.Data("merchants")["Mari"][2]
+        AssertEq(m2["name"] "|" UiLogic.MerchPaused(m2), "Paused Item|1", "paused item kept on the list, paused")
+        AssertEq(UiLogic.MerchPaused(m), false, "the other item is not paused")
         w := UiDashFind(c2.Data("biomes")["biomes"], "WINDY")
         AssertEq(w["rare"], 1, "windy rare")
         AssertEq(w["potions"][1]["name"] "|" w["potions"][1]["qty"], pBiome "|2", "biome potion")
@@ -335,6 +344,7 @@ Test_Dashboard_CalibrateCountsRectAndPointSteps() {
         AssertTrue(!rows.Has("inv_amount_one"), "no '1' signature step any more")
         AssertEq(rows["inv_tile2_rect"], "missing", "unrecorded step still missing")
         AssertEq(rows["daily_claim"], "default (optional)", "an optional step is not 'missing'")
+        AssertEq(rows["cauldron_craft"], "default (optional)", "the Craft button is optional (found on screen when not recorded)")
         for id in ["fisher_item_lucky_potion", "cauldron_gui", "cauldron_search", "cauldron_close", "selector_list_rect", "selector_confirm"]
             AssertEq(rows[id], Chr(0x2713) " automatic", id ": found on screen, not 'missing'")
         AssertEq(rows["cauldron_add_all"], "missing", "Add All has no text to find it by: still asked for")
@@ -574,22 +584,6 @@ Test_Hubs_EveryPageOnce() {
         for p in h.pages
             AssertTrue(UiDashPageIdx(p) > 0, p " (hub " h.name ") is a page")
     AssertEq(Dashboard.Pages[Dashboard.LogPage], "Log", "LogPage is the Log page")
-}
-
-; Simple mode keeps the same pages under their new hubs, plus Look; every
-; hub keeps at least one page there.
-Test_Hubs_SimpleMode() {
-    want := ["Run", "Stats", "Fishing", "Quests", "Merchants", "Hunting", "Biomes & Potions", "Potions"
-        , "Webhooks", "Check", "Settings", "Look", "Log", "Credits"]
-    AssertEq(Dashboard.SimplePages.Count, want.Length, "simple pages count")
-    for p in want
-        AssertTrue(Dashboard.SimplePages.Has(p), "simple mode shows " p)
-    for h in Dashboard.Hubs {
-        n := 0
-        for p in h.pages
-            n += Dashboard.SimplePages.Has(p)
-        AssertTrue(n > 0, h.name " has a page in simple mode")
-    }
 }
 
 ; The two splits: a potion cap on Potions and a biome's potion on Biomes,
@@ -870,6 +864,61 @@ Test_Dashboard_MerchantNamesTitleCased() {
         }
         f := UiDashLvFit(d.Ctrl("potions"))
         AssertEq(f.cols, f.client, "potions columns fill the list width")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+; Merchant and biome potion qty take "all" (2026-11-22 tester ask): typed in
+; any case (or max), listed and saved as all, and the "?" says what it does.
+Test_Dashboard_QtyAll() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        pBiome := UiDashPotions(cfg).all[1]
+        d := Dashboard(cfg)
+        d.SelectPage(UiDashPageIdx("Merchants"))
+        lv := d.Ctrl("merch:Mari")
+        d.Ctrl("merch.name").Value := "lucky potion"
+        d.Ctrl("merch.qty").Value := "All"
+        d.MerchAdd()
+        AssertEq(lv.GetText(lv.GetCount(), 2), "all", "merchant list shows all")
+        d.Ctrl("merch.name").Value := "speed potion"
+        d.Ctrl("merch.qty").Value := "max"
+        d.MerchAdd()
+        d.Ctrl("merch.name").Value := "mixed potion"
+        d.Ctrl("merch.qty").Value := "7"
+        d.MerchAdd()
+        d._MerchSelect("Mari", lv, lv.GetCount() - 2, true)
+        AssertEq(d.Ctrl("merch.qty").Value, "all", "selecting the row shows all")
+        AssertTrue(d.SavePage("Merchants"), "merchants saved")
+        mari := Config.Load(dir).Data("merchants")["Mari"]
+        n := mari.Length
+        AssertEq(mari[n - 2]["qty"] "|" mari[n - 1]["qty"] "|" mari[n]["qty"], "all|all|7", "saved all, all, 7")
+        AssertTrue(MerchantTask.ParseItem(mari[n - 2]).all, "the task reads the saved all")
+        ; biome potions
+        AssertTrue(d.SelectBiome("WINDY"), "select biome")
+        d.Ctrl("bpDdl").Choose(pBiome)
+        d.Ctrl("bpQty").Value := "ALL"
+        d.BiomePotionAdd()
+        bp := d._lvBP
+        AssertEq(bp.GetText(bp.GetCount(), 2), "all", "biome potion list shows all")
+        AssertEq(d._BiomePotSummary(d._bio[d._bSel]), "1 (all owned)", "biome list summary")
+        AssertEq(d._BiomePotSummary(Map("potions", [Map("name", "a", "qty", "all"), Map("name", "b", "qty", 3)])), "2 (3 uses + all)", "mixed summary")
+        AssertEq(d._BiomePotSummary(Map("potions", [Map("name", "a", "qty", 2), Map("name", "b", "qty", 3)])), "2 (5 uses)", "numbers as before")
+        AssertTrue(d.SavePage("Biomes & Potions"), "biomes saved")
+        w := UiDashFind(Config.Load(dir).Data("biomes")["biomes"], "WINDY")
+        AssertEq(w["potions"][w["potions"].Length]["qty"], "all", "saved all")
+        AssertTrue(PotionsTask.IsAll(w["potions"][w["potions"].Length]["qty"]), "the potions task reads it as all")
+        ; the "?" texts
+        for page, text in Map("Merchants", "buy the whole stock", "Biomes & Potions", "within the potion safety caps") {
+            found := false
+            for c in d._pages[UiDashPageIdx(page)].ctrls
+                found := found || InStr(Theme.HelpText(c), text)
+            AssertTrue(found, page ": a help says " text)
+        }
     } finally {
         UiDashClose(d)
         try DirDelete(dir, true)
@@ -2448,93 +2497,6 @@ Test_Help_TextsMatchSettings() {
     }
 }
 
-; audit 2026-11-20 (M10): simple mode keeps a hidden page shown while a
-; feature on it is on, and a new install starts with the Fish shop off (an
-; existing settings.ini without the key keeps it on)
-Test_Dashboard_SimpleModeKeepsActivePages() {
-    dir := UiDashTmp()
-    d := ""
-    try {
-        cfg := Config.Load(dir)
-        AssertEq(cfg.Get("Craft.enabled", 1), 0, "a new install: Fish shop off")
-        AssertEq(SetupWizard.RunKeys[3][1] " " SetupWizard.RunKeys[3][3], "Craft.enabled 0", "the wizard's default too")
-        cfg.Set("UI.simple", 1)
-        cfg.Set("Limbo.enabled", 1)
-        cfg.Set("Schedule.enabled", 1)
-        cfg.Save()
-        d := Dashboard(Config.Load(dir))
-        for p in ["Limbo", "Schedule"]
-            AssertTrue(d.PageShown(p), p " is on: its page still shows")
-        for p in ["Craft", "Obby & Memory", "Biome items", "Clips", "Remote", "Profiles", "Calibrate"]
-            AssertTrue(!d.PageShown(p), p " stays hidden")
-        AssertTrue(d.Ctrl("hub:Farming").Visible, "its hub shows")
-        d.SetSimple(false)
-        d.SetSimple(true)
-        last := d._logBuf.Tail(1)
-        AssertTrue(InStr(last, "still shown because they are on: Limbo, Schedule"), "turning it on says what stays: " last)
-        UiDashClose(d), d := ""
-        ; an older settings.ini without Craft.enabled: the Fish shop is on
-        ; (the code default), so its page shows in simple mode
-        cfg := Config.Load(dir)
-        cfg.sections["Craft"].Delete("enabled")
-        cfg.Set("Limbo.enabled", 0)
-        cfg.Set("Schedule.enabled", 0)
-        cfg.Save()
-        AssertEq(Config.Load(dir).Get("Craft.enabled", 1), 1, "no key: on, as before")
-        d := Dashboard(Config.Load(dir))
-        AssertTrue(d.PageShown("Craft"), "Fish shop on: the Craft page shows")
-        AssertTrue(!d.PageShown("Limbo"), "Limbo off: hidden again")
-        AssertEq(d.Ctrl("Craft.enabled").Value, 1, "the switch shows it on")
-    } finally {
-        UiDashClose(d)
-        try DirDelete(dir, true)
-    }
-}
-
-; idea 3 (2026-11-13): simple mode shows only the main pages; the sidebar
-; button switches it live and saves it
-Test_Dashboard_SimpleMode() {
-    dir := UiDashTmp()
-    d := ""
-    try {
-        cfg := Config.Load(dir)
-        cfg.Set("UI.simple", 1)
-        d := Dashboard(cfg)
-        d.Show(false)   ; never takes focus from a live macro
-        for h in Dashboard.Hubs
-            AssertTrue(d.Ctrl("hub:" h.name).Visible, h.name " shows in simple mode too")
-        d.Ctrl("hub:Biomes & Potions").GetPos(, &ya)
-        d.Ctrl("hub:Farming").GetPos(, &yb)
-        AssertEq(ya - yb, 80, "hubs one after another")
-        d.SelectHub(Dashboard.HubOf("Hunting"))
-        AssertEq(Dashboard.Pages[d._active], "Quests", "Quests & events opens on Quests")
-        AssertTrue(d.Ctrl("tab:Hunting").Visible && !d.Ctrl("tab:Obby & Memory").Visible, "Limited shown, Obby & Memory hidden")
-        d.SelectPage(Dashboard.PageIndex("Hunting"))
-        AssertEq(Dashboard.Pages[d._active], "Hunting", "Hunting opens")
-        d.SelectHub(Dashboard.HubOf("Fishing"))
-        AssertTrue(d.Ctrl("tab:Fishing").Visible && d.Ctrl("tab:Merchants").Visible, "main tabs shown")
-        AssertTrue(!d.Ctrl("tab:Craft").Visible && !d.Ctrl("tab:Limbo").Visible, "expert tabs hidden")
-        d.Ctrl("tab:Fishing").GetPos(&fx, , &fw)
-        d.Ctrl("tab:Merchants").GetPos(&qx)
-        AssertEq(qx, fx + fw + 28, "Merchants moved up next to Fishing")
-        d.SelectHub(Dashboard.HubOf("Look"))
-        AssertTrue(d.Ctrl("tab:Settings").Visible && d.Ctrl("tab:Look").Visible, "General and Look in simple mode")
-        AssertTrue(!d.Ctrl("tab:Schedule").Visible, "Schedule hidden in simple mode")
-        d.SelectHub(Dashboard.HubOf("Fishing"))
-        AssertTrue(InStr(d.Ctrl("simpleMode").Text, "ON"), "button says on")
-        d.SetSimple(false)
-        AssertEq(Config.Load(dir).Get("UI.simple", ""), "0", "saved off")
-        AssertTrue(d.Ctrl("hub:Quests & events").Visible, "every hub back")
-        AssertTrue(d.Ctrl("tab:Craft").Visible, "every tab back")
-        d.SelectPage(Dashboard.PageIndex("Craft"))
-        d.SetSimple(true)
-        AssertEq(Dashboard.Pages[d._active], "Run", "a hidden page open -> Home")
-    } finally {
-        UiDashClose(d)
-        try DirDelete(dir, true)
-    }
-}
-
 ; 2026-11-16, the user: more clip apps (Discord clipping): the Clip app
 ; dropdown fills in the app's usual hotkey and is saved by id
 Test_Dashboard_ClipAppPicker() {
@@ -2856,9 +2818,9 @@ SbEach(fn, sides := "") {
     }
 }
 
-; Hub, simple-mode and chip controls that are shown (the sidebar's contents).
+; Hub and chip controls that are shown (the sidebar's contents).
 SbNavCtrls(d) {
-    out := [d._simpleBtn, d._chip]
+    out := [d._chip]
     for i, c in d._nav {
         if c.Visible
             out.Push(c)

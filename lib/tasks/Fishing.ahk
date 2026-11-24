@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\FishLogic.ahk
+#Include %A_LineFile%\..\ReelPause.ahk
 #Include %A_LineFile%\..\..\GameText.ahk
 ; ---------------------------------------------------------------------------
 ; FishingTask: the default loop (priority 99, always runnable).
@@ -55,6 +56,14 @@ class FishingTask {
         this._nonBites := 0         ; consecutive "no reel bar" catches
         this._fcKey := ""           ; _Fc: client rect of the cached mapping
         this._fcMapped := ""
+        this._pause := ReelPause()  ; slow-PC warning, fed once per reel after it ends
+        this._lastReel := ""        ; the last reel's gap / grab / work / wait (_ReelLoop)
+    }
+
+    ; App.Start: a new session for the slow-PC warning
+    Reset() {
+        this._pause.Reset()
+        this._lastReel := ""
     }
 
     ; ---- off 2560x1440 ---------------------------------------------------
@@ -227,6 +236,17 @@ class FishingTask {
     ; counts only once the card is there.)
     static CloseTries := 3
     static CloseGoneMs := 1500
+    ; Live 2026-11-22 (03:44, 06:11): the catch card can freeze mid-slide with
+    ; the whole panel raised ~346 px above its place (top edge y 632). Its
+    ; Fish button then reads here instead of at fishButton, the card's words
+    ; are garbled by the panel title under them (CardRe never matched), and
+    ; it survives respawns: every cast saw "no panel" and re-walked until the
+    ; macro paused. 2x reads "Fis" on all 5 frozen frames and nothing on
+    ; normal ones (tests\screens\fish_raised_*); the frozen card's X is at
+    ; RaisedClose (one click after the usual rest closed it, live 03:50).
+    static RaisedRect := [1040, 742, 230, 60]
+    static RaisedRe := "i)\bf[il1|][sg]"
+    static RaisedClose := [1523, 645]
 
     ; General.fishing = 0: never fish (the user runs only the other tasks).
     ; Limbo.enabled = 1: LimboTask is the idle task instead, except while
@@ -313,6 +333,17 @@ class FishingTask {
                 if (lc > 0)
                     panel := fb ? "panel" : this._PanelState()
             }
+            if (panel = "") {                       ; a frozen card over a raised panel
+                rz := this._CloseRaisedCard(ctx)
+                if (rz < 0)
+                    return "stopped"
+                if (rz > 0) {
+                    fb := this._WaitFishButton(ctx)
+                    if (fb < 0)
+                        return "stopped"
+                    panel := fb ? "panel" : this._PanelState()
+                }
+            }
             if (panel = "") {
                 shot := HasMethod(io, "Shot") ? io.Shot() : ""
                 if (shot != "")
@@ -389,6 +420,7 @@ class FishingTask {
         bar := Pixel.Get(fc["barSample"][1], fc["barSample"][2])
 
         ; ---- minigame ---------------------------------------------------------
+        this._lastReel := ""
         mg := opt.legacyReel ? this._Minigame(ctx, bar, opt) : this._Reel(ctx, opt)
         if (mg = "nobar")
             return this._NoBite()
@@ -410,7 +442,9 @@ class FishingTask {
             FishLogic.Bump(this.state, "fishCaught")
             this.state.fishLoops += 1
         }
+        this._PauseCheck(res = "failed")
         this.state.repathStreak := 0       ; fishing works: re-walks are not stuck
+        this.state.repathRejoin := false   ; and a later stuck streak may rejoin again (SellTask)
         tEnd := now.Call()
         this.deps.log.Call(Format("fishing: catch {:.1f} s (cast {:.1f}, bite wait {:.1f}, reel {:.1f}, card {:.1f})"
             , (tEnd - tStart) / 1000, (tCast - tStart) / 1000, (tBite - tCast) / 1000, (tReel - tBite) / 1000, (tEnd - tReel) / 1000))
@@ -471,6 +505,35 @@ class FishingTask {
 
     _CardUp() => HasMethod(this.deps.io, "Ocr") && this._CardKind(this._CardText()) != ""
 
+    ; The frozen card over a raised panel (RaisedRect): is it there?
+    _RaisedUp() {
+        io := this.deps.io
+        if !HasMethod(io, "Ocr")
+            return false
+        r := FishingTask.RaisedRect
+        return RegExMatch(io.Ocr(r[1], r[2], r[3], r[4], 2), FishingTask.RaisedRe) ? true : false
+    }
+
+    ; Closes it by its X (RaisedClose), up to CloseTries clicks.
+    ; -> 1 there was one and it went | 0 none (or it would not go) | -1 stopped
+    _CloseRaisedCard(ctx) {
+        if !this._RaisedUp()
+            return 0
+        this.deps.log.Call("fishing: the catch card froze over a raised fishing panel - closing it by its X")
+        fc := this._Fc()
+        io := this.deps.io
+        Loop FishingTask.CloseTries {
+            if !FishLogic.ClickAt(io, ctx, FishingTask.RaisedClose, A_Index = 1 ? fc["closePreMs"] : fc["afterCloseMs"], fc["afterCloseMs"])
+                return -1
+            if !io.Wait(FishingTask.CloseGoneMs, ctx)
+                return -1
+            if !this._RaisedUp()
+                return 1
+        }
+        this.deps.log.Call("fishing: the frozen catch card is still up after " FishingTask.CloseTries " clicks on its X")
+        return 0
+    }
+
     ; The App's between-tasks check (Tidy): the catch card, read and closed
     ; by its X the way a catch closes it. Without io.Ocr: nothing (no blind
     ; click on a card that may not be there).
@@ -479,7 +542,11 @@ class FishingTask {
             return []
         up := () => FishingTask.CardLabel(this._CardKind(this._CardText()))
         close := (label, ctx) => (r := this._CloseCard(ctx)) < 0 ? -1 : r ? 1 : 2
-        return [{up: up, close: close}]
+        ; the frozen card over a raised panel blocks every task (live 06:11:
+        ; the Merchant Teleporter search found nothing with it up)
+        rUp := () => this._RaisedUp() ? "frozen Fish Caught card" : ""
+        rClose := (label, ctx) => (r := this._CloseRaisedCard(ctx)) < 0 ? -1 : r ? 1 : 2
+        return [{up: up, close: close}, {up: rUp, close: rClose}]
     }
 
     static CardLabel(kind) => kind = "failed" ? "Fishing Failed card" : kind = "caught" ? "Fish Caught card" : ""
@@ -938,7 +1005,20 @@ class FishingTask {
     static FrameSteady := 10
     static FrameGoneMs := 1000
     static FrameLookPolls := 60
+    ; Input.InReel while it runs: the App's tick leaves its slow work (task
+    ; checks with OCR, log reads, webhooks) until the reel is over.
     _Reel(ctx, opt) {
+        outer := Input.InReel
+        Input.InReel := true
+        try
+            return this._ReelLoop(ctx, opt)
+        finally
+            Input.InReel := outer
+    }
+    ; The reel line ends with the slowest capture / work / wait of one pass:
+    ; a long wait = something else ran meanwhile (the App's timers), a long
+    ; capture = the screen copy stalled, long work = a slow CPU.
+    _ReelLoop(ctx, opt) {
         fc := this._Fc()
         rc := fc["reel"]
         io := this.deps.io
@@ -956,9 +1036,11 @@ class FishingTask {
         ; one line per reel (fishing: reel ...): passes, gaps between them,
         ; clicks; to tell a slow PC (fewer passes) from a slow controller
         polls := 0, firstT := 0, prevT := 0, maxGap := 0, clicks := 0, how := "cap"
+        maxGrab := 0, maxWork := 0, maxWait := 0
         while (now.Call() - start <= fc["minigameCapMs"]) {
             if ctx.ShouldStop()
                 return "stopped"
+            tGrab := now.Call()
             try {
                 rows := this._ReelRows(rc, bys)
             } catch as e {
@@ -970,6 +1052,7 @@ class FishingTask {
                 return "error"
             }
             t := now.Call()
+            maxGrab := Max(maxGrab, t - tGrab)
             if (polls++)
                 maxGap := Max(maxGap, t - prevT)
             else
@@ -1021,14 +1104,38 @@ class FishingTask {
                     clicks++
                 }
             }
+            tWait := now.Call()
+            maxWork := Max(maxWork, tWait - t)
             if !io.Wait(rc["pollMs"], ctx)
                 return "stopped"
+            maxWait := Max(maxWait, now.Call() - tWait)
         }
         ms := now.Call() - start
-        this.deps.log.Call(Format("fishing: reel {} ms ({}), polls {}, avg gap {} ms, max gap {} ms, clicks {}, empty up to {}{}, frame {}"
+        this.deps.log.Call(Format("fishing: reel {} ms ({}), polls {}, avg gap {} ms, max gap {} ms, clicks {}, empty up to {}{}, frame {}, slowest grab {} / work {} / wait {} ms"
             , ms, how, polls, polls > 1 ? Round((prevT - firstT) / (polls - 1)) : 0, maxGap, clicks
-            , em, em ? (emOwn ? " (bar)" : " (short)") : "", frameSteady ? "seen" : "not seen"))
+            , em, em ? (emOwn ? " (bar)" : " (short)") : "", frameSteady ? "seen" : "not seen"
+            , Round(maxGrab), Round(maxWork), Round(maxWait)))
+        this._lastReel := {gap: maxGap, grab: Round(maxGrab), work: Round(maxWork), wait: Round(maxWait)}
         return "ok"
+    }
+
+    ; After the reel and its card (never inside the reel loop): the reel's
+    ; pauses go to ReelPause; a warning is one log line (FixIt turns it into
+    ; a dashboard card, lib\FixIt.ahk "reelpause") and one errors webhook.
+    static PauseTitle := "Slow PC: reels keep pausing"
+    _PauseCheck(lost) {
+        r := this._lastReel
+        this._lastReel := ""
+        if !IsObject(r)
+            return                          ; legacy reel: no pass timings
+        r.lost := lost
+        w := this._pause.Add(r, this.deps.now.Call())
+        if !IsObject(w)
+            return
+        this.deps.log.Call("fishing: slow PC: " w.text)
+        wh := this.deps.webhook
+        if (IsObject(wh) && HasMethod(wh, "Send"))
+            try wh.Send("errors", FishingTask.PauseTitle, w.text, 0xF2A93B)
     }
 
     ; Clicks until minigameCapMs. -> "ok" | "stopped" | "error" | "nobar"

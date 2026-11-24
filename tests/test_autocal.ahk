@@ -436,8 +436,10 @@ Test_AutoCal_CraftCauldronCardsAndChecks() {
 Test_AutoCal_CraftCauldronCalibrationStillWins() {
     ; a full calibration whose title box reads: used as before, the screen
     ; is never searched
-    n := 0
-    m := CrMake(Map("cauldron", true, "lines", (x, y, w, h, scale := 1) => (n += 1, AcWsLines([["Heavenly Potion", "x"]]))))
+    ; (after Add All the screen is read for the Craft button, which has no
+    ; recorded point here: those reads are not counted)
+    n := 0, m := ""
+    m := CrMake(Map("cauldron", true, "lines", (x, y, w, h, scale := 1) => (n += !m.io.Idx("move 1000,100"), AcWsLines([["Heavenly Potion", "x"]]))))
     m.t.Run(SchedCtx())
     AssertTrue(m.io.Idx("move 700,100") > 0 && m.io.Idx("move 950,140") > 0 && m.io.Idx("move 1100,100") > 0, "the recorded search box, card and close")
     AssertEq(m.io.Count("move 2139,357") + m.io.Count("move 2467,242"), 0, "nothing at the places a screen read would give")
@@ -482,6 +484,27 @@ Test_AutoCal_CraftCauldronOnTheRealFrame() {
     m2.t.Run(SchedCtx())
     AssertEq(AcClickedNear(m2.io, 311, 1107, 30) + AcClickedNear(m2.io, 1000, 100, 0), 0, "Heavenly Potion is not in the list: no Open Recipe, no Add All")
     AssertTrue(AcClickedNear(m2.io, 2468, 232, 12) > 0, "closed with its X")
+}
+
+Test_AutoCal_CraftButtonBoxOnTheRealFrames() {
+    ; the box the Craft button is looked for in, on the live Workshop frames
+    ; (no recipe opened yet: there is no frame of the open recipe so far):
+    ; it takes in the left panel (Open Recipe / Auto) and none of the result
+    ; list, nothing in it reads as the Craft button, so nothing is clicked
+    p := Map("cauldron_add_all", {x: 1104, y: 911}, "cauldron_gui", {x: 1975, y: 217, w: 403, h: 59})   ; the preset's Add All, the title as found
+    box := CraftTask.CraftSearchBox(p)
+    for f in ["workshop_open", "workshop_search_typed"] {
+        for sc in CraftTask.CraftScales {
+            lines := AcLines(f, box, sc)
+            AssertTrue(IsObject(AutoCal.Find(lines, AutoCal.Ws.openRe)), f " " sc "x: the left panel's Open Recipe is inside the box")
+            for L in lines {
+                AssertTrue(!CraftTask.IsCraftButton(L.text), f " " sc "x: '" L.text "' is not the Craft button")
+                AssertTrue(L.x < 1955, f " " sc "x: '" L.text "' is left of the result list")
+            }
+        }
+        m := CrMake(Map("cauldron", true, "lines", (x, y, w, h, scale := 1) => Ocr.LinesFile(AcPath(f), x, y, w, h, scale)))
+        AssertEq(m.t._FindCraft(p), "", f ": no Craft button before a recipe is opened")
+    }
 }
 
 ; ---- the biome items task: the Selector's list with no calibration ------------------------
@@ -731,7 +754,61 @@ Test_AutoCal_SelectorOnTheRealFrames() {
         try FileDelete(p)
 }
 
-AcFileOcr(path) => (x, y, w, h, scale := 1) => Ocr.ReadFile(path, x, y, w, h, scale)
+; The biome items task on a saved frame: the real OCR, pixels and ink reads
+; of that frame, the user's selector_list_rect / selector_confirm recorded.
+AcSelTask(path, logs) {
+    state := A_Temp "\vesper_bi_prompt_test.json"
+    for p in [state, state ".tmp"]
+        try FileDelete(p)
+    cal := BiCal()
+    cal.r["selector_list_rect"] := {x: 822, y: 515, w: 672, h: 416}
+    cal.p["selector_confirm"] := {x: 1034, y: 820, color: 0}
+    return BiomeItemsTask({cfg: BiCfg(Map("BiomeItems.biomeSelector", 1)), io: BiIO(BiOcr([], [])), webhook: BiWh()
+        , cal: cal, log: (s) => logs.Push(s), ocr: AcFileOcr(path), lines: AcFileLines(path), rect: AcFileRect(path)
+        , ink: (x, y, w, h, scale := 1, ink := 0) => Ocr.ReadFile(path, x, y, w, h, scale, ink), now: () => 1000, statePath: state})
+}
+
+Test_AutoCal_SelectorPromptReadInItsOwnColour() {
+    ; live 2026-11-21..23: 13 of 26 Selector uses picked Abyss Curse Drive,
+    ; its prompt came up, and the macro pressed Cancel: the plain read of the
+    ; blue prompt over a bright scene lost the Drive's name ('hb s*urse
+    ; Drive ]', 'C Drive ]', 'Sss C se Drive ]', nothing). These are four of
+    ; those prompts (the macro's own screenshots, the rest blacked out).
+    for f, btnY in Map("selector_prompt_abyss_dark", 805, "selector_prompt_abyss_bright", 804
+            , "selector_prompt_abyss_grass", 794, "selector_prompt_abyss_blobs", 795) {
+        path := AcPath(f)
+        logs := []
+        t := AcSelTask(path, logs)
+        loc := t._Locate(SchedCtx())
+        AssertTrue(IsObject(loc), f ": the window is placed")
+        r := t._SelRect(), g := BiomeItemsTask.Geo
+        x := Round(r.x + g.promptDx * r.w), y := Round(loc.bar + g.promptTop * r.h), w := Round(g.promptW * r.w), h := Round(g.promptH * r.h)
+        ; the text's colour is the commonest at its edges: Abyss Curse's blue
+        cols := BiomeItemsTask.TextColors(AcFileRect(path)(x, y, w, h), w, h, 3)
+        AssertTrue(cols.Length >= 1, f ": a text colour found")
+        c := cols.Length ? cols[1] : 0
+        AssertTrue(Abs(((c >> 16) & 255) - 84) <= 20 && Abs(((c >> 8) & 255) - 142) <= 20 && Abs((c & 255) - 224) <= 20
+            , f ": the first colour " Format("#{:06X}", c) " is the prompt's blue")
+        ; read in that colour, the prompt names Abyss Curse Drive: Confirm, on
+        ; the button
+        v := t._ReadPrompt("Abyss Curse Drive", SchedCtx())
+        AssertEq(v.state, "ours", f ": the prompt names Abyss Curse Drive (read: '" BiomeItemsTask._Brief(v.pt) "')")
+        AssertTrue(IsObject(v.confirmPt) && Abs(v.confirmPt.x - 1030) <= 40 && Abs(v.confirmPt.y - btnY) <= 18
+            , f ": Confirm at " (IsObject(v.confirmPt) ? v.confirmPt.x "," v.confirmPt.y : "none") " is on the button (1030," btnY ")")
+        ; another Drive in settings: never Confirm
+        v2 := AcSelTask(path, logs)._ReadPrompt("Corrupt Ruin Drive", SchedCtx())
+        AssertEq(v2.state, "other", f ": with Corrupt Ruin Drive wanted the prompt names another Drive: Cancel")
+    }
+    ; the Corrupt Ruin prompt (purple, part of the name covered) over the
+    ; Aura Storage: never Abyss Curse's
+    logs := []
+    v := AcSelTask(AcPath("selector_prompt_over_storage"), logs)._ReadPrompt("Abyss Curse Drive", SchedCtx())
+    AssertTrue(v.state != "ours", "the purple Corrupt Ruin prompt is not Abyss Curse's (" v.state ", read: '" BiomeItemsTask._Brief(v.pt) "')")
+    for p in [A_Temp "\vesper_bi_prompt_test.json", A_Temp "\vesper_bi_prompt_test.json.tmp"]
+        try FileDelete(p)
+}
+
+AcFileOcr(path) =>(x, y, w, h, scale := 1) => Ocr.ReadFile(path, x, y, w, h, scale)
 AcFileLines(path) => (x, y, w, h, scale := 1) => Ocr.LinesFile(path, x, y, w, h, scale)
 
 ; ---- other resolutions (the real frames scaled, as test_resample.ahk) -------------------------

@@ -60,8 +60,10 @@
 ;     [General] everyoneBiomes (default DREAMSPACE,GLITCHED,CYBERSPACE) the
 ;     message also pings @everyone (opts.everyone; Webhook allows it for this
 ;     message only). Test events (ts "TEST-..." or ev.test) never mention or
-;     ping anyone. SoundPlay([General] alertSound, default *48) if [General]
-;     sound=1, Clip.Trigger("rare") if [Medal] onRareBiome=1, then
+;     ping anyone. General.biomePings (BIOME=role or user, Webhook.ParseBiomePings)
+;     adds that biome's mentions, except in a ghost server. SoundPlay(
+;     [General] alertSound, default *48) if [General] sound=1,
+;     Clip.Trigger("rare") if [Medal] onRareBiome=1, then
 ;     potions.Queue(name, ts).
 ;   - Live aura with [Medal] onRareAura=1: Auras.Decide (lib\Auras.ahk,
 ;     data\auras.json) -> Clip.Trigger("aura:" name) when listed in [Medal]
@@ -298,9 +300,10 @@ class BiomeEvents {
         st.rareActive := true
         st.rareTs := ts               ; PotionsTask only acts while this matches its event
         ; Fake test events never ping (no mention, no @everyone). In a ghost
-        ; server nobody can join: no @everyone (and no Join button).
+        ; server nobody can join: no @everyone, no biome role ping (and no
+        ; Join button).
         ghost := this._Ghost()
-        this._RareMessage(name, !test, !test && !ghost && this._Everyone(name))
+        this._RareMessage(name, !test, !test && !ghost && this._Everyone(name), (!test && !ghost) ? this._BiomePings(name) : "")
         if this._cfg.Get("General.sound", 1) {
             try this._soundFn.Call(this._cfg.Get("General.alertSound", "*48"))
         }
@@ -317,8 +320,9 @@ class BiomeEvents {
     }
 
     ; The `rare` message: screenshot, Started time, Join server link and
-    ; button, the biome's picture. mention / everyone as given.
-    _RareMessage(name, mention, everyone) {
+    ; button, the biome's picture. mention / everyone as given; pings: the
+    ; biome's own role / user mentions (Array) or "".
+    _RareMessage(name, mention, everyone, pings := "") {
         shot := ""
         try shot := this._shotFn.Call()
         desc := "## Rare biome started`n**" name "**"
@@ -329,7 +333,7 @@ class BiomeEvents {
         fields := [Webhook.Field(Emoji.Clock " Started", "<t:" now ":T> (<t:" now ":R>)")]
         if (link != "")
             fields.Push(Webhook.Field(Emoji.Link " Join server", "[Click to join](" link ")"))
-        this._Send("rare", "RARE BIOME: " name, desc, 0xF2A93B, {mention: mention, everyone: everyone, screenshot: shot, fields: fields
+        this._Send("rare", "RARE BIOME: " name, desc, 0xF2A93B, {mention: mention, everyone: everyone, pings: pings, screenshot: shot, fields: fields
             , buttons: (link != "") ? [{label: "Join Server", url: link}] : "", thumbnail: BiomeEvents.Picture(name, this._picDir)})
     }
 
@@ -453,6 +457,10 @@ class BiomeEvents {
             return false
         return Clip.NameInList(this._cfg.Get("General.everyoneBiomes", BiomeEvents.EveryoneDefault), name)
     }
+
+    ; The role / user mentions General.biomePings gives this biome (Array,
+    ; may be empty). They go with the webhook's own mention and @everyone.
+    _BiomePings(name) => Webhook.BiomePings(this._cfg.Get("General.biomePings", ""), name)
 
     ; Private-server link for the rare webhook, or "". Never logged.
     _JoinLink() {

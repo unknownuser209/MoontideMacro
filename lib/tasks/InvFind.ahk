@@ -94,7 +94,7 @@ class InvFindTask {
         }
         if !(HasMethod(env.cal, "SetFound") && HasMethod(env.cal, "Stored"))
             return false
-        if (!this._Needed() || !IsObject(env.cal.Point("inv_open")) || Input.InRoute)
+        if (!this._Needed() || !IsObject(env.cal.Point("inv_open")) || Input.Hot())
             return false
         if (this._lastAt !== "" && env.Now() - this._lastAt < InvFindTask.RetryMs)
             return false
@@ -125,16 +125,20 @@ class InvFindTask {
         if !IsObject(openPt)
             return 0
         inv := this._Up()
+        clicked := false
         if !IsObject(inv) {
             if ((why := env.Unsafe("setup")) != "") {
                 env.Log("setup: the inventory was not looked at: " why)
                 return 0
             }
             env.Click(openPt)
+            clicked := true
             if !env.Wait(InvFindTask.OpenMs, ctx)       ; preempted: closed first; a halt sends nothing
                 return CleanupCtx.Halted(ctx) ? 0 : this._Close(CleanupCtx(ctx), openPt, 0)
             inv := this._Up()
         }
+        if clicked                                      ; Test my calibration reads it (lib\CalHealth.ahk)
+            IsObject(inv) ? CalHealth.Ok("inv_open", openPt) : CalHealth.Fail("inv_open", "a click on it did not open the inventory", openPt)
         if !IsObject(inv) {
             env.Log("setup: the inventory did not show after a click on inv_open (its title and tabs did not read): no step placed")
             return this._GiveUp(0)
@@ -150,6 +154,8 @@ class InvFindTask {
         if cal.Stored("inv_items_tab") {
             rec := cal.Point("inv_items_tab")
             moved := IsObject(rec) && (Abs(rec.x - inv.tab.x) > 5 || Abs(rec.y - inv.tab.y) > 5) && !env.InvOpen(rec)
+            if moved
+                CalHealth.Fail("inv_items_tab", "the inventory's tabs did not read there; its Items tab was found at " inv.tab.x "," inv.tab.y, rec)
         }
         parts := Map("inv_items_tab", inv.tab, "inv_search", inv.search, "inv_use", inv.use, "inv_tile1_rect", inv.tile1, "inv_desc_rect", inv.desc)
         placed := "", n := 0

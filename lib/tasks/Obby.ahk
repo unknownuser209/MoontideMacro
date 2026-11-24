@@ -215,6 +215,9 @@ class ObbyTask {
             this._auraFn := () => {known: false, name: ""}
         this._set := ""              ; {name, at}: the last aura change seen on the button
         this._owed := ""             ; {prev}: the aura still to put back after a halted run
+        this._uiFailKind := ""       ; the stuck window behind the last failed swap (_UiFail)
+        this._retryRestore := false  ; _Restore: failed on a stuck search, owed until after the rejoin
+        this._retriedFor := ""       ; the aura that already had its rejoin retry (once per aura)
         this._missStreak := 0        ; obbies in a row where every run missed the blessing
         this._btn := ""              ; the button's last OCR read
         this._tab := 1               ; storage tab of the current search try (Tabs index)
@@ -388,10 +391,10 @@ class ObbyTask {
             return false
         cctx := CleanupCtx(ctx)
         ok := this._Restore(c, info.prev, cctx)
-        if (ok || !cctx.ShouldStop())
-            this._owed := ""                            ; done, or failed and reported
+        if (!ok && (cctx.ShouldStop() || this._retryRestore))
+            this.Owe(info)                              ; halted, or the search was stuck: after the rejoin
         else
-            this.Owe(info)
+            this._owed := ""                            ; done, or failed and reported
         return ok
     }
 
@@ -1251,8 +1254,10 @@ class ObbyTask {
             if env.BuyPrompt("obby")
                 continue
             if this._Open(c) {
-                if (tries >= ObbyTask.CloseTries)
+                if (tries >= ObbyTask.CloseTries) {
+                    CalHealth.Fail("aura_close", "the Aura Storage stayed open after " tries " clicks on it", c.aura_close)
                     break
+                }
                 if (Input.ClickGuard(io, ctx, "the Aura Storage X") <= 0)
                     return false
                 tries++
@@ -1266,8 +1271,11 @@ class ObbyTask {
                     return false
                 continue
             }
-            if !this._Panel(c)
+            if !this._Panel(c) {
+                if (tries && !toggled)
+                    CalHealth.Ok("aura_close", c.aura_close)
                 return true
+            }
             if (waited < ObbyTask.TitleWaitMs) {
                 if !env.Wait(ObbyTask.TitlePollMs, ctx)
                     return false
@@ -1319,6 +1327,7 @@ class ObbyTask {
     _UiFail(kind, read := "") {
         env := this._env
         UiStuck.Fail(kind)
+        this._uiFailKind := kind                    ; _Restore: a stuck window, not a missing aura
         if (read != "")
             env.Log("obby: (" kind ") the box read '" SubStr(Trim(RegExReplace(read, "\s+", " ")), 1, 40) "'")
         if !this.HasOwnProp("_shotAt")
@@ -1445,20 +1454,27 @@ class ObbyTask {
             return this._SetAuraFirst(c, aura, equip, ctx, &was)
         ; left open (a halted run): no click on its button (it would close it);
         ; its panel up with the title hidden (a banner) counts as open
+        clickedOpen := false
         if !this._Open(c) && !this._Panel(c) {
             if !this._Click(c.aura_open, ctx)
                 return -1
+            clickedOpen := true
             if !env.Wait(ObbyTask.MenuMs, ctx)
                 return -1
         }
         this._opened := true
         if !this._OpenWait(c) {
+            if clickedOpen                      ; Test my calibration reads it (lib\CalHealth.ahk)
+                CalHealth.Fail("aura_open", "the Aura Storage did not open after a click on it (its title did not read over aura_search)", c.aura_open)
             ; covered by the Aura Collections screen? (_SetAura looks once more)
             this._empty := true
             this._why := "the Aura Storage window did not open (its title did not read)"
             this._UiFail("aura storage", this.HasOwnProp("_titleRead") ? this._titleRead : "")
             return 0
         }
+        if clickedOpen
+            CalHealth.Ok("aura_open", c.aura_open)
+        CalHealth.Ok("aura_search", c.aura_search)     ; its title reads over it
         found := 0, text := "", picked := 0
         Loop ObbyTask.SearchTries {
             if ctx.ShouldStop()
@@ -1588,19 +1604,26 @@ class ObbyTask {
             return 1
         }
         ; left open (a halted run): no click on its button (it would close it)
+        clickedOpen := false
         if !this._Open(c) && !this._Panel(c) {
             if !this._Click(c.aura_open, ctx)
                 return -1
+            clickedOpen := true
             if !env.Wait(ObbyTask.MenuMs, ctx)
                 return -1
         }
         this._opened := true
         if !this._OpenWait(c) {
+            if clickedOpen                      ; Test my calibration reads it (lib\CalHealth.ahk)
+                CalHealth.Fail("aura_open", "the Aura Storage did not open after a click on it (its title did not read over aura_search)", c.aura_open)
             this._empty := true
             this._why := "the Aura Storage window did not open (its title did not read)"
             this._UiFail("aura storage", this.HasOwnProp("_titleRead") ? this._titleRead : "")
             return 0
         }
+        if clickedOpen
+            CalHealth.Ok("aura_open", c.aura_open)
+        CalHealth.Ok("aura_search", c.aura_search)     ; its title reads over it
         text := ObbyTask.SearchText(aura)
         tile := "", tabName := "", done := false
         ; Regular, Special, Regular, ... (Eden is under Special). When
@@ -1840,12 +1863,31 @@ class ObbyTask {
     }
 
     ; After the run: the previous aura back (or Sailor off when there was none).
+    ; Live 2026-11-22 06:32: the game's aura search broke mid-run (it listed
+    ; nothing, even for the aura's own name), so Kyawthuite_Remembrance was
+    ; left off with "put it back by hand" at night. A put-back that failed on
+    ; a stuck storage / search (_UiFail) stays owed (PutBack) and asks the
+    ; stuck-UI escape for a rejoin, which fixes the search; the next obby
+    ; run's PutOnSailor keeps the owed aura and puts it back after.
     _Restore(c, prev, ctx) {
         env := this._env
+        this._uiFailKind := ""
+        this._retryRestore := false
         r := (prev != "") ? this._SetAura(c, prev, true, ctx) : this._SetAura(c, this.wear, false, ctx)
         if (r > 0) {
             env.Log("obby: " (prev != "" ? prev " equipped again" : this.wear " unequipped"))
+            this._retriedFor := ""
             return true
+        }
+        ; once per aura: an aura that is really gone (sold, deleted) also lists
+        ; nothing, and must not rejoin after every run
+        if (r = 0 && prev != "" && this._uiFailKind != "" && this._retriedFor != prev) {
+            UiStuck.Fail(this._uiFailKind, UiStuck.TripAt)
+            this._retryRestore := true
+            this._retriedFor := prev
+            env.Log("obby: could not equip " prev " again (" this._why "): the game's " this._uiFailKind
+                . " is stuck, so the macro rejoins and puts " prev " back after the next obby run")
+            return false
         }
         if (r = 0) {
             msg := (prev != "" ? "could not equip " prev " again" : "could not unequip " this.wear) " (" this._why "): put it back by hand"
@@ -1983,6 +2025,7 @@ class ObbyTask {
         if (state = "open") {
             open := true                           ; left open (by an earlier run): no click
         } else if (state = "") {
+            CalHealth.Fail("buff_expand", "it did not show its recorded colour (the buff list button)", expand)
             this._why := "the buff list button (buff_expand) does not show its calibrated colour: not clicked (recalibrate it if this repeats)"
             env.Log("obby: " this._why)
             ; what was on screen, for the next look at why (61 of 61 failed, 2026-11-17)
@@ -1992,6 +2035,7 @@ class ObbyTask {
             return -1
         }
         if !open {
+            CalHealth.Ok("buff_expand", expand)
             env.Click(expand)
             if env.BuyPrompt("obby") {
                 this._why := "a Roblox purchase prompt came up after the buff_expand click (closed with Esc)"
@@ -2004,6 +2048,7 @@ class ObbyTask {
             Loop {
                 if ((env.pixelFn)(pt.x, pt.y, pt.color, ObbyTask.PixelTol) || this._BarStar(pt)) {
                     seen := true
+                    CalHealth.Ok("obby_blessing", pt)
                     break
                 }
                 if (waited >= ObbyTask.BlessingMs || !env.Wait(ObbyTask.PollMs, ctx))

@@ -204,11 +204,15 @@ class QuestsTask {
                 Screen.Mode := "RH"
                 try {
                     opened := this._WaitOpen(ctx, area)
+                    if (opened = 1 && IsObject(area) && !this._foundWins)
+                        CalHealth.Ok("quest_board_rect", area)
                     ; recorded, but nothing read in it: is the board on
                     ; screen somewhere else? (one look; the game's "no
                     ; quests" notification already answered it)
-                    if (opened = 0 && IsObject(area) && !RegExMatch(this._notice, QuestsTask.NoQuestRe) && this._FindBoard(true))
+                    if (opened = 0 && IsObject(area) && !RegExMatch(this._notice, QuestsTask.NoQuestRe) && this._FindBoard(true)) {
+                        CalHealth.Fail("quest_board_rect", "no quest text read in it; the board was found elsewhere on screen", area)
                         opened := 1
+                    }
                     if (opened = 1 && IsObject(this._found) && (this._foundWins || !IsObject(area)))
                         area := QuestsTask.Panel(this._found["quest_board_rect"])
                 } finally

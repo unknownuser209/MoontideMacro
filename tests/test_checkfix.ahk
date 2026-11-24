@@ -232,15 +232,11 @@ Test_Buttons_TextPadded() {
             I18n.Use(code)
             d := Dashboard(Config.Load(dir))
             bad := CfButtonsBad(d._gui, code " dashboard")
-            ; the sidebar's simple-mode button (both states) and the dry-run chip
-            for simple in [true, false] {
-                d.SetSimple(simple)
-                for c in [d.Ctrl("simpleMode"), d._chip] {
-                    p := UiDashPos(c), n := I18nNeed(c, c.Text, 9999, true)
-                    if (n.w + 2 * Theme.BtnPad > p.w || n.h > p.h)
-                        bad .= " | " code ": '" c.Text "' needs " (n.w + 2 * Theme.BtnPad) "x" n.h " in " p.w "x" p.h
-                }
-            }
+            ; the sidebar's dry-run chip
+            c := d._chip
+            p := UiDashPos(c), n := I18nNeed(c, c.Text, 9999, true)
+            if (n.w + 2 * Theme.BtnPad > p.w || n.h > p.h)
+                bad .= " | " code ": '" c.Text "' needs " (n.w + 2 * Theme.BtnPad) "x" n.h " in " p.w "x" p.h
             UiDashClose(d), d := ""
             w := SetupWizard(Config.Load(dir))
             Loop SetupWizard.Steps {
@@ -363,7 +359,6 @@ Test_I18n_RuntimeTextsTranslated() {
         I18n.Use("de")
         de := I18n.LoadFile("de")
         d := Dashboard(Config.Load(dir))
-        AssertTrue(InStr(d.Ctrl("simpleMode").Text, StrUpper(de["Simple mode"])), "simple mode: " d.Ctrl("simpleMode").Text)
         st := d.Ctrl("calStatus").Text
         AssertTrue(RegExMatch(st, "^(\d+)", &n) && st == Format(de["{1} of {2} steps ready"], n[1], Calibrate.Steps().Length), "calibrate status: " st)
         lv := d.Ctrl("calibrate")

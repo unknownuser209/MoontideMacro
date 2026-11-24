@@ -409,10 +409,19 @@ Test_Obby_UnknownAuraDoesNothing() {
 }
 
 Test_Obby_RestoreFailureIsReported() {
-    ; the old aura's tile is not found after the run: Sailor stays, the user is told
+    ; the old aura's tile is not found after the run: the first time it is
+    ; owed for one rejoin (the search may be stuck, 2026-11-22); still not
+    ; found on the next run: Sailor stays, the user is told
+    UiStuck.Reset()
     o := QmObbyTask("Glock", , , , ["Sailor"])
     o.s.initial := "Glock"
     AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+    AssertEq(o.wh.Count("errors"), 0, "first miss: no report yet")
+    AssertEq(o.t.Owed(), "Glock", "owed for the retry")
+    UiStuck.Reset()
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen again")
+    AssertEq(o.t.Owed(), "", "not owed after the retry failed")
+    UiStuck.Reset()
     found := false
     for m in o.wh.sent
         found := found || (m.event = "errors" && InStr(m.desc, "Glock") && InStr(m.desc, "by hand"))
@@ -538,6 +547,40 @@ Test_Obby_NameVerdictAcrossScales() {
     AssertEq(ObbyTask.NameVerdict(dutch, "Sailor_Flying_Dutchman"), "same", "partial reads agree with the whole one")
     AssertEq(ObbyTask.NameVerdict(dutch, "Sailor"), "other", "Flying Dutchman is not Sailor")
     AssertEq(ObbyTask.NameVerdict(["", "", ""], "Luminosity"), "unread", "a logo")
+}
+
+; live 2026-11-22 06:32: the game's aura search listed nothing at the
+; put-back, and Kyawthuite_Remembrance was left off for the night. A
+; put-back that fails on a stuck search stays owed and asks for a rejoin;
+; the next run keeps the owed aura and puts it back.
+Test_Obby_PutBackOnAStuckSearchIsOwedAndRejoins() {
+    UiStuck.Reset()
+    try {
+        o := QmObbyTask("Glock")
+        sw := o.t.PutOnSailor(SchedCtx())
+        AssertTrue(sw.ok, "Sailor on")
+        AssertEq(sw.prev, "Glock", "Glock before")
+        UiStuck.Reset()
+        saved := o.s.owned
+        o.s.owned := ["Sailor"]                     ; the search lists no Glock now
+        AssertEq(o.t.PutBack(SchedCtx(), sw), false, "not put back")
+        AssertEq(o.t.Owed(), "Glock", "still owed")
+        AssertEq(UiStuck.Due(), true, "the stuck-UI rejoin is due")
+        AssertTrue(QmObbyLogHas(o.logs, "rejoins and puts Glock back after the next obby run"), "says what happens")
+        AssertTrue(!QmObbyLogHas(o.logs, "put it back by hand"), "no 'by hand'")
+        AssertEq(o.wh.Count("errors"), 0, "no error report")
+        ; after the rejoin the search works: the next run keeps Glock as the aura before
+        UiStuck.Reset()
+        o.s.owned := saved
+        sw2 := o.t.PutOnSailor(SchedCtx())
+        AssertEq(sw2.prev, "Glock", "the owed aura is the one before")
+        AssertTrue(o.t.PutBack(SchedCtx(), sw2), "put back after the rejoin")
+        AssertEq(o.t.Owed(), "", "nothing owed")
+        h := o.s.State().hist
+        AssertEq(h[h.Length], "Glock", "Glock on again")
+    } finally {
+        UiStuck.Reset()
+    }
 }
 
 ; put-back: the previous aura's tile is picked by its name, the lookalikes

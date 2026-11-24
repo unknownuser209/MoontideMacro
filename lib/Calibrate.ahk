@@ -169,6 +169,38 @@ class Calibrate {
         return Calibrate._store.Has(id)
     }
 
+    ; The recording as one string ("x,y" or "x,y,w,h"), "" when the step is
+    ; not recorded (found ones are not). lib\CalHealth.ahk keys on it.
+    static StoredKey(id) {
+        Calibrate._Ensure()
+        if !Calibrate._store.Has(id)
+            return ""
+        e := Calibrate._store[id]
+        return e["x"] "," e["y"] (e.Has("w") ? "," e["w"] "," e["h"] : "")
+    }
+
+    ; The Roblox client size the step was recorded at ("1920x1080"), ""
+    ; when unknown (recorded before sizes were kept, or a preset).
+    static RecordedAt(id) {
+        Calibrate._Ensure()
+        e := Calibrate._store.Has(id) ? Calibrate._store[id] : ""
+        return (IsObject(e) && e.Has("at")) ? e["at"] : ""
+    }
+
+    ; () -> the client size a step is recorded at (Screen maps to Roblox's
+    ; client while the wizard runs). Tests swap it.
+    static AtFn := () => Screen.cw "x" Screen.ch
+    static _At() {
+        a := ""
+        try a := String(Calibrate.AtFn.Call())
+        return RegExMatch(a, "^\d{3,5}x\d{3,5}$") ? a : ""
+    }
+    static _WithAt(m) {
+        if ((a := Calibrate._At()) != "")
+            m["at"] := a
+        return m
+    }
+
     static _DropFound(id := "") {
         if (id = "") {
             Calibrate._found := Map(), Calibrate._foundWins := Map()
@@ -197,7 +229,7 @@ class Calibrate {
             throw ValueError("Calibrate: rectangle needs non-zero width and height")
         if !IsObject(Pixel.SigParse(sig))
             throw ValueError("Calibrate: bad signature")
-        Calibrate._store[id] := Map("x", Min(x1, x2), "y", Min(y1, y2), "w", w, "h", h, "sig", sig)
+        Calibrate._store[id] := Calibrate._WithAt(Map("x", Min(x1, x2), "y", Min(y1, y2), "w", w, "h", h, "sig", sig))
         Calibrate._Save()
     }
 
@@ -286,6 +318,31 @@ class Calibrate {
     ; at every size and version-1 files (taken at 2560x1440) stay valid.
     static ToDesign(sx, sy) => Screen.Inv(sx, sy)
 
+    ; The capture of step id: mapped back in the Screen mode its window is
+    ; used in (ModeOf), so a spot recorded off 16:9 (16:10, a wide window)
+    ; lands where the task clicks it. At 16:9 every mode gives the same
+    ; point (as before). Until 2026-11-23 every step was mapped back
+    ; stretched ("S"): an inventory / Aura Storage / quest panel spot
+    ; recorded at 16:10 came out up to ~60 px off where the task looked.
+    static CaptureDesign(id, sx, sy) => Screen.WithMode(Calibrate.ModeOf(id), () => Calibrate.ToDesign(sx, sy))
+
+    ; The Screen mode each step's window maps in (lib\Screen.ahk): the
+    ; inventory, the Aura Storage and the Fisher's purchase window scale
+    ; evenly ("C"), the quest panel hugs the right edge ("RH"; its Exit and
+    ; > stretch); the rest stretches ("S"). As the tasks use them.
+    static ModeC := ["inv_", "aura_", "fisher_qty", "fisher_confirm", "fisher_purchase_close"]
+    static ModeRH := ["quest_board_rect", "quest_accept", "quest_dismiss"]
+    static ModeOf(id) {
+        id := String(id)
+        for p in Calibrate.ModeRH
+            if (id = p)
+                return "RH"
+        for p in Calibrate.ModeC
+            if (SubStr(id, 1, StrLen(p)) = p)
+                return "C"
+        return "S"
+    }
+
     ; ok | missing | bad  (state of the file at last load)
     static LoadStatus() {
         Calibrate._Ensure()
@@ -295,7 +352,7 @@ class Calibrate {
     ; Store a point and save. The value stays in memory even if saving throws.
     static SetPoint(id, x, y, color) {
         Calibrate._Ensure()
-        Calibrate._store[id] := Map("x", Integer(x), "y", Integer(y), "color", Pixel.ToRgb(color))
+        Calibrate._store[id] := Calibrate._WithAt(Map("x", Integer(x), "y", Integer(y), "color", Pixel.ToRgb(color)))
         Calibrate._DropFound(id)
         Calibrate._Save()
     }
@@ -307,7 +364,7 @@ class Calibrate {
         w := Abs(x2 - x1), h := Abs(y2 - y1)
         if (w < 1 || h < 1)
             throw ValueError("Calibrate: rectangle needs non-zero width and height")
-        Calibrate._store[id] := Map("x", Min(x1, x2), "y", Min(y1, y2), "w", w, "h", h)
+        Calibrate._store[id] := Calibrate._WithAt(Map("x", Min(x1, x2), "y", Min(y1, y2), "w", w, "h", h))
         Calibrate._DropFound(id)
         Calibrate._Save()
     }
@@ -404,6 +461,7 @@ class Calibrate {
         add("cauldron_result_2", "rect", "Type Godly Potion in the search box (three results). Hover the TOP-LEFT then the BOTTOM-RIGHT corner of the SECOND result card, the same parts as the first. Only needed for the Godly Potions.")
         add("cauldron_open_recipe", "point", "Recipe selected. Hover the Open Recipe button.")
         add("cauldron_add_all", "point", "Recipe open. Hover the Add All button.")
+        add("cauldron_craft", "point", "Recipe open. Hover the Craft button. Optional: found on screen when not recorded.")
         add("cauldron_close", "point", "Hover the button that closes the cauldron window.")
         add("stella_dialog", "rect", "Walk into Stella so her dialog shows. Hover the TOP-LEFT then the BOTTOM-RIGHT corner of her NAME ('Stella') at the top of the dialog.")
         add("daily_claim", "point", "Daily Rewards popup open (it shows after you join). Hover its Claim button (do not press it). The macro claims today's reward there by itself.")
@@ -511,7 +569,8 @@ class Calibrate {
                     if (win = g.Hwnd())
                         sess.Notice("Move the pointer onto the target (off this window), then press " key ".")
                     else {
-                        d := Calibrate.ToDesign(mx, my)        ; stored in design space
+                        cur := sess.Current()                  ; stored in design space, in its window's mode
+                        d := IsObject(cur) ? Calibrate.CaptureDesign(cur["id"], mx, my) : Calibrate.ToDesign(mx, my)
                         sess.Capture(d.x, d.y)
                     }
                 }
@@ -1019,8 +1078,16 @@ class Calibrate {
         return ""
     }
 
-    ; -> normalised Map or "" if malformed.
+    ; -> normalised Map or "" if malformed. "at" (the client size it was
+    ; recorded at, "1920x1080") is kept when well-formed.
     static _ParseEntry(e) {
+        m := Calibrate._ParseXY(e)
+        if (IsObject(m) && e.Has("at") && RegExMatch(String(e["at"]), "^\d{3,5}x\d{3,5}$"))
+            m["at"] := String(e["at"])
+        return m
+    }
+
+    static _ParseXY(e) {
         if !(e is Map && e.Has("x") && e.Has("y") && e["x"] is Integer && e["y"] is Integer)
             return ""
         if e.Has("w") {
@@ -1050,6 +1117,8 @@ class Calibrate {
                 steps[id] := Map("x", e["x"], "y", e["y"], "w", e["w"], "h", e["h"])
             else
                 steps[id] := Map("x", e["x"], "y", e["y"], "color", Format("0x{:06X}", e["color"]))
+            if e.Has("at")
+                steps[id]["at"] := e["at"]
         }
         list := []
         for s in Calibrate.Steps()

@@ -22,11 +22,12 @@ Moontide Macro v2.0: the big one
 - Screen sizes without a preset get the nearest one.
 
 **Fishing, shop and crafting**
-- **Fish shop** replaces the Craft cycle. It buys your potions at the Fisher in the same visit as the sell, and buys again every 30 minutes (Craft.buyEveryMin) as well as after each "auto crafted" message. Before, a missed message could leave the auto craft without potions for hours.
+- **Fish shop** replaces the Craft cycle. It buys your potions at the Fisher only after an "auto crafted" message, once per message, in the same visit as the sell when one comes first. It no longer buys on every Start or on a timer, which spent all the fish points.
 - **Fisher shop.** It now uses the shop's real Buy layout, finds a potion by its name when a tile shows another item, and logs every purchase.
 - **Stella's cauldron.** The cauldron step now:
   - waits for the Workshop to open;
   - presses Enter in the search;
+  - presses Craft after Add All, just in case auto craft did not. It finds the button by its word, or you can record it (optional Calibrate step "cauldron_craft");
   - waits for the portal teleport into Stella's Sanctuary, and walks again if it missed.
 - **The walk to the Fisher** tries up to 3 times. After a craft trip, the macro goes straight back to the fishing spot.
 

@@ -15,12 +15,16 @@
 ;     hook     one webhook Map: post to it only (tools\sinister_test.ahk),
 ;              in place of the "sinister" event's routing
 ;
-;   rep.Spawn(key)   the fight with the boss begins (MinionsTask: boss in
-;                    sight). key = this spawn (the GRAVEYARD's start): the
+;   rep.Spawn(key [, who])  the fight with the boss begins (MinionsTask:
+;                    boss in sight). key = this spawn (the GRAVEYARD's start): the
 ;                    same key again posts nothing (one message per spawn,
 ;                    whether it was posted or skipped). Posts a card like
-;                    the biome cards ("Boss Spawned - Sinister S." + Join
-;                    Server) on the "sinister" event. The Join Server link
+;                    the biome cards ("Sinister S. has spawned" + Join
+;                    Server) on the "sinister" event. who = "s" / "p" or
+;                    "orb:<Name>" (ChatWatch: an orb in the chat): an orb's
+;                    card ("Typhoon orb has spawned") goes once per orb per
+;                    OrbGapMs and leaves the boss fight's state alone (no
+;                    dead edit for orbs). The Join Server link
 ;                    is left out (the card still goes, as the biome cards)
 ;                    when General.joinButton is off, the link is empty or
 ;                    not a roblox.com link, or ghost() is not false (audit
@@ -33,7 +37,7 @@
 ;   rep.Killed(why)  dead for sure (a kill toast): the edit
 ;   rep.Gone()       the biome changed: the spawn is over; not dead by then
 ;                    = it despawned, the message stays as it is
-;   rep.dead         true once the edit to "Boss Dead" was made
+;   rep.dead         true once the edit to "<boss> is dead" was made
 ;   rep.msg          the WebhookText handle ("" = nothing posted)
 ;
 ; KILLED (GUESSED: the boss not seen dying yet). The boss (2500 HP, its
@@ -53,6 +57,10 @@
 class SinisterReport {
     static Event := "sinister"
     static Color := Map("s", 0x5B2A86, "p", 0xE8731C)    ; GRAVEYARD purple, PUMPKIN MOON orange
+    ; orbs (2026-11-22): their biome's colour; an orb not listed gets OrbColor
+    static OrbColors := Map("Typhoon", 0x3FA7D6, "Flame", 0xD62828, "Raincloud", 0x4A6FD0)
+    static OrbColor := 0x8FD3FF
+    static OrbGapMs := 120000        ; one message per orb per 2 min (ChatWatch dedupes the line too)
     static DeadFill := 0.08
     static LowReads := 2
     static LowKeepMs := 5000
@@ -73,25 +81,52 @@ class SinisterReport {
 
     static SpawnGapMs := 900000      ; one message per 15 min, whoever saw it first
 
-    ; "Sinister S." / "Sinister P." (anything else counts as S)
-    static BossName(boss := "s") => "Sinister " (StrLower(String(boss)) = "p" ? "P" : "S") "."
+    ; "s" / "p" / "orb:<Name>" (anything else counts as S); an orb's name
+    ; comes from the OCR: letters and digits only, so it can never break
+    ; the card's markdown
+    static Who(boss := "s") {
+        boss := String(boss)
+        if RegExMatch(boss, "i)^orb:(.*)$", &m) {
+            name := SubStr(RegExReplace(m[1], "[^A-Za-z0-9]"), 1, 20)
+            return "orb:" (name != "" ? name : "Biome")
+        }
+        return (StrLower(boss) = "p") ? "p" : "s"
+    }
+
+    static IsOrb(boss) => SubStr(SinisterReport.Who(boss), 1, 4) = "orb:"
+
+    ; "Sinister S." / "Sinister P." / "Typhoon orb" (2026-11-22, a tester:
+    ; "__ has spawned", orbs "__ orb has spawned")
+    static BossName(boss := "s") {
+        w := SinisterReport.Who(boss)
+        if (SubStr(w, 1, 4) = "orb:")
+            return SubStr(w, 5) " orb"
+        return "Sinister " StrUpper(w) "."
+    }
+
+    static ColorOf(boss := "s") {
+        w := SinisterReport.Who(boss)
+        if (SubStr(w, 1, 4) != "orb:")
+            return SinisterReport.Color[w]
+        n := SubStr(w, 5)
+        return SinisterReport.OrbColors.Has(n) ? SinisterReport.OrbColors[n] : SinisterReport.OrbColor
+    }
 
     ; The cards, in the style of the biome cards (2026-11-16, the user: match
     ; "Biome Started"): time, a quoted heading, the Join Server link + button.
-    ; unix: seconds (default now).
+    ; unix: seconds (default now). 2026-11-22: "<name> has spawned" (was
+    ; "Boss Spawned - <name>"), the same for an orb.
     static SpawnCard(link, boss := "s", unix := "") {
         u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
-        b := (StrLower(String(boss)) = "p") ? "p" : "s"
         ; link "": General.joinButton is off, the card names no server
-        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Spawned - " SinisterReport.BossName(b) (link != "" ? "`n> **[Join Server](" link ")**" : "")
-            , color: SinisterReport.Color[b], buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
+        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## " SinisterReport.BossName(boss) " has spawned" (link != "" ? "`n> **[Join Server](" link ")**" : "")
+            , color: SinisterReport.ColorOf(boss), buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
     }
 
     static DeadCard(link, boss := "s", unix := "") {
         u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
-        b := (StrLower(String(boss)) = "p") ? "p" : "s"
-        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## Boss Dead - " SinisterReport.BossName(b)
-            , color: SinisterReport.Color[b], buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
+        return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## " SinisterReport.BossName(boss) " is dead"
+            , color: SinisterReport.ColorOf(boss), buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
     }
 
     _Reset() {
@@ -100,8 +135,10 @@ class SinisterReport {
     }
 
     ; boss: "s" (Sinister S., GRAVEYARD) or "p" (Sinister P., the November
-    ; 2026 one), as the message names it
+    ; 2026 one), as the message names it; "orb:<Name>" -> _OrbSpawn
     Spawn(key, boss := "s") {
+        if SinisterReport.IsOrb(boss)
+            return this._OrbSpawn(SinisterReport.Who(boss))
         key := String(key)
         if (this._has && key == this._key)
             return false
@@ -121,37 +158,69 @@ class SinisterReport {
         this._Reset()
         this._boss := b
         this._open := true
-        link := this._LinkNow()
-        ; General.joinButton off (Alerts), no usable link or not in the
-        ; private server: the card goes out without the link, as the biome
-        ; cards (BiomeEvents._JoinLink)
-        off := false
-        try off := !this._cfg.Get("General.joinButton", 1)
-        if off
-            link := ""
-        else if (link = "")
-            this._Log("sinister: no usable private server link - the boss message goes without the Join Server link")
-        else if this._Ghost() {
-            link := ""
-            this._Log("sinister: not in your private server (or not known) - the boss message goes without the Join Server link")
-        }
-        if !IsObject(this._wh)
+        link := this._JoinLink("boss")
+        h := this._Post(SinisterReport.SpawnCard(link, b))
+        if !IsObject(h)
             return false
-        h := ""
-        ; pings each webhook's Mention (2026-11-16, the user: it never @'d me)
-        try h := this._wh.PostText(SinisterReport.Event, this._Mark(SinisterReport.SpawnCard(link, b))
-            , IsObject(this._hook) ? {hook: this._hook, mention: true} : {mention: true})
-        catch Any as e {
-            this._Log("sinister: the Discord message failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
-            return false
-        }
-        if !IsObject(h) {
-            this._Log("sinister: no webhook has the sinister event - no Discord message")
-            return false
-        }
         this.msg := h, this._link := link, this._postedAt[b] := now
         this._Log("sinister: boss spawn message queued (" h.parts.Length " webhook(s))")
         return true
+    }
+
+    ; An orb's card (who "orb:<Name>"): once per orb per OrbGapMs, the boss
+    ; fight's message and state untouched (orbs get no dead edit)
+    _OrbSpawn(who) {
+        now := this._Now()
+        name := SinisterReport.BossName(who)
+        if (this._postedAt.Has(who) && now - this._postedAt[who] < SinisterReport.OrbGapMs) {
+            this._Log("sinister: " name " already announced " Round((now - this._postedAt[who]) / 1000) " s ago - no second message")
+            return false
+        }
+        h := this._Post(SinisterReport.SpawnCard(this._JoinLink("orb"), who))
+        if !IsObject(h)
+            return false
+        this._postedAt[who] := now
+        this._Log("sinister: " name " spawn message queued (" h.parts.Length " webhook(s))")
+        return true
+    }
+
+    ; the Join Server link for a card, "" when General.joinButton is off
+    ; (Alerts), there is no usable link or not in the private server: the
+    ; card goes out without it, as the biome cards (BiomeEvents._JoinLink)
+    _JoinLink(what) {
+        link := this._LinkNow()
+        off := false
+        try off := !this._cfg.Get("General.joinButton", 1)
+        if off
+            return ""
+        if (link = "") {
+            this._Log("sinister: no usable private server link - the " what " message goes without the Join Server link")
+            return ""
+        }
+        if this._Ghost() {
+            this._Log("sinister: not in your private server (or not known) - the " what " message goes without the Join Server link")
+            return ""
+        }
+        return link
+    }
+
+    ; the card on the "sinister" event -> the handle, "" = not sent (logged)
+    _Post(card) {
+        if !IsObject(this._wh)
+            return ""
+        h := ""
+        ; pings each webhook's Mention (2026-11-16, the user: it never @'d me)
+        try h := this._wh.PostText(SinisterReport.Event, this._Mark(card)
+            , IsObject(this._hook) ? {hook: this._hook, mention: true} : {mention: true})
+        catch Any as e {
+            this._Log("sinister: the Discord message failed (" Webhook.ScrubText(e is Error ? e.Message : String(e)) ")")
+            return ""
+        }
+        if !IsObject(h) {
+            this._Log("sinister: no webhook has the sinister event - no Discord message")
+            return ""
+        }
+        return h
     }
 
     ; a test report's cards say so on their first line

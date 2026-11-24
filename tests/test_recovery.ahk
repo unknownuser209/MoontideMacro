@@ -175,6 +175,22 @@ Test_Recovery_DisconnectScreenClosesAndRejoins() {
     AssertEq(rig2.closes, 0, "Roblox left open without a link")
 }
 
+; Mid-reel (Input.InReel) the 1000x560 disconnect read waits: on a tester's
+; PC it paused the reel ~1 s and the fish got away (log 2026-11-23).
+Test_Recovery_NoDisconnectReadMidReel() {
+    rig := RcRig()
+    rig.screen := "Disconnected`nLost connection (Error Code: 277)"
+    Input.InReel := true
+    try {
+        AssertEq(rig.task.CanRun(rig.state), false, "mid-reel: not read")
+        AssertEq(rig.ocrCalls, 0, "no OCR mid-reel")
+    } finally {
+        Input.InReel := false
+    }
+    AssertEq(rig.task.CanRun(rig.state), true, "read on the first check after the reel")
+    AssertEq(rig.ocrCalls, 1, "one read")
+}
+
 Test_Recovery_CanRun_StuckTimeout() {
     rig := RcRig()
     rig.task.CanRun(rig.state)

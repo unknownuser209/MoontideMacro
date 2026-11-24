@@ -32,7 +32,11 @@ class BiIO {
         this.log.Push("wheel " dir " " n)
         this.ocr.Scroll(dir = "down" ? n : -n)
     }
-    Wait(ms, ctx := "") => !(IsObject(ctx) && ctx.ShouldStop())
+    Wait(ms, ctx := "") {
+        if HasProp(this.ocr, "t")               ; BiOcr's own clock (other screens fakes have none)
+            this.ocr.t += ms
+        return !(IsObject(ctx) && ctx.ShouldStop())
+    }
     Moved(x, y) {
         for e in this.log
             if (e = "move " x "," y)
@@ -82,6 +86,9 @@ class BiOcr {
         this.barBlank := false      ; the bottom bar does not read (pale on a bright sky)
         this.btnBlank := false      ; the prompt's buttons do not read either
         this.promptBlank := false   ; the placed prompt read gets nothing
+        this.nameBlankMs := 0       ; the prompt's Drive name reads in no read for this long after the row click
+        this.t := 0                 ; ms waited so far (BiIO.Wait)
+        this.pickT := 0             ; t at the row click
         this.useCloses := true      ; Use closes the inventory
         this.missing := ""          ; a Drive whose row never reads (OCR miss, none left)
         this.descReads := 0
@@ -93,6 +100,9 @@ class BiOcr {
         this.noOpen := false        ; the inventory button does nothing
     }
     Scroll(n) => this.scrolled := (n > 0) ? 100 : 0
+    ; the open prompt's Drive name as it reads now (pale on a bright scene:
+    ; nothing legible for nameBlankMs after the click)
+    PickName() => (this.t - this.pickT < this.nameBlankMs) ? "C Drive" : this.pick
     ; the Drive under screen y (or "")
     DriveAt(y) {
         i := (y - 400 + this.scrolled) // 100 + 1
@@ -129,6 +139,7 @@ class BiOcr {
         } else if (this.selector && this.pick = "" && x = 800 && y >= 400 && y < 1200) {
             d := this.DriveAt(y)            ; a row: its prompt
             this.pick := (this.wrongPick != "") ? this.wrongPick : d
+            this.pickT := this.t
         } else if (this.selector && this.pick != "" && x = 600 && (Abs(y - 974) <= 30 || y = 600)) {
             this.confirmed := this.pick     ; Confirm
             this.pick := "", this.selector := false
@@ -144,7 +155,7 @@ class BiOcr {
             if (this.selector && !this.barBlank && h <= 400 && y <= 1280 && y + h >= 1280)
                 return "BIOME SELECTOR IS READY TO BE USED"
             if (this.selector && this.pick != "" && h >= 400)    ; the whole list rect: the prompt over it
-                return "You have selected`n[ " this.pick " ]`nAre you sure?`nConfirm Cancel"
+                return "You have selected`n[ " this.PickName() " ]`nAre you sure?`nConfirm Cancel"
             if (this.selector && this.pick != "" && !this.btnBlank && h <= 120 && Abs(y + h // 2 - 974) <= 25)
                 return "Confirm      Cancel"            ; the prompt's buttons
             this.strips++
@@ -154,7 +165,7 @@ class BiOcr {
         if (r = "560,560,450,208" && this.promptBlank)
             return ""
         if (r = "560,560,450,208")              ; the prompt
-            return (this.selector && this.pick != "") ? "You have selected`n[ " this.pick " ]`nAre you sure?" : ""
+            return (this.selector && this.pick != "") ? "You have selected`n[ " this.PickName() " ]`nAre you sure?" : ""
         cb := Input.ResetChecks["collection"]
         if (x = cb.x && y = cb.y)
             return this.coll ? "Aura Collections [Exit]" : ""
@@ -246,7 +257,7 @@ BiMake(gets, tiles, descs, calExtra := "") {
     for p in [path, path ".tmp"]
         try FileDelete(p)
     deps := {cfg: BiCfg(gets), io: io, webhook: wh, cal: BiCal(calExtra), log: (s) => logs.Push(s)
-        , ocr: (x, y, w, h, scale := 1) => ocr.Read(x, y, w, h), now: () => clk.t
+        , ocr: (x, y, w, h, scale := 1) => ocr.Read(x, y, w, h), rect: (x, y, w, h) => [], now: () => clk.t
         , clock: () => DateAdd("20261102000000", clk.t // 1000, "Seconds"), statePath: path}
     t := BiomeItemsTask(deps)
     return {t: t, io: io, ocr: ocr, wh: wh, logs: logs, clk: clk, deps: deps}
@@ -630,6 +641,91 @@ Test_BiomeItems_PromptReadAcrossTheWindow() {
     AssertEq(m2.t.Run(SchedCtx()), 0, "nothing used")
     AssertEq(m2.ocr.confirmed, "", "never confirmed")
     AssertTrue(m2.io.Moved(908, 600), "Cancel on the calibrated Confirm's row")
+}
+
+; live 2026-11-21..23 (the owner: "it clicks my biome but clicks out of it
+; before it clicks Confirm"): 13 of 26 uses picked Abyss Curse Drive, its
+; prompt came up and Cancel was pressed, the Drive's name unread. The name
+; as it was misread still names it; a name read on a later try is Confirmed;
+; one never read is Confirmed only when the Drive's own row was clicked.
+Test_BiomeItems_PromptMisreadsStillNameTheDrive() {
+    P := (s) => BiomeItemsTask.PromptDrive(s)
+    AssertEq(P("You ave selecte`nhb s*urse Drive ]"), 7, "'hb s*urse Drive ]' (live 04:25) is Abyss Curse")
+    AssertEq(P("Yo have selected`nA qsßurse Drive ]"), 7, "'A qsßurse Drive ]' (live 04:25, 2x) is Abyss Curse")
+    AssertEq(P("You have selected`n[ Abyss Curse Drive ]`nAre you sure?"), 7, "read whole")
+    AssertEq(P("You have selected`n[ Corupt Rin Drive ]"), 4, "'Corupt Rin' is Corrupt Ruin")
+    AssertEq(P("You -have selected`nC Drive ]"), 0, "'C Drive ]' (live 10:00) names no Drive for sure")
+    AssertEq(P("You -have selected You -have selected"), 0, "no name line (live 05:09)")
+    AssertEq(P("You -have selected [ Live ]"), 0, "'[ Live ]' (live 18:56) is no Drive")
+    AssertEq(P(""), 0, "nothing read")
+    AssertEq(P("You have selected`n[ Corrupt Ruin Drive ]"), 4, "another Drive's prompt names that one")
+    AssertEq(BiomeItemsTask.PromptIs("You ave selecte`nhb s*urse Drive ]", 4), false, "a misread Abyss Curse is never Corrupt Ruin")
+    AssertEq(BiomeItemsTask.PromptName("You av selecte hb spurse Drive ]"), "hbspurse", "the name without the prompt's words")
+}
+
+Test_BiomeItems_TextColorsFindTheSolidText() {
+    ; a 60x12 scene: a shaded sky (bright, every pixel its own colour) with
+    ; two lines of thin solid strokes in Abyss Curse's blue
+    w := 60, h := 12, px := []
+    Loop h {
+        y := A_Index - 1
+        Loop w {
+            x := A_Index - 1
+            if (Mod(x, 6) < 2 && (y < 4 || y > 7))
+                px.Push(0x548EE0)
+            else
+                px.Push(((150 + x) << 16) | ((200 + y) << 8) | 255)
+        }
+    }
+    cols := BiomeItemsTask.TextColors(px, w, h, 3)
+    AssertTrue(cols.Length >= 1 && cols[1] = 0x548EE0, "the strokes' blue first (" (cols.Length ? Format("#{:06X}", cols[1]) : "none") ")")
+    AssertEq(BiomeItemsTask.TextColors([], w, h).Length, 0, "no pixels: no colour")
+    AssertEq(BiomeItemsTask.TextColors("", w, h).Length, 0, "a failed grab: no colour")
+    flat := []
+    Loop w * h
+        flat.Push(0x66DD80)
+    AssertEq(BiomeItemsTask.TextColors(flat, w, h).Length, 0, "one flat colour (grass): no edges, no colour")
+}
+
+Test_BiomeItems_PromptNameReadOnALaterTryIsConfirmed() {
+    ; the first reads after the click miss the name; it reads on the third
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m.ocr.nameBlankMs := BiomeItemsTask.PickMs + 2 * BiomeItemsTask.PromptRetryMs
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m.ocr.confirmed, "Abyss Curse Drive", "Confirm pressed, not Cancel")
+    AssertTrue(!m.io.Moved(908, 974) && !m.io.Moved(908, 600), "Cancel never clicked")
+    AssertTrue(BiSaid(m, "named Abyss Curse Drive on read 3"), "logged")
+    ; never legible, but Abyss Curse's own row read and was clicked: Confirm
+    m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m2.ocr.nameBlankMs := 999999
+    AssertEq(m2.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m2.ocr.confirmed, "Abyss Curse Drive", "confirmed")
+    AssertTrue(BiSaid(m2, "own row was clicked: Confirm"), "logged why")
+    ; never legible and the row was clicked by its place (it did not read
+    ; either): nothing says it is ours, Cancel
+    m3 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m3.ocr.nameBlankMs := 999999
+    m3.ocr.missing := "Abyss Curse Drive"
+    m3.ocr.useCloses := false
+    AssertEq(m3.t.Run(SchedCtx()), 0, "nothing used")
+    AssertEq(m3.ocr.confirmed, "", "never confirmed")
+    AssertTrue(m3.io.Moved(908, 974), "Cancel clicked")
+    AssertEq(m3.ocr.selector, false, "the Selector closed")
+    ; another Drive named: Cancel at once on the second read, never Confirm,
+    ; even though its own row was clicked
+    m4 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m4.ocr.wrongPick := "Corrupt Ruin Drive"
+    m4.ocr.useCloses := false
+    AssertEq(m4.t.Run(SchedCtx()), 0, "nothing used")
+    AssertEq(m4.ocr.confirmed, "", "never confirmed")
+    AssertTrue(BiSaid(m4, "names Corrupt Ruin Drive, not Abyss Curse Drive"), "logged which Drive it named")
+}
+
+BiSaid(m, s) {
+    for l in m.logs
+        if InStr(l, s)
+            return true
+    return false
 }
 
 Test_BiomeItems_TileMisreads() {

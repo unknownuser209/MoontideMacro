@@ -54,10 +54,6 @@
       "quests": [ { "name": "Lucky Clover", "enabled": true } ]
     },
     {
-      "name": "Time of Patience", "enabled": true,
-      "quests": [ { "name": "Time of Patience", "enabled": true } ]
-    },
-    {
       "name": "Meditation", "enabled": true,
       "quests": [
         { "name": "Meditation I", "enabled": true },
@@ -68,10 +64,6 @@
     {
       "name": "Obby", "enabled": true,
       "quests": [ { "name": "To the Temple", "enabled": true } ]
-    },
-    {
-      "name": "Gear", "enabled": true,
-      "quests": [ { "name": "Your First Gear", "enabled": false } ]
     }
   ]
 }

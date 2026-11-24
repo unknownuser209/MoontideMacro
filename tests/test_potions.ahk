@@ -1875,3 +1875,125 @@ Test_Pt_CountDigitsFirst() {
         AssertEq(r.task._ReadCount(cal, 2, ""), "999", "digit reads disagree: the white-ink reads")
     } finally r.Done()
 }
+
+; ---- qty "all" (2026-11-22 tester ask: pop every potion you own) -----------
+
+; A potions.json whose Lucky Potion caps are perBiome / perDay / perRun.
+PtAllCfg(perBiome, perDay, perRun) {
+    return Map("potions", [
+        Map("id", "Lucky Potion", "name", "Lucky Potion", "desc", "[Lucky]", "locked", 0
+            , "perBiome", perBiome, "perDay", perDay, "perRun", perRun),
+        PtEntry("Speed Potion", "Speed Potion", "Quick Roll")])
+}
+
+PtLogHas(r, text) {
+    for t in r.logs
+        if InStr(t, text)
+            return true
+    return false
+}
+
+Test_Pt_QtyAllParsing() {
+    for v in ["all", "ALL", " All ", "max", "Max", "MAX"]
+        AssertTrue(PotionsTask.IsAll(v), "'" v "' is all")
+    for v in ["", "al", "alll", "all5", "5", 5, 0, "everything"]
+        AssertTrue(!PotionsTask.IsAll(v), "'" v "' is not all")
+    AssertTrue(InStr(PotionsTask.ReasonText["bad_qty"], "all"), "bad_qty text names all")
+}
+
+Test_Pt_QtyAllUsesUntilNoneLeft() {
+    r := PtRig(Map("potCfg", PtAllCfg(50, 50, 50), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.Run()
+        AssertEq(r.game.UseClicks(), 5, "every Lucky owned (5)")
+        AssertEq(r.Count("Lucky Potion"), 0, "none left")
+        AssertEq(r.Count("Lucky Potion L"), 9, "the tile that moved up untouched")
+        AssertEq(r.BiomeUses("Lucky Potion"), 5, "5 recorded")
+        AssertTrue(r.wh.Has("potions", "1 -> 0"), "the last one reported 1 -> 0")
+        AssertTrue(r.wh.Has("potions", "use 5 of all"), "uses counted against all")
+        AssertEq(r.wh.Count("errors"), 0, "no errors")
+        AssertTrue(PtLogHas(r, "is set to all"), "all logged")
+    } finally
+        r.Done()
+}
+
+Test_Pt_QtyAllClampedByCaps() {
+    ; perBiome 2 (any case of all / max)
+    for q in ["ALL", "Max"] {
+        r := PtRig(Map("list", [Map("name", "Lucky Potion", "qty", q)]))
+        try {
+            r.Run()
+            AssertEq(r.game.UseClicks(), 2, q ": perBiome 2 clamps all")
+            AssertEq(r.Count("Lucky Potion"), 3, q ": 3 left")
+            AssertEq(r.BiomeUses("Lucky Potion"), 2, q ": 2 recorded")
+            AssertTrue(r.wh.Has("potions", "cap_biome"), q ": stopped by the biome cap")
+            AssertEq(r.wh.Count("errors"), 0, q ": a cap is no error")
+        } finally
+            r.Done()
+    }
+    ; perDay 3, perRun 4
+    r := PtRig(Map("potCfg", PtAllCfg(50, 3, 4), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.Run()
+        AssertEq(r.game.UseClicks(), 3, "perDay 3 clamps all")
+        AssertTrue(r.wh.Has("potions", "cap_day"), "stopped by the day cap")
+    } finally
+        r.Done()
+    r := PtRig(Map("potCfg", PtAllCfg(50, 50, 4), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.Run()
+        AssertEq(r.game.UseClicks(), 4, "perRun 4 clamps all")
+        AssertTrue(r.wh.Has("potions", "cap_run"), "stopped by the run cap")
+    } finally
+        r.Done()
+    ; a cap of 0 refuses all like any qty
+    r := PtRig(Map("potCfg", PtAllCfg(0, 50, 50), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.Run()
+        AssertEq(r.game.UseClicks(), 0, "perBiome 0: nothing used")
+    } finally
+        r.Done()
+    ; dry run says how many all would use (caps and owned count)
+    r := PtRig(Map("dryRun", 1, "potCfg", PtAllCfg(3, 50, 50), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.Run()
+        AssertEq(r.game.UseClicks(), 0, "dry run clicks nothing")
+        AssertTrue(r.wh.Has("potions", "would use 3"), "dry run: would use 3 (perBiome)")
+    } finally
+        r.Done()
+}
+
+Test_Pt_QtyAllBoundedByAllMax() {
+    old := PotionsTask.AllMax
+    PotionsTask.AllMax := 3
+    r := PtRig(Map("potCfg", PtAllCfg(50, 50, 50), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.Run()
+        AssertEq(r.game.UseClicks(), 3, "no cap below it: AllMax bounds all")
+        AssertEq(r.Count("Lucky Potion"), 2, "2 left")
+        AssertTrue(PtLogHas(r, "at most 3 uses"), "the bound is logged")
+    } finally {
+        PotionsTask.AllMax := old
+        r.Done()
+    }
+    ; the count never reads: nothing used, as for a number
+    r := PtRig(Map("potCfg", PtAllCfg(50, 50, 50), "list", [Map("name", "Lucky Potion", "qty", "all")]))
+    try {
+        r.game.countFn := (it) => "x?5"
+        r.Run()
+        AssertEq(r.game.UseClicks(), 0, "count unreadable: no click")
+        AssertTrue(r.wh.Has("potions", "unreadable"), "reported unreadable")
+    } finally
+        r.Done()
+}
+
+Test_Pt_QuestKeepsExactNumber() {
+    r := PtRig(Map("potCfg", PtAllCfg(50, 50, 50)))
+    try {
+        AssertTrue(!r.task.QueueQuest("Lucky Potion", "all"), "a quest never takes all")
+        AssertTrue(r.task.QueueQuest("Lucky Potion", 2), "a quest takes its number")
+        r.task.Run(r.ctx)
+        AssertEq(r.game.UseClicks(), 2, "quest: exactly 2")
+    } finally
+        r.Done()
+}

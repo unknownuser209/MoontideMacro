@@ -8,6 +8,7 @@
 #Include %A_LineFile%\..\..\Calibrate.ahk
 #Include %A_LineFile%\..\..\UiStuck.ahk
 #Include %A_LineFile%\..\..\AutoCal.ahk
+#Include %A_LineFile%\..\..\CalHealth.ahk
 ; ---------------------------------------------------------------------------
 ; TaskEnv: the injectable dependencies shared by the quest and merchant tasks
 ; (and ChatWatch). Every side effect goes through here so tests can swap it.
@@ -195,6 +196,7 @@ class TaskEnv {
         if !RegExMatch((this.ocrFn)(tabPt.x - 90, tabPt.y - 25, 180, 50, 2), "i)item|gear")
             return false
         UiStuck.Ok("inventory")                 ; its tabs read: the inventory works
+        CalHealth.Ok("inv_items_tab", tabPt)    ; (only when it is the recording)
         return true
     }
 

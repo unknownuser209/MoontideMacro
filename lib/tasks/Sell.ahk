@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\FishLogic.ahk
+#Include %A_LineFile%\..\..\UiStuck.ahk
 ; ---------------------------------------------------------------------------
 ; SellTask: walk the timed route to the seller, sell, walk back (priority 6).
 ;
@@ -8,8 +9,11 @@
 ;                   or state.needRepath (Start / fishing failsafe re-path)
 ;   .Run(ctx): a re-path after MaxRepathStreak re-paths in a row without a
 ;              catch (state.repathStreak, FishingTask) does NOT walk again:
-;              something on screen is stuck open (a shop, a menu), so the
-;              macro is paused (ctx.Pause) and deps.stuck(msg) reports it.
+;              something on screen is stuck open (a shop, a menu, a frozen
+;              catch card). The first time it asks the stuck-UI escape for a
+;              rejoin (UiStuck, state.repathRejoin); if the walks still fail
+;              after it, the macro is paused (ctx.Pause) and deps.stuck(msg)
+;              reports it.
 ;              On success state.fishLoops := 0 and state.needRepath := false;
 ;              if stopped part way both are left untouched, so the next Sell
 ;              run starts over (it begins with a reset to spawn, which also
@@ -93,7 +97,22 @@ class SellTask {
         if ctx.ShouldStop()
             return
         streak := this.state.HasProp("repathStreak") ? this.state.repathStreak : 0
+        if (this.state.needRepath && streak >= SellTask.MaxRepathStreak
+            && !(this.state.HasProp("repathRejoin") && this.state.repathRejoin)) {
+            ; first time: a rejoin clears a game window frozen open (live
+            ; 2026-11-22 03:44: a "Fish Caught!" card froze mid-slide over the
+            ; fishing panel, survived 4 respawns, and paused the macro for the
+            ; night). The stuck-UI escape asks for it after this task; a catch
+            ; clears state.repathRejoin, so only walks that still fail after
+            ; the rejoin pause.
+            this.state.repathRejoin := true
+            this.state.repathStreak := 0
+            UiStuck.Fail("fishing panel", UiStuck.TripAt)
+            d.log.Call("sell: re-walked " streak " times in a row without catching a fish: something on screen is stuck open, rejoining to clear it")
+            return
+        }
         if (this.state.needRepath && streak >= SellTask.MaxRepathStreak) {
+            this.state.repathRejoin := false
             msg := "re-walked " streak " times in a row without catching a fish, so the macro is PAUSED."
                 . " Something on screen is probably stuck open (a shop, a dialog, the Roblox menu): close it, then press F2."
             d.log.Call("sell: " msg)

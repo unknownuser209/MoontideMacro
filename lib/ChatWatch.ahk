@@ -9,6 +9,8 @@
 ;   cw := ChatWatch(deps)      deps as TaskEnv (cfg, log, io, cal, ocr, now,
 ;                              webhook) plus:
 ;                                onFound  callable onFound(name) per new hit
+;                                onBoss   callable onBoss("s" | "p") per boss line
+;                                onOrb    callable onOrb(name) per orb line
 ;   cw.Check()  -> Array of newly detected merchant names ("Mari"/"Jester")
 ;                  Call it as often as you like (e.g. every scheduler tick):
 ;                  it only reads the chat every merchant.chatPollSec seconds
@@ -46,7 +48,10 @@ class ChatWatch {
         this._env := TaskEnv(deps)
         this._onFound := TaskEnv.Dep(deps, "onFound", "")
         this._onBoss := TaskEnv.Dep(deps, "onBoss", "")      ; onBoss("s" | "p")
+        this._onOrb := TaskEnv.Dep(deps, "onOrb", "")        ; onOrb("Typhoon")
         this._bossAt := Map()        ; "s" / "p" -> ms of the last report (or of the start)
+        this._orbSeen := Map()       ; orb name -> ms of its last sighting
+        this._orbAbsent := Map()     ; orb name -> reads in a row without it since
         this._bossPrimed := false    ; the first read only notes lines already in the chat
         this._lastPoll := ""
         this._seen := Map()          ; name -> ms of last sighting
@@ -85,6 +90,49 @@ class ChatWatch {
             pos += m.Len
         }
         return found
+    }
+
+    ; ORBS (2026-11-22, a tester: "Typhoon orb has spawned"): the Biome Orb
+    ; of a weather biome, named in the chat. NOT SEEN YET: the game's line
+    ; (no clip, wiki or guide quotes it). Guessed: "<Name> Orb" on one line
+    ; with a spawn word after it (spawned / appeared / arrived / emerged),
+    ; e.g. "A Typhoon Orb has spawned!". The game font reads o as 0 and a as
+    ; o. A player typing "typhoon orb spawned" matches too (as for the
+    ; bosses). Names known: Typhoon (the tester), Flame (HELL), Raincloud
+    ; (RAINY); any other word before "Orb" is kept as read.
+    static OrbRe := "i)\b([a-z][a-z0-9]{2,15})\s+[o0]rbs?\b[^\r\n]{0,40}?\b(?:sp[a@o]wn|[a@o]pp[e3][a@o]r|[a@o]rr[i1l!|]v|[e3]m[e3]rg)"
+    static OrbKnown := [["Typhoon", "i)^typh[o0a][o0a]n$"], ["Flame", "i)^f[l1i|][a@o]m[e3]$"], ["Raincloud", "i)^r[a@o][i1l!|]ncl[o0a]ud$"]]
+    ; a word before "orb" that names no orb ("the orb has spawned")
+    static OrbNot := "i)^(?:the|biome|new|this|that|one|rare|another|any|some|your|our|their|his|her|its|and)$"
+    static OrbGapSec := 120           ; gone from the chat this long (and AbsentReads reads) before the same orb again
+
+    ; -> Array of orb names ("Typhoon", ...), one per orb named in the OCR text
+    static DetectOrb(text) {
+        found := []
+        seen := Map()
+        for line in StrSplit(String(text), "`n", "`r") {
+            pos := 1
+            while (pos := RegExMatch(line, ChatWatch.OrbRe, &m, pos)) {
+                pos += m.Len
+                name := ChatWatch.OrbName(m[1])
+                if (name != "" && !seen.Has(name))
+                    seen[name] := true, found.Push(name)
+            }
+        }
+        return found
+    }
+
+    ; the word read before "orb" -> its name ("typhaon" -> "Typhoon"), "" = no orb's
+    static OrbName(word) {
+        word := String(word)
+        if RegExMatch(word, ChatWatch.OrbNot)
+            return "Biome"
+        for k in ChatWatch.OrbKnown
+            if RegExMatch(word, k[2])
+                return k[1]
+        if !RegExMatch(word, "i)^[a-z][a-z0-9]*$")
+            return ""
+        return StrUpper(SubStr(word, 1, 1)) StrLower(SubStr(word, 2))
     }
 
     static Names := ["Mari", "Jester"]
@@ -142,7 +190,10 @@ class ChatWatch {
         if (text == "")
             return []                           ; unknown: no action
 
-        this._CheckBoss(text, now)
+        first := !this._bossPrimed
+        this._bossPrimed := true
+        this._CheckBoss(text, now, first)
+        this._CheckOrb(text, now, first)
         hits := []
         names := ChatWatch.Detect(text)
         here := Map()
@@ -179,11 +230,9 @@ class ChatWatch {
     ; A boss named in the chat -> onBoss, once per boss per BossGapSec. With
     ; startOld, a line already there at the first read is only noted (an old
     ; spawn is not announced at every start).
-    _CheckBoss(text, now) {
+    _CheckBoss(text, now, first) {
         env := this._env
         bosses := ChatWatch.DetectBoss(text)
-        first := !this._bossPrimed
-        this._bossPrimed := true
         for b in bosses {
             if (this._bossAt.Has(b) && now - this._bossAt[b] < ChatWatch.BossGapSec * 1000)
                 continue
@@ -195,6 +244,35 @@ class ChatWatch {
             env.Log("chat: Sinister " StrUpper(b) ". spawned (read in the chat)")
             if IsObject(this._onBoss)
                 try (this._onBoss)(b)
+        }
+    }
+
+    ; An orb named in the chat -> onOrb, with the merchants' sliding dedupe
+    ; (2026-11-22): orbs come every few biomes and their line stays in the
+    ; chat, so a fixed gap would re-send a line still there. The same orb
+    ; again only after it was gone OrbGapSec and AbsentReads reads.
+    _CheckOrb(text, now, first) {
+        env := this._env
+        orbs := ChatWatch.DetectOrb(text)
+        here := Map()
+        for name in orbs
+            here[name] := true
+        for name, _ in this._orbSeen
+            if !here.Has(name)
+                this._orbAbsent[name] := (this._orbAbsent.Has(name) ? this._orbAbsent[name] : 0) + 1
+        for name in orbs {
+            suppressed := this._orbSeen.Has(name) && (now - this._orbSeen[name] < ChatWatch.OrbGapSec * 1000
+                || (this._orbAbsent.Has(name) ? this._orbAbsent[name] : 0) < ChatWatch.AbsentReads)
+            this._orbSeen[name] := now, this._orbAbsent[name] := 0
+            if suppressed
+                continue
+            if (first && this._startOld) {
+                env.Log("chat: a " name " orb line was already in the chat at the start: not announced")
+                continue
+            }
+            env.Log("chat: " name " orb spawned (read in the chat)")
+            if IsObject(this._onOrb)
+                try (this._onOrb)(name)
         }
     }
 }

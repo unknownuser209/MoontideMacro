@@ -34,6 +34,7 @@
 #Include %A_LineFile%\..\Remote.ahk
 #Include %A_LineFile%\..\ClockWatch.ahk
 #Include %A_LineFile%\..\SetupCheck.ahk
+#Include %A_LineFile%\..\CalTest.ahk
 #Include %A_LineFile%\..\LogBundle.ahk
 #Include %A_LineFile%\..\ui\Dashboard.ahk
 #Include %A_LineFile%\..\ui\Overlay.ahk
@@ -254,6 +255,7 @@ class App {
         this._walkName := ""         ; route OnTestRoute is walking (for _WalkRoute)
         this._recRespawnFn := App._Dep(d, "recordRespawn", (ctx) => this.input.ResetToSpawn(ctx))
         this._sleepFn := App._Dep(d, "sleep", (ms) => Sleep(ms))
+        this._exitFn := App._Dep(d, "exit", () => ExitApp(0))
         this._testCtx := ""
         this._toolBusy := false      ; a route Record / Test or Calibrate is running (Start refused)
         this.launchFn := App._Dep(d, "launch", (fn) => SetTimer(fn, -1))
@@ -364,7 +366,8 @@ class App {
             this.chat := d["chatWatch"]
         } else {
             this.chat := ChatWatch({cfg: this.cfg, webhook: this.wh, log: this._logFn
-                , onFound: ObjBindMethod(this, "_OnChatMerchant"), onBoss: ObjBindMethod(this, "_OnChatBoss"), startOld: true})
+                , onFound: ObjBindMethod(this, "_OnChatMerchant"), onBoss: ObjBindMethod(this, "_OnChatBoss")
+                , onOrb: ObjBindMethod(this, "_OnChatOrb"), startOld: true})
         }
     }
 
@@ -379,7 +382,7 @@ class App {
         ra := () => !(this.cfg.Get("General.fishing", 1) && this._taskMap.Has("sell"))
         try {
             switch name {
-                case "fishing": return FishingTask(cfg, this.state, {log: this._logFn})
+                case "fishing": return FishingTask(cfg, this.state, {log: this._logFn, webhook: this.wh})
                 case "sell": return SellTask(cfg, this.state, {log: this._logFn, afterSell: (ctx) => this._AfterSell(ctx)
                     , stuck: (msg) => this._Error("Stuck: " msg), cal: Calibrate})
                 case "craft": return CraftTask({cfg: cfg, webhook: this.wh, log: this._logFn})
@@ -579,11 +582,14 @@ class App {
         this.state.startSell := false
         this.state.needRepath := false          ; a re-path left from the last run is not this one's
         this.state.repathStreak := 0
+        this.state.repathRejoin := false
         this.state.limboHeld := false
         this._limboChecked := false             ; the first poll restores inLimbo (_LimboRestore)
         this._limboTrip := false
         if (this._taskMap.Has("merchant") && HasMethod(this._taskMap["merchant"], "Reset"))
             this._taskMap["merchant"].Reset()   ; a merchant announced before Stop is long gone
+        if (this._taskMap.Has("fishing") && HasMethod(this._taskMap["fishing"], "Reset"))
+            try this._taskMap["fishing"].Reset()    ; the slow-PC warning counts this session's reels
         if (IsObject(this.recovery) && HasMethod(this.recovery, "Reset"))
             try this.recovery.Reset()           ; a disconnect / hold from the last run is not this one's
         this.state.limboMode := this._LimboMode()
@@ -841,8 +847,9 @@ class App {
         ; a timed walk is playing: a Roblox log read or a webhook post here
         ; runs between the walk's key down and up and holds the key longer,
         ; so the walk overshoots (live 2026-11-10: the sell route missed the
-        ; Fisher 1 in 3 inside the macro, 6 of 6 alone). Both wait for it.
-        walking := Input.InRoute         ; set by Input.PlayRoute (every walk)
+        ; Fisher 1 in 3 inside the macro, 6 of 6 alone). Both wait for it,
+        ; and for the fishing reel (Input.InReel: a pause there loses the fish).
+        walking := Input.Hot()           ; Input.PlayRoute (every walk), FishingTask._Reel
         if (!walking && (this._lastPoll == "" || now - this._lastPoll >= App.LogPollMs)) {
             this._lastPoll := now
             this.PollLogs()
@@ -936,6 +943,12 @@ class App {
                 return
             }
         }
+        ; mid-reel: no task's CanRun (their screen reads paused the reel ~1 s
+        ; on a tester's PC and the fish got away), and an interrupt there
+        ; would lose the fish anyway. Picked on the first tick after the reel
+        ; (~8 s at most); the focus / window checks above still run.
+        if Input.InReel
+            return
         this._MaybeChatDue(now, cur)
         if this.ctx.IsPreempted()
             return
@@ -1343,8 +1356,9 @@ class App {
         return true
     }
 
-    ; the chat is read for the merchants and for the bosses' lines
-    _ChatOn() => (this.cfg.Get("merchant.enabled", 1) || this.cfg.Get("Limited.bossAlert", 1)) ? true : false
+    ; the chat is read for the merchants and for the bosses' and orbs' lines
+    _ChatOn() => (this.cfg.Get("merchant.enabled", 1) || this.cfg.Get("Limited.bossAlert", 1)
+        || this.cfg.Get("Limited.orbAlert", 0)) ? true : false
 
     _ChatPollMs() {
         s := this.cfg.Get("merchant.chatPollSec", ChatWatch.DefaultPollSec)
@@ -1368,6 +1382,16 @@ class App {
             return
         if IsObject(this.sinister)
             try this.sinister.Spawn("chat:" boss ":" this.Now(), boss)
+    }
+
+    ; An orb named in the chat (2026-11-22, a tester): "<Name> orb has
+    ; spawned" on the same "sinister" (Boss) event. Off by default
+    ; (Limited.orbAlert): orbs come in most weather biomes.
+    _OnChatOrb(name) {
+        if !this.cfg.Get("Limited.orbAlert", 0)
+            return
+        if IsObject(this.sinister)
+            try this.sinister.Spawn("chat:orb:" name ":" this.Now(), "orb:" name)
     }
 
     _Focus() {
@@ -1920,8 +1944,6 @@ class App {
         i := Dashboard.PageIndex(name)
         if !i
             return
-        if !this.dash.PageShown(name)
-            this.dash.SetSimple(false)          ; simple mode hides it: every page shows
         try this.dash.Show()
         this.dash.SelectPage(i)
     }
@@ -2265,7 +2287,7 @@ class App {
                 ; the dead edit 15 s later, as when the hunt sees it die
                 this.timerFn.Call(() => rep.Killed("test"), -15000)
                 this.Log("Test event: fake Sinister P. spawn to webhook " hookName)
-                return "Sent a fake Sinister P. card to " hookName ". It changes to Boss Dead in 15 s."
+                return "Sent a fake Sinister P. card to " hookName ". It changes to 'Sinister P. is dead' in 15 s."
             case "aura":
                 name := ""
                 try name := this.be.AuraAlertTo(hook)
@@ -2573,11 +2595,8 @@ class App {
             }
             Input.FastReset := true
             Input.DailyPointFn := (id) => Calibrate.Point(id)   ; Setup's daily_claim / daily_close
-        }
-        ; a new install (the setup wizard will show) starts in simple mode
-        if (mode = "normal" && SetupWizard.ShouldShow(this.cfg) && !this.cfg.Get("UI.simple", 0)) {
-            this.cfg.Set("UI.simple", 1)
-            try this.cfg.Save()
+            ; how each recorded spot did when a task used it (Test my calibration)
+            try CalHealth.Use(this.root "\data\cal_health.json")
         }
         this.ShowSplash(mode)
         try Screenshot.Cleanup()
@@ -2649,6 +2668,11 @@ class App {
     ; Never throws (a timer). Remote polling waits while a timed walk plays:
     ; a request there would hold its key down longer (see _TickBody).
     ServiceTick() {
+        ; mid-reel: everything here can wait the ~8 s (remote HTTP polls, the
+        ; clock OCR, webhook posts, the stats page); its own timestamps run
+        ; each step on the first tick after the reel
+        if Input.InReel
+            return
         now := A_TickCount
         if (IsObject(this.remote) && !Input.InRoute)
             this._ServiceStep("remote", () => this.remote.Tick())
@@ -2919,6 +2943,18 @@ class App {
 
     OnCheckSetup() => SetupCheck.Run(this.cfg)
 
+    ; "Test my calibration" (lib\CalTest.ahk): the live part (inventory,
+    ; Aura Storage) only while the macro is stopped; the dashboard comes
+    ; back to the front afterwards.
+    OnTestCalibration() {
+        try CalHealth.Flush()
+        rows := CalTest.Run(this.cfg, Map("running", () => this._started))
+        if IsObject(this.dash)
+            try WinActivate("ahk_id " this.dash._gui.Hwnd)
+        this.Log("Calibration test: " CalTest.Summary(rows))
+        return rows
+    }
+
     OnLogBundle(shots := false) {
         rep := ""
         try rep := SetupCheck.Report(SetupCheck.Run(this.cfg))
@@ -3123,12 +3159,13 @@ class App {
             "installUpdate", () => this.OnInstallUpdate(),
             "rollback", () => this.OnRollback(),
             "checkSetup", () => this.OnCheckSetup(),
+            "testCalibration", () => this.OnTestCalibration(),
             "logBundle", (shots := false) => this.OnLogBundle(shots),
             "wizard", () => this.OpenWizard(),
             "sendSummary", () => this.SendSummary(),
             "testRemote", () => this.OnTestRemote(),
             "restart", () => this.OnRestart(),
-            "close", () => (this.dash.Hide(), App.TrimMemory()))
+            "close", () => this.OnDashClose())
         this.dash := Dashboard(this.cfg, cb)
         this.overlay := Overlay(this.cfg, Map("start", cb["start"], "pause", cb["pause"], "stop", cb["stop"]))
         this.ui := [this.dash, this.overlay]
@@ -3173,6 +3210,51 @@ class App {
         }
     }
 
+    ; Dashboard X. Stopped: the macro quits, so the overlay and the tray
+    ; icon go with it (a tester closed the dashboard, the overlay stayed, and
+    ; the next launch from another folder left two overlays). Running: only
+    ; the dashboard hides; the overlay stays as the way back in.
+    ; -> "exit" | "hidden"
+    OnDashClose() {
+        if (this._started || IsObject(this._running) || this._toolBusy) {
+            if IsObject(this.dash)
+                try this.dash.Hide()
+            App.TrimMemory()
+            this.Log("Dashboard hidden; the macro keeps running. Stop it (F3), then close the dashboard to quit")
+            return "hidden"
+        }
+        this._exitFn.Call()
+        return "exit"
+    }
+
+    ; A normal launch closes any other copy of the macro first: #SingleInstance
+    ; only catches the same file, so a copy from another folder (an older
+    ; download) would keep its own overlay. WM_CLOSE lets it run its OnExit
+    ; (stop webhook, potion log); it is forced after 5 s. -> copies closed
+    static CloseOtherCopies() {
+        own := DllCall("GetCurrentProcessId", "UInt")
+        hidden := A_DetectHiddenWindows
+        DetectHiddenWindows(true)
+        pids := Map()
+        try {
+            for hwnd in WinGetList(Brand.Name " Overlay ahk_class AutoHotkeyGUI") {
+                try {
+                    pid := WinGetPID(hwnd)
+                    if (pid && pid != own)
+                        pids[pid] := true
+                }
+            }
+            for pid in pids {
+                try PostMessage(0x0010, 0, 0, , "ahk_class AutoHotkey ahk_pid " pid)
+                if !ProcessWaitClose(pid, 5)
+                    continue
+                try ProcessClose(pid)
+            }
+        }
+        DetectHiddenWindows(hidden)
+        return pids.Count
+    }
+
     ; Added with OnExit (Input's ReleaseAll hook stays registered). -> 0.
     OnExitApp(reason := "", code := 0) {
         try {
@@ -3187,6 +3269,7 @@ class App {
         }
         if IsObject(this.daily)
             try this.daily.Save()
+        try CalHealth.Flush()
         try this.clip.CancelAll()
         try this.input.ReleaseAll()
         try this.wh.Drain(3000)
@@ -3209,6 +3292,8 @@ class App {
                 holdMs := Integer(args[3])
             OnError((e, *) => (FileAppend(App.HarnessErrorText(e, App._harnessCfg) "`n", "*"), ExitApp(3)))
         }
+        if (mode = "normal")
+            App.CloseOtherCopies()
         cfg := Config.Load(root)
         App._harnessCfg := cfg
         inst := App(Map("cfg", cfg, "root", root))

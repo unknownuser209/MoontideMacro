@@ -493,6 +493,19 @@ Test_Screens_FishingStatusLineReadsUnderEden() {
         AssertEq(RegExMatch(ScrRead(f, r), FishingTask.ReadyRe), 0, f ": line out, not ready")
 }
 
+; live 2026-11-22 03:44 / 06:11: the catch card froze mid-slide with the
+; panel raised ~346 px (day, night, rain frames from the macro's own
+; screenshots). Its Fish button reads in RaisedRect at 2x; no normal frame
+; reads it there, so the X is never clicked blind.
+Test_Screens_FishingRaisedFrozenCard() {
+    s := FishingTask.RaisedRect
+    r := {x: s[1], y: s[2], w: s[3], h: s[4]}
+    for f in ["fish_raised_card_day", "fish_raised_card_night", "fish_raised_card_rain"]
+        AssertTrue(RegExMatch(ScrRead(f, r, 2), FishingTask.RaisedRe) > 0, f ": the raised panel's Fish button reads")
+    for f in ["fish_status_ready_eden", "fish_status_waiting_eden", "fish_status_anyminute_eden", "world_day", "fishshop_hell_sell", "inventory_day"]
+        AssertEq(RegExMatch(ScrRead(f, r, 2), FishingTask.RaisedRe), 0, f ": no raised panel")
+}
+
 ; ---- fishing at 1920x1080 (live 2026-11-10) ------------------------------
 ; Native 1080p frames, cropped (fish1080_<what>_x<ox>_y<oy>.png = the crop's
 ; top left on the 1920x1080 screen): the panel idle, the reel, the catch

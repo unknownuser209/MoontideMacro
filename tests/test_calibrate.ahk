@@ -174,7 +174,7 @@ Test_Calibrate_steplist_has_all_binding_ids() {
         Calibrate.Use(d "\cal.json")
         ids := CalIds(Calibrate.Steps())
         for want in ["notify_rect", "fisher_open_shop", "fisher_qty", "fisher_confirm",
-            "cauldron_gui", "cauldron_search", "cauldron_result", "cauldron_open_recipe", "cauldron_add_all", "cauldron_close", "stella_dialog",
+            "cauldron_gui", "cauldron_search", "cauldron_result", "cauldron_open_recipe", "cauldron_add_all", "cauldron_craft", "cauldron_close", "stella_dialog",
             "inv_open", "inv_items_tab", "inv_search", "inv_tile1_rect", "inv_tile2_rect", "inv_count_rect", "inv_use",
             "inv_desc_rect", "inv_amount_box",
             "quest_board_rect", "quest_accept", "quest_dismiss", "quest_close", "obby_blessing",

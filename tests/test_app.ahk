@@ -634,6 +634,82 @@ Test_App_NoLogReadOrWebhookWhileARouteWalks() {
     AssertEq(t.lw.polls, p + 1, "read after the walk")
 }
 
+; tester log 2026-11-23: 60 % caught. Every reel paused 0.6..1.6 s (the
+; owner's: 63 ms); 6 of the 8 reels with a ~1 s pause lost the fish, none of
+; the 7 without. The tick ran every task's CanRun mid-reel (Recovery's
+; disconnect OCR). Mid-reel (Input.InReel): no CanRun, no log read, no
+; webhook post, no interrupt; all of it on the first tick after the reel.
+class AppFakeCounted extends AppFakeTask {
+    checks := 0
+    CanRun(state) => (this.checks++, this.can)
+}
+
+Test_App_NoTaskChecksOrLogReadsMidReel() {
+    seen := {}
+    q := AppFakeCounted("quests", 5, false)
+    fish := AppFakeTask("fishing", 99, true, AppTestReelRun.Bind(seen))
+    t := AppTestMake(Map("tasks", Map("fishing", fish, "quests", q)))
+    seen.t := t, seen.q := q
+    t.app.Start()
+    t.app.Tick()
+    AppTestRunLaunched(t)
+    AssertEq(fish.runs, 1, "fishing ran")
+    AssertEq(seen.mid.checks, 0, "no task's CanRun mid-reel")
+    AssertEq(seen.mid.flush, 0, "no webhook post mid-reel")
+    AssertEq(seen.mid.poll, 0, "no log read mid-reel")
+    AssertEq(seen.mid.pre, false, "no interrupt mid-reel")
+    AssertEq(seen.mid.paused, false, "focus checks still run (Roblox in front: not paused)")
+    AssertTrue(seen.after.checks > 0, "CanRun again after the reel")
+    AssertEq(seen.after.pre, true, "the waiting task interrupts after the reel")
+    AssertEq(Input.InReel, false, "flag left clear")
+}
+
+AppTestReelRun(seen, self, ctx) {
+    t := seen.t, q := seen.q
+    q.can := true
+    f := t.wh.flushes, p := t.lw.polls, c := q.checks
+    t.clk.t += App.LogPollMs
+    Input.InReel := true
+    try {
+        t.app.Tick()
+        seen.mid := {flush: t.wh.flushes - f, poll: t.lw.polls - p, checks: q.checks - c, pre: ctx.IsPreempted(), paused: t.app.ctx.IsPaused()}
+    } finally {
+        Input.InReel := false
+    }
+    t.app.Tick()
+    seen.after := {checks: q.checks - c, pre: ctx.IsPreempted()}
+}
+
+; Focus lost mid-reel still pauses (clicks must not land outside Roblox).
+Test_App_FocusLossMidReelStillPauses() {
+    seen := {}
+    fish := AppFakeTask("fishing", 99, true, (self, ctx) => (Input.InReel := true, seen.t.rb.activeOk := false, seen.t.app.Tick(), Input.InReel := false, seen.paused := seen.t.app.ctx.IsPaused()))
+    t := AppTestMake(Map("tasks", Map("fishing", fish)))
+    seen.t := t
+    t.app.Start()
+    t.app.Tick()
+    try
+        AppTestRunLaunched(t)
+    finally
+        Input.InReel := false
+    AssertEq(seen.paused, true, "Roblox lost focus mid-reel: paused")
+}
+
+; The service tick (remote polls, clock OCR, webhooks, stats page) waits
+; for the reel too.
+Test_App_ServiceTickWaitsForTheReel() {
+    t := AppTestMake()
+    n := t.wh.flushes
+    Input.InReel := true
+    try
+        t.app.ServiceTick()
+    finally
+        Input.InReel := false
+    AssertEq(t.wh.flushes, n, "nothing sent mid-reel")
+    t.app.ServiceTick()
+    AssertEq(t.wh.flushes, n + 1, "sent on the first service tick after it")
+}
+
 Test_App_NotFullscreenPausesWithStatus() {
     t := AppTestMake()
     t.rb.fs := false
@@ -760,6 +836,24 @@ Test_App_ExitHookDrainsAndReturnsZero() {
     AssertEq(t.wh.drains, 1, "Drain on exit")
     AssertEq(t.clip.cancels, 1, "clips cancelled on exit")
     AssertEq(t.wh.sent[t.wh.sent.Length], "startstop", "stop webhook on exit")
+}
+
+Test_App_DashCloseQuitsWhenStopped() {
+    t := AppTestMake()
+    exits := 0
+    t.app._exitFn := () => (exits++, 0)
+    AssertEq(t.app.OnDashClose(), "exit", "stopped: the dashboard X quits")
+    AssertEq(exits, 1, "the macro exits, so the overlay goes too")
+}
+
+Test_App_DashCloseOnlyHidesWhileRunning() {
+    t := AppTestMake()
+    exits := 0
+    t.app._exitFn := () => (exits++, 0)
+    t.app.Start()
+    AssertEq(t.app.OnDashClose(), "hidden", "running: only the dashboard hides")
+    AssertEq(exits, 0, "a run is never cut short by the X")
+    AssertTrue(InStr(t.ui.logs[t.ui.logs.Length], "F3"), "says how to quit")
 }
 
 Test_App_UsagePathAbsolute() {
@@ -903,6 +997,24 @@ Test_App_ChatBossSendsItsMessage() {
     t.app.cfg.Set("Limited.bossAlert", "1")
     t.app.cfg.Set("merchant.enabled", "0")
     AssertEq(t.app._ChatOn(), true, "merchants off: the chat is still read for the bosses")
+}
+
+; an orb from the chat (2026-11-22, a tester): "<Name> orb has spawned" on the
+; boss report, only with Limited.orbAlert (off by default)
+Test_App_ChatOrbSendsItsMessageWhenOn() {
+    rep := AppFakeBossReport()
+    t := AppTestMake(Map("sinister", rep))
+    t.app._OnChatOrb("Typhoon")
+    AssertEq(rep.spawns.Length, 0, "off by default: nothing")
+    t.app.cfg.Set("Limited.orbAlert", "1")
+    t.app._OnChatOrb("Typhoon")
+    AssertEq(rep.spawns.Length, 1, "on: sent")
+    AssertEq(rep.spawns[1], "orb:Typhoon", "as an orb")
+    t.app.cfg.Set("merchant.enabled", "0")
+    t.app.cfg.Set("Limited.bossAlert", "0")
+    AssertEq(t.app._ChatOn(), true, "merchants and bosses off: the chat is still read for the orbs")
+    t.app.cfg.Set("Limited.orbAlert", "0")
+    AssertEq(t.app._ChatOn(), false, "all three off: no chat reads")
 }
 
 ; 2026-11-15: the boss report was made after the tasks, so building the

@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\TaskEnv.ahk
 #Include %A_LineFile%\..\..\GameLists.ahk
+#Include %A_LineFile%\..\..\ui\UiLogic.ahk
 ; ---------------------------------------------------------------------------
 ; MerchantTask: visit Mari / Jester and buy their want-list (spec 4.5).
 ;
@@ -22,8 +23,10 @@
 ;     {"name": "Lucky Potion", "qty": 3}  or a bare string (qty 1). The item
 ;     is found BY NAME in the shop's tab row (what Mari sells changes every
 ;     visit); old "x"/"y" fields are ignored. qty is clamped to 1..MaxQty and
-;     to the "Stock Left" the shop shows. Empty want-list -> no walk, one
-;     webhook "arrived, nothing wanted".
+;     to the "Stock Left" the shop shows. qty "all" (or "max", any case)
+;     presses the shop's Set to Max button, then Purchase; Set to Max not
+;     read -> the stock shown is typed (unreadable -> MaxQty, logged).
+;     Empty want-list -> no walk, one webhook "arrived, nothing wanted".
 ;   Preflight (nothing pressed or clicked unless all pass): the inventory
 ;     steps (inv_open, inv_items_tab, inv_search, inv_tile1_rect, inv_use,
 ;     inv_desc_rect, the same ones the potions use). No walking routes:
@@ -159,10 +162,15 @@ class MerchantTask {
         item: {x: 1472, y: 497, w: 947, h: 41},           ; "Lucky Potion | Common"
         stock: {x: 1193, y: 742, w: 236, h: 31},          ; "Stock Left: 10"
         qty: {x: 1402, y: 817},                           ; amount box
+        ; "Set to Max" right of the amount box (jester_shop.jpg; Mari's shop
+        ; is the same window). qty "all" presses it (2026-11-23, the owner:
+        ; press the game's own button, never read the stock and type it)
+        maxBtn: {x: 1660, y: 798, w: 252, h: 40},
         buy: {x: 1572, y: 881},                           ; Purchase for (N Coins)
         notice: {x: 896, y: 1203, w: 768, h: 45}          ; "You purchased 10 Lucky Potions"
     }
     static NameRe := Map("Mari", "i)m[ao]r[il1]", "Jester", "i)j[ae]st[ae]r")
+    static MaxRe := "i)\bm[ao]x\b|set\s*t[o0]"
     static SeeMs := 3000          ; dialog / shop wait
     static DialogTries := 3       ; E presses for the merchant's dialog
     static DialogMs := 1600       ; wait for her name after each E
@@ -319,6 +327,11 @@ class MerchantTask {
         env := this._env
         wants := this._WantList(name)
         if (wants.Length = 0) {
+            if this._PausedOnly(name) {
+                env.Log("merchant: " name " arrived, every want-list item is paused: not visiting")
+                env.Report("merchant", name " arrived", "Every want-list item is paused, not visiting.")
+                return false
+            }
             env.Log("merchant: " name " arrived, want-list empty: not visiting")
             env.Report("merchant", name " arrived", "Want-list is empty, not visiting.")
             return false
@@ -774,13 +787,29 @@ class MerchantTask {
         if (stock != "") {
             if (stock = 0)
                 return spec.name ": sold out"
-            qty := Min(qty, stock)
+            qty := spec.all ? stock : Min(qty, stock)
         }
-        env.Click(L.qty)
-        Input.Key("End", 30, env.io)
-        Loop MerchantTask.QtyClear
-            Input.Key("Backspace", 30, env.io)
-        Input.TypeText(String(qty), env.io)
+        ; qty "all": the shop's own Set to Max button. Only when it reads
+        ; (else the amount is typed: the stock shown, or MaxQty).
+        maxed := false
+        if spec.all {
+            mb := L.maxBtn
+            if RegExMatch(this._Ocr(mb, MerchantTask.SmallScale), MerchantTask.MaxRe) {
+                env.Click({x: mb.x + mb.w // 2, y: mb.y + mb.h // 2})
+                maxed := true
+                qty := (stock != "") ? stock : "all"
+            } else if (stock = "")
+                env.Log("merchant: " spec.name " is set to all but neither Set to Max nor its stock read: buying " qty " (MerchantTask.MaxQty)")
+            else
+                env.Log("merchant: " spec.name " is set to all but Set to Max did not read: typing the stock (" stock ")")
+        }
+        if !maxed {
+            env.Click(L.qty)
+            Input.Key("End", 30, env.io)
+            Loop MerchantTask.QtyClear
+                Input.Key("Backspace", 30, env.io)
+            Input.TypeText(String(qty), env.io)
+        }
         if !env.Wait(MerchantTask.SettleMs, ctx) || ctx.ShouldStop()
             return ""
         ; Purchase sits inside a Roblox purchase prompt's area: with one up
@@ -804,15 +833,30 @@ class MerchantTask {
         return "Purchase clicked for " qty " " spec.name " (no 'You purchased' notice seen)"
     }
 
-    ; -> {name, qty} or "".
+    ; -> {name, qty, all} or "". qty "all" / "max" (any case) -> all true,
+    ; qty MaxQty (what is bought when the stock does not read).
     static ParseItem(item) {
         if (Type(item) = "String")
-            return item = "" ? "" : {name: item, qty: 1}
+            return item = "" ? "" : {name: item, qty: 1, all: false}
         if !(item is Map && item.Has("name"))
             return ""
+        if (item.Has("qty") && MerchantTask.IsAll(item["qty"]))
+            return {name: String(item["name"]), qty: MerchantTask.MaxQty, all: true}
         qty := item.Has("qty") && IsInteger(item["qty"]) ? item["qty"] : 1
         qty := Max(1, Min(Integer(qty), MerchantTask.MaxQty))
-        return {name: String(item["name"]), qty: qty}
+        return {name: String(item["name"]), qty: qty, all: false}
+    }
+
+    ; qty "all" or "max", any case, spaces around ignored
+    static IsAll(v) => (v is String) && RegExMatch(Trim(v), "i)^(all|max)$")
+
+    ; The want-list has items, all of them paused.
+    _PausedOnly(name) {
+        env := this._env
+        if !IsObject(env.cfg)
+            return false
+        d := env.cfg.Data("merchants")
+        return d is Map && d.Has(name) && d[name] is Array && d[name].Length > 0
     }
 
     _WantList(name) {
@@ -820,6 +864,13 @@ class MerchantTask {
         if !IsObject(env.cfg)
             return []
         d := env.cfg.Data("merchants")
-        return (d is Map && d.Has(name) && d[name] is Array) ? d[name] : []
+        if !(d is Map && d.Has(name) && d[name] is Array)
+            return []
+        out := []
+        for it in d[name]
+            if !UiLogic.MerchPaused(it)
+                out.Push(it)
+        return out
     }
+
 }

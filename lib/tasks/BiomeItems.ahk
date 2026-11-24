@@ -3,6 +3,7 @@
 #Include %A_LineFile%\..\..\Biomes.ahk
 #Include %A_LineFile%\..\..\GameLists.ahk
 #Include %A_LineFile%\..\..\PotionSafety.ahk
+#Include %A_LineFile%\..\..\QuestMatch.ahk
 ; ---------------------------------------------------------------------------
 ; BiomeItemsTask: uses the biome-changing items from the inventory when their
 ; cooldowns allow: Biome Randomizer, Strange Controller, Biome Selector.
@@ -36,6 +37,11 @@
 ;                                 The strip is read again right before the
 ;                                 click. Not in view (Angelic Hymn is below
 ;                                 the fold) -> scroll the list, read again.
+;                                 Its prompt must name that Drive (read in
+;                                 the text's own colour, up to PromptTries
+;                                 times; a name never read is ours only
+;                                 when the row clicked read as ours; any
+;                                 other Drive named = Cancel).
 ;                                 Then Confirm (selector_confirm). Each use
 ;                                 SPENDS one Drive. Its cooldowns start at
 ;                                 Confirm; a Drive not read (or a preempt
@@ -151,11 +157,31 @@ class BiomeItemsTask {
     static PromptRe := "i)selected|sure|c[o0]nfirm|cancel"
     static BtnRe := "i)c[o0]nfirm|cancel"     ; the prompt's buttons: dark on light, read where the bar is not (bright sky)
     static CloseTries := 3
+    ; The prompt's text is drawn solid in the selected Drive's colour (Abyss
+    ; Curse blue 0x548EE0, Corrupt Ruin purple) on the see-through window: on
+    ; a bright green / sky scene the plain read lost the Drive's name
+    ; ('hb spurse Drive', 'C Drive', nothing: 13 of 26 uses cancelled,
+    ; 2026-11-21..23). The text's colour is found in the prompt's pixels
+    ; (TextColors: the commonest colour at sharp edges) and that colour alone
+    ; is read (Ocr "#RRGGBB" ink). The prompt is read up to PromptTries times
+    ; (the window bobs, the scene behind it moves); Cancel only when another
+    ; Drive is named.
+    static PromptTries := 4
+    static PromptRetryMs := 350
+    static InkColors := 3            ; colours tried, commonest first
+    static InkScale := 2
+    static InkEdge := 60             ; a channel this far from the pixel InkDx to the left or right: an edge
+    static InkDx := 4
+    static InkMinCount := 25         ; edge samples a colour needs (the prompt's text: ~550)
+    static InkBright := 150          ; text is bright: a channel at least this
+    static FuzzyMin := 0.55          ; a misread name ('hb spurse'): Levenshtein similarity to the Drive's
+    static FuzzyGap := 0.2           ; ... and this far ahead of the next Drive's
 
     name := "biomeitems"
     priority := 5
 
     _selRow1 := ""
+    _selByName := false              ; _PickDrive clicked a row that read as the Drive (not by its place)
     _selAuto := ""                   ; the Drive list's rect found on screen (_FindSelector)
     _closeTry := ""
 
@@ -559,30 +585,24 @@ class BiomeItemsTask {
             ; the prompt names the Drive Confirm would use: only ours (live
             ; 2026-11-21: a click through the open Selector picked Corrupt
             ; Ruin Drive)
-            loc := this._Locate(ctx)
-            if (!IsObject(loc) && this._selRow1 != "")
-                loc := {row1: this._selRow1, bar: Round(this._selRow1 + BiomeItemsTask.Geo.bar * this._SelRect().h)}
-            pt := IsObject(loc) ? this._PromptText(loc) : ""
-            confirmPt := IsObject(loc) ? this._PromptBtn(loc, "confirm") : ""
-            wide := "", cp := ""
-            if !BiomeItemsTask.PromptIs(pt, BiomeItemsTask.DriveIndex(drive)) {
-                ; the window read whole (live 05:09: pale bar and buttons on a
-                ; bright sky placed the prompt read on the title): while the
-                ; prompt is up its rows are hidden, so the only Drive named in
-                ; the window is the selected one. Confirm at the calibrated
-                ; spot then (Cancel is far to its right: a bob only misses).
-                wide := this._WideText()
-                cp := IsObject(this._selAuto) ? "" : env.cal.Point("selector_confirm")
-                if (IsObject(cp) && RegExMatch(wide, BiomeItemsTask.PromptRe) && BiomeItemsTask.PromptIs(wide, BiomeItemsTask.DriveIndex(drive))) {
-                    env.Log("biome items: the Selector's prompt names " drive " (read across the window): Confirm at its calibrated spot")
-                    pt := wide, confirmPt := {x: cp.x, y: cp.y}
-                }
+            v := this._ReadPrompt(drive, ctx)
+            if (v.state = "stop")
+                return this._Cut(c, it, ctx)
+            if (v.state = "unread" && this._selByName && v.up && IsObject(v.confirmPt)) {
+                ; its row read as the Drive and was clicked, the prompt is up,
+                ; no other Drive is named in any read: it is ours
+                env.Log("biome items: the Selector's prompt is up but no Drive's name read in it (read: '" BiomeItemsTask._Brief(v.pt)
+                    . "'); " drive "'s own row was clicked: Confirm")
+                v.state := "ours"
             }
-            if !BiomeItemsTask.PromptIs(pt, BiomeItemsTask.DriveIndex(drive)) {
+            if (v.state != "ours") {
+                loc := v.loc, pt := v.pt, cp := v.cp, wide := v.wide
                 shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
                 if (shot != "")
                     env.Log("biome items: screen at the Selector's prompt saved to " shot (IsObject(loc) ? " (bar " loc.bar ")" : ""))
-                env.Log("biome items: the Selector's prompt does not name " drive " (read: '" SubStr(Trim(RegExReplace(pt, "\s+", " ")), 1, 60) "'): Cancel, nothing confirmed")
+                n := BiomeItemsTask.PromptDrive(pt)
+                env.Log("biome items: the Selector's prompt " (v.state = "other" && n ? "names " BiomeItemsTask.Drives[n] ", not " drive : "does not name " drive)
+                    . " (read: '" BiomeItemsTask._Brief(pt) "'): Cancel, nothing confirmed")
                 if (IsObject(loc) && RegExMatch(pt, BiomeItemsTask.PromptRe)) {
                     env.Click(this._PromptBtn(loc, "cancel"))
                     env.Wait(BiomeItemsTask.InvMs, ctx)
@@ -593,7 +613,11 @@ class BiomeItemsTask {
                 }
                 return this._NoDrive(c, it, drive, ctx)
             }
-            env.Click(confirmPt)
+            if env.BuyPrompt("biome items") {
+                env.Log("biome items: a purchase prompt came up before Confirm: not confirmed")
+                return this._NoDrive(c, it, drive, ctx)
+            }
+            env.Click(v.confirmPt)
             this._Used(it)
             if !env.Wait(BiomeItemsTask.UseMs, ctx)
                 return -1
@@ -651,15 +675,125 @@ class BiomeItemsTask {
         return RegExMatch(t, BiomeItemsTask.PromptRe) > 0
     }
 
-    ; The prompt's text names Drive i and no other one.
-    static PromptIs(text, i) {
-        if (i < 1 || !BiomeItemsTask.RowIs(text, i))
-            return false
+    ; The prompt's text names Drive i and no other one (PromptDrive).
+    static PromptIs(text, i) => i >= 1 && BiomeItemsTask.PromptDrive(text) = i
+
+    ; The Drive the prompt's text names -> its index, 0 = none (or no one
+    ; Drive for sure). One Drive's word in it (RowIs) and no other's; else
+    ; the name in its brackets matched loosely (QuestMatch.Similarity of the
+    ; folded name: 'hb spurse Drive ]' is Abyss Curse, live 2026-11-23), the
+    ; best Drive FuzzyMin alike and FuzzyGap ahead of the next.
+    static PromptDrive(text) {
+        text := String(text)
+        named := []
         for d in BiomeItemsTask.Drives
-            if (A_Index != i && BiomeItemsTask.RowIs(text, A_Index))
-                return false
-        return true
+            if BiomeItemsTask.RowIs(text, A_Index)
+                named.Push(A_Index)
+        if (named.Length = 1)
+            return named[1]
+        score := []
+        for d in BiomeItemsTask.Drives
+            score.Push(0)
+        for line in StrSplit(text, "`n") {
+            name := BiomeItemsTask.PromptName(line)
+            if (StrLen(name) < 5)
+                continue
+            for d in BiomeItemsTask.Drives {
+                w := StrSplit(d, " ")
+                score[A_Index] := Max(score[A_Index], QuestMatch.Similarity(name, GameText.Fold(w[1] " " w[2])))
+            }
+        }
+        best := 0, bs := 0, second := 0
+        for i, s in score {
+            if (s > bs)
+                second := bs, bs := s, best := i
+            else if (s > second)
+                second := s
+        }
+        return (best && bs >= BiomeItemsTask.FuzzyMin && bs - second >= BiomeItemsTask.FuzzyGap) ? best : 0
     }
+
+    ; One line of the prompt -> the Drive's name in it, folded (GameText):
+    ; inside the brackets, without the prompt's own words ("You have
+    ; selected", "Drive", "Are you sure?") -> 'hb spurse Drive ]' -> "hbspurse"
+    static PromptStop := Map("you", 1, "hope", 1, "ore", 1, "sure", 1, "dripe", 1, "confirm", 1, "concei", 1)
+    static PromptName(line) {
+        s := String(line)
+        if (p := InStr(s, "["))
+            s := SubStr(s, p + 1)
+        if (p := InStr(s, "]"))
+            s := SubStr(s, 1, p - 1)
+        ws := []
+        for w in StrSplit(s, [" ", "`t"])
+            if ((f := GameText.Fold(w)) != "")
+                ws.Push(f)
+        from := 1                       ; after "selected" ('You av selecte hb spurse')
+        for i, f in ws
+            if (SubStr(f, 1, 3) = "sei")
+                from := i + 1
+        out := ""
+        for i, f in ws
+            if (i >= from && !BiomeItemsTask.PromptStop.Has(f))
+                out .= f
+        return out
+    }
+
+    static _Brief(t) => SubStr(Trim(RegExReplace(String(t), "\s+", " ")), 1, 60)
+
+    ; The prompt text's colour(s) from its pixels (px: Array of w*h
+    ; 0xRRGGBB, row-major): bright pixels at a sharp edge (a channel InkEdge
+    ; away from the pixel InkDx to the left or right), counted per 16-level
+    ; colour box; the k commonest boxes' mean colours (each kept apart from
+    ; the ones before it). The solid text is the commonest: the scene behind
+    ; is shaded, its edges spread over many colours. -> Array of 0xRRGGBB
+    static TextColors(px, w, h, k := 3) {
+        out := []
+        if (!(px is Array) || w < 2 * BiomeItemsTask.InkDx + 2 || px.Length < w * h)
+            return out
+        d := BiomeItemsTask.InkDx, e := BiomeItemsTask.InkEdge, lo := BiomeItemsTask.InkBright
+        cnt := Map(), sum := Map()
+        y := 0
+        while (y < h) {
+            row := y * w
+            x := d
+            while (x < w - d) {
+                c := px[row + x + 1]
+                r := (c >> 16) & 255, g := (c >> 8) & 255, b := c & 255
+                if (Max(r, g, b) >= lo) {
+                    a := px[row + x - d + 1], z := px[row + x + d + 1]
+                    if (BiomeItemsTask._Far(r, g, b, a, e) || BiomeItemsTask._Far(r, g, b, z, e)) {
+                        key := ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)
+                        if !cnt.Has(key)
+                            cnt[key] := 0, sum[key] := [0, 0, 0]
+                        cnt[key] += 1, s := sum[key], s[1] += r, s[2] += g, s[3] += b
+                    }
+                }
+                x += 2
+            }
+            y += 2
+        }
+        used := Map()
+        while (out.Length < k) {
+            best := "", bn := BiomeItemsTask.InkMinCount - 1
+            for key, n in cnt
+                if (!used.Has(key) && n > bn)
+                    best := key, bn := n
+            if (best = "")
+                break
+            used[best] := 1
+            s := sum[best], n := cnt[best]
+            r := Round(s[1] / n), g := Round(s[2] / n), b := Round(s[3] / n)
+            near := false
+            for o in out
+                near := near || BiomeItemsTask._Far(r, g, b, o, 24) = false
+            if !near
+                out.Push((r << 16) | (g << 8) | b)
+        }
+        return out
+    }
+
+    ; r, g, b and colour c differ by more than e in some channel
+    static _Far(r, g, b, c, e) => Abs(r - ((c >> 16) & 255)) > e || Abs(g - ((c >> 8) & 255)) > e || Abs(b - (c & 255)) > e
 
     ; Reads selector_list_rect in horizontal strips (the window bobs, so
     ; places are read, not remembered). -> Map(Drive index -> row middle y)
@@ -738,13 +872,18 @@ class BiomeItemsTask {
         env := this._env
         cal := env.cal.Rect("selector_list_rect")
         this._selAuto := ""
-        if (IsObject(cal) && IsObject(env.cal.Point("selector_confirm")) && this._DriveReads(cal))
+        tried := IsObject(cal) && IsObject(env.cal.Point("selector_confirm"))
+        if (tried && this._DriveReads(cal)) {
+            CalHealth.Ok("selector_list_rect", cal)
             return 1
+        }
         Loop BiomeItemsTask.FindTries {
             for look in [["", 1], [BiomeItemsTask.FindBox, 2]] {
                 r := AutoCal.Selector(env.Lines(look[1], look[2]), BiomeItemsTask.Drives)
                 if (IsObject(r) && this._DriveReads(r)) {
                     this._selAuto := r
+                    if tried
+                        CalHealth.Fail("selector_list_rect", "no Drive read in it; the list was found elsewhere on screen", cal)
                     env.Log("biome items: the Biome Selector's Drive list found on screen at " r.x "," r.y " (" r.w "x" r.h ")"
                         . (IsObject(cal) ? ": no Drive read in the calibrated selector_list_rect" : ": selector_list_rect is not calibrated"))
                     return 1
@@ -766,7 +905,7 @@ class BiomeItemsTask {
         env := this._env
         ti := BiomeItemsTask.DriveIndex(drive)
         r := this._SelRect()
-        this._selRow1 := ""
+        this._selRow1 := "", this._selByName := false
         if (!ti || !IsObject(r))
             return 0
         Loop 2 {
@@ -780,7 +919,7 @@ class BiomeItemsTask {
                     return 0
                 if !rows.Has(ti)
                     env.Log("biome items: " drive "'s row did not read; clicked by its place in the list")
-                this._selRow1 := row1
+                this._selRow1 := row1, this._selByName := rows.Has(ti)
                 env.Click({x: r.x + r.w // 2, y: cy})
                 return 1
             }
@@ -855,16 +994,93 @@ class BiomeItemsTask {
         g := BiomeItemsTask.Geo
         x := Round(r.x + g.promptDx * r.w), y := Round(loc.bar + g.promptTop * r.h)
         w := Round(g.promptW * r.w), h := Round(g.promptH * r.h)
+        ; the text's own colour first (bright scenes: the plain read lost
+        ; the Drive's name, live 2026-11-21..23)
+        k := this._KeyedText(x, y, w, h)
+        if BiomeItemsTask.PromptDrive(k)
+            return k
         ; 1x, and 2x unless 1x already names exactly one Drive (live 03:21:
         ; 1x read 'Youzah e selected' without the Drive line): both reads
         ; together, so the Drive's name has two chances
-        t := String((env.ocrFn)(x, y, w, h, 1))
+        t := (k != "" ? k "`n" : "") String((env.ocrFn)(x, y, w, h, 1))
         named := 0
         for d in BiomeItemsTask.Drives
             named += BiomeItemsTask.RowIs(t, A_Index) ? 1 : 0
         if (named != 1)
             t .= "`n" String((env.ocrFn)(x, y, w, h, 2))
         return t
+    }
+
+    ; The rect read in its text's own colour: the commonest colours at sharp
+    ; edges (TextColors) tried in turn, the first read showing the prompt's
+    ; words (PromptRe) kept. -> text ("" when none does)
+    _KeyedText(x, y, w, h) {
+        env := this._env
+        px := ""
+        try px := (env.rectFn)(x, y, w, h)
+        for c in BiomeItemsTask.TextColors(px, w, h, BiomeItemsTask.InkColors) {
+            t := ""
+            try t := String((env.inkFn)(x, y, w, h, BiomeItemsTask.InkScale, Format("#{:06X}", c)))
+            if RegExMatch(t, BiomeItemsTask.PromptRe)
+                return t
+        }
+        return ""
+    }
+
+    ; The prompt that _PickDrive's click opened, read up to PromptTries
+    ; times: placed (_Locate), read (_PromptText; the window read whole when
+    ; that names no Drive and selector_confirm is recorded). Ours as soon as
+    ; a read names it while no read named another; another Drive read twice
+    ; ends it. -> {state: "ours" / "other" / "unread" / "stop", up (the
+    ; prompt's words read), loc, pt, confirmPt, cp, wide} of the last read
+    _ReadPrompt(drive, ctx) {
+        env := this._env
+        ti := BiomeItemsTask.DriveIndex(drive)
+        others := 0, up := false, v := ""
+        Loop BiomeItemsTask.PromptTries {
+            if ctx.ShouldStop()
+                return {state: "stop"}
+            loc := this._Locate(ctx)
+            if ctx.ShouldStop()
+                return {state: "stop"}
+            if (!IsObject(loc) && this._selRow1 != "")
+                loc := {row1: this._selRow1, bar: Round(this._selRow1 + BiomeItemsTask.Geo.bar * this._SelRect().h)}
+            pt := IsObject(loc) ? this._PromptText(loc) : ""
+            confirmPt := IsObject(loc) ? this._PromptBtn(loc, "confirm") : ""
+            n := BiomeItemsTask.PromptDrive(pt)
+            wide := "", cp := ""
+            if (n != ti) {
+                ; the window read whole (live 05:09: pale bar and buttons on a
+                ; bright sky placed the prompt read on the title): while the
+                ; prompt is up its rows are hidden, so the only Drive named in
+                ; the window is the selected one. Confirm at the calibrated
+                ; spot then (Cancel is far to its right: a bob only misses).
+                wide := this._WideText()
+                cp := IsObject(this._selAuto) ? "" : env.cal.Point("selector_confirm")
+                if (IsObject(cp) && RegExMatch(wide, BiomeItemsTask.PromptRe)) {
+                    nw := BiomeItemsTask.PromptDrive(wide)
+                    if (nw = ti && !n) {
+                        env.Log("biome items: the Selector's prompt names " drive " (read across the window): Confirm at its calibrated spot")
+                        pt := wide, confirmPt := {x: cp.x, y: cp.y}, n := ti
+                    } else if !n
+                        n := nw
+                }
+            }
+            up := up || RegExMatch(pt, BiomeItemsTask.PromptRe) > 0 || (IsObject(cp) && RegExMatch(wide, BiomeItemsTask.PromptRe) > 0)
+            v := {loc: loc, pt: pt, confirmPt: confirmPt, cp: cp, wide: wide, up: up}
+            if (n = ti && !others) {
+                if (A_Index > 1)
+                    env.Log("biome items: the Selector's prompt named " drive " on read " A_Index)
+                v.state := "ours"
+                return v
+            }
+            if (n && n != ti && ++others >= 2)
+                break                           ; another Drive, read twice
+            if (A_Index < BiomeItemsTask.PromptTries && !env.Wait(BiomeItemsTask.PromptRetryMs, ctx))
+                return {state: "stop"}
+        }
+        v.state := others ? "other" : "unread"
+        return v
     }
 
     ; The whole Selector window read (the list rect with room for the title

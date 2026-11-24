@@ -228,20 +228,6 @@ class Dashboard {
         {name: "Settings", icon: "gear", pages: ["Settings", "Look", "Schedule", "Profiles"]},
         {name: "Help", icon: "info", pages: ["Check", "Calibrate", "Tools", "Dev tools", "Credits"]}
     ]
-    ; Simple mode (UI.simple, idea 3, 2026-11-13): only these pages show; a
-    ; hub with none of them is hidden. The sidebar button under the hubs
-    ; switches it live.
-    static SimplePages := Map("Run", 1, "Stats", 1, "Fishing", 1, "Quests", 1, "Merchants", 1, "Hunting", 1, "Biomes & Potions", 1
-        , "Potions", 1, "Webhooks", 1, "Check", 1, "Settings", 1, "Look", 1, "Log", 1, "Credits", 1)
-    ; A page simple mode hides still shows while a feature on it is on
-    ; ([key, default] pairs, any one on): audit 2026-11-20, the Fish shop
-    ; bought with its page hidden, and Limbo, a schedule or biome items a
-    ; profile turned on ran with no page to see or stop them. Read when the
-    ; sidebar is laid out (the window built, the simple-mode button).
-    static SimpleKeep := Map("Craft", [["Craft.enabled", 1], ["Craft.cauldron", 0]], "Limbo", [["Limbo.enabled", 0]]
-        , "Obby & Memory", [["Obby.enabled", 0], ["MemoryMatch.enabled", 0]], "Biome items", [["BiomeItems.enabled", 0]]
-        , "Clips", [["Medal.enabled", 0]], "Summary", [["Summary.enabled", 0]], "Remote", [["Remote.enabled", 0]]
-        , "Schedule", [["Schedule.enabled", 0]])
     static TabLabels := Map("Run", "Overview", "Craft", "Crafting", "Biomes & Potions", "Biomes", "Webhooks", "Discord", "Tools", "Routes"
         , "Summary", "Daily summary", "Check", "Check & help", "Settings", "General", "Hunting", "Limited")
     static MaxHooks := 8
@@ -250,7 +236,8 @@ class Dashboard {
     ; one column per event: 12 x 28 px end before the Test button (x 920);
     ; at 38 px the obby / memorymatch boxes (added later, without captions)
     ; sat on top of Test and X and took their clicks (review 2026-10-27).
-    ; "Boss" = sinister: the GRAVEYARD boss message (MinionsTask)
+    ; "Boss" = sinister: the bosses' messages (MinionsTask, the chat) and,
+    ; since 2026-11-22, the orbs' from the chat (Limited.orbAlert)
     ; Captions (translated, 2026-11-19): two rows, odd columns above, even
     ; below, each EventCapW wide and centred on its column, so neighbours in
     ; a row are two columns apart and never touch (28 px captions ran into
@@ -888,37 +875,10 @@ class Dashboard {
         this.SelectPage((last && this.PageShown(Dashboard.Pages[last])) ? last : Dashboard.PageIndex(this._ShownIn(i)[1]))
     }
 
-    ; ---- simple mode (idea 3) ----
-
-    ; Dev tools only in the owner's dev copy (Updater.IsDevCopy); simple mode
-    ; shows only SimplePages, and the SimpleKeep pages whose feature is on
+    ; Dev tools only in the owner's dev copy (Updater.IsDevCopy); every other
+    ; page shows (simple mode was removed 2026-11-22)
     PageShown(name) => (name != "Dev tools" || this._IsDev())
-        && (!this._simple || Dashboard.SimplePages.Has(name) || (this.HasOwnProp("_keep") && this._keep.Has(name)))
 
-    ; the SimpleKeep pages whose feature is on now: Map name -> true
-    _SimpleKept() {
-        out := Map()
-        for name, keys in Dashboard.SimpleKeep {
-            for kv in keys {
-                v := kv[2]
-                try v := this.cfg.Get(kv[1], kv[2])
-                if v {
-                    out[name] := true
-                    break
-                }
-            }
-        }
-        return out
-    }
-
-    ; the kept pages by name, in page order ("" = none)
-    _KeptText() {
-        s := ""
-        for name in Dashboard.Pages
-            if (this.HasOwnProp("_keep") && this._keep.Has(name))
-                s .= (s = "" ? "" : ", ") name
-        return s
-    }
     _IsDev() {
         if !this.HasOwnProp("_dev")
             this._dev := Updater.IsDevCopy(this.cfg.dir)
@@ -934,9 +894,8 @@ class Dashboard {
         return out
     }
 
-    ; the hub buttons: hidden hubs leave no gap; the mode button's text
+    ; the hub buttons: hidden hubs leave no gap
     _LayoutNav() {
-        this._keep := this._SimpleKept()
         vi := 0
         for i, hub in Dashboard.Hubs {
             on := this._ShownIn(i).Length > 0
@@ -951,16 +910,15 @@ class Dashboard {
         }
         if (this._side = "top")
             this._TopRow()
-        Theme.SetText(this._simpleBtn, StrUpper(I18n.T("Simple mode")) "  " Chr(0xB7) "  " (this._simple ? "ON" : "OFF"))   ; ON / OFF as on the switches
     }
 
     ; Top sidebar: the shown hubs in one row from x 12 (6 px apart), then the
-    ; magnifier, the simple-mode button and the chip from the row's end
+    ; magnifier and the chip from the row's end
     ; (TopTail wide, ending by x 1020). A row that does not fit (long names,
     ; a big Menu font) first loses hub padding (24 down to 8), then font size
     ; for this row only (down to 7 pt); a hub's text also has to fit its
     ; 34 px height.
-    static TopTail := 344          ; magnifier 32 + 8 + mode button 148 + 8 + chip 148
+    static TopTail := 188          ; magnifier 32 + 8 + chip 148
     _TopRow() {
         shown := []
         for i, c in this._nav
@@ -998,8 +956,7 @@ class Dashboard {
         }
         x := Min(tx + 2, Dashboard.W - 20 - Dashboard.TopTail)
         try Theme.MoveTo(this._ids["search:icon"], x, 66)
-        Theme.MoveTo(this._simpleBtn, x + 40, 66)
-        Theme.MoveTo(this._chip, x + 196, 65)
+        Theme.MoveTo(this._chip, x + 40, 65)
     }
 
     ; The hub buttons' font size (pt at 100 %) for the top row.
@@ -1030,25 +987,6 @@ class Dashboard {
                 w := Ceil(w * 100 / Theme.Scale), h := Ceil(h * 100 / Theme.Scale)
         }
         return {w: w, h: h}
-    }
-
-    ; Simple mode on / off, saved, shown at once (a hidden page open -> Home)
-    SetSimple(on) {
-        this._simple := on ? true : false
-        try {
-            this.cfg.Set("UI.simple", this._simple ? 1 : 0)
-            this.cfg.Save()
-        }
-        this._LayoutNav()
-        if (this._active && !this.PageShown(Dashboard.Pages[this._active])) {
-            this.SelectHub(1)
-        } else if this._hub {
-            this._ShowHub(this._hub)
-            this._PaintTabs()
-        }
-        kept := this._simple ? this._KeptText() : ""
-        this.Log("Simple mode " (this._simple ? "on: only the main pages show (the sidebar button shows them all)"
-            . (kept != "" ? "; still shown because they are on: " kept : "") : "off: every page shows"))
     }
 
     SavePage(name) {
@@ -1246,11 +1184,9 @@ class Dashboard {
 
     ; The sidebar for this._side: a band at the left (x 0..176), at the right
     ; (x 864..1040) or across the top (the hubs one row of labels sized to
-    ; their text at y 59..107, the mode button and the chip at the row's
-    ; right end), with the hubs, the simple-mode button and the status chip.
+    ; their text at y 59..107, the chip at the row's right end), with the
+    ; hubs and the status chip.
     _DrawSidebar(g) {
-        this._simple := this.cfg.Get("UI.simple", 0) ? true : false
-        this._keep := this._SimpleKept()
         top := this._side = "top"
         sx := this._side = "right" ? 864 : 0
         if top {
@@ -1278,9 +1214,6 @@ class Dashboard {
             this._ids["hub:" hub.name] := c
         }
         Theme.Font(g, "caps")
-        this._simpleBtn := Theme.Add(g, "Text", (top ? "x716 y66 w148 h28" : "x" sx + 14 " y586 w148 h28") " +0x80 +0x100 +0x200 Center Background" Theme.SideBg " c" Theme.Muted, "")
-        Theme.Clickable(this._simpleBtn, (*) => this.SetSimple(!this._simple), (on) => Theme.SetColors(this._simpleBtn, Theme.SideBg, on ? Theme.Accent : Theme.Muted))
-        this._ids["simpleMode"] := this._simpleBtn
         this._chip := Theme.Add(g, "Text", (top ? "x872 y65 w148 h30" : "x" sx + 14 " y622 w148 h30") " +0x80 +0x200 Center Background" Theme.OffBg, "")
     }
 
@@ -1913,8 +1846,8 @@ class Dashboard {
     }
 
     ; Active tab gold, the underline (a single control) moved under it. A
-    ; page whose tab is not shown (Dev tools outside the dev copy, a page
-    ; simple mode hides, opened by a harness or a test) has no underline:
+    ; page whose tab is not shown (Dev tools outside the dev copy, opened by
+    ; a harness or a test) has no underline:
     ; it sat under the tab now in that tab's old place (Credits).
     _PaintTabs() {
         for name in this._ShownIn(this._hub)
@@ -2518,7 +2451,7 @@ class Dashboard {
 
         names := GameLists.Shop
         this._Panel(204, 268, 808, 348, "Buy at the Fisher shop"
-            , "Bought on start, every [Craft] buyEveryMin min (default 30) and after each 'Potion Crafted' notification.")
+            , "Bought only after a 'Potion Crafted' notification: one buy per notification.")
         this._craftRows := []
         Loop Min(names.Length, 16) {
             i := A_Index
@@ -2692,12 +2625,16 @@ class Dashboard {
         Theme.Label(g, "x220 y482 w32 h16", "ITEM", "caps")
         Theme.Help(g, 256, 482, "Type the item's name as the shop shows it (e.g. Lucky Potion). The macro finds it in the shop's tabs; what the merchant sells changes every visit.")
         Theme.Label(g, "x468 y482 w40 h16", "QTY", "caps")
+        Theme.Help(g, 512, 482, "How many to buy. Type all to buy the whole stock the shop shows (50 when the stock does not read).")
         this._mName := Theme.Edit(g, 220, 500, 240, 28)
-        this._mQty := Theme.Edit(g, 468, 500, 60, 28, "1", "Number")
+        this._mQty := Theme.Edit(g, 468, 500, 60, 28, "1")      ; a number or all
         this._ids["merch.name"] := this._mName, this._ids["merch.qty"] := this._mQty
-        Theme.Button(g, "x220 y540 w100 h30", "Add", (*) => this.MerchAdd(), "primary")
-        Theme.Button(g, "x328 y540 w100 h30", "Update", (*) => this._MerchUpdate())
-        Theme.Button(g, "x436 y540 w100 h30", "Remove", (*) => this._MerchRemove())
+        Theme.Button(g, "x220 y540 w84 h30", "Add", (*) => this.MerchAdd(), "primary")
+        Theme.Button(g, "x310 y540 w84 h30", "Update", (*) => this._MerchUpdate())
+        Theme.Button(g, "x400 y540 w84 h30", "Remove", (*) => this._MerchRemove())
+        ; paused items stay on the list and are skipped until resumed
+        this._mPause := Theme.Button(g, "x490 y540 w94 h30", "Pause", (*) => this.MerchPause())
+        this._ids["merch.pause"] := this._mPause
         this._mStatus := Theme.Label(g, "x220 y580 w364 h28", "", "muted")
         this._ids["merch.status"] := this._mStatus
         this._Panel(616, 416, 396, 200, "Buying")
@@ -2736,7 +2673,8 @@ class Dashboard {
         lv := this._mlv[who]
         lv.Delete()
         for it in this._merch[who]
-            lv.Add(, it["name"], it.Has("qty") ? it["qty"] : 1)
+            lv.Add(, it["name"] (UiLogic.MerchPaused(it) ? "  (" I18n.T("Paused") ")" : "")
+                , it.Has("qty") ? UiLogic.QtyText(it["qty"]) : 1)
         ; an empty list shows its hint instead
         empty := this._merch[who].Length = 0
         this._SetHidden(lv, empty)
@@ -2750,7 +2688,8 @@ class Dashboard {
         this._MerchWho(who)
         it := this._merch[who][item]
         this._mName.Value := it["name"]
-        this._mQty.Value := String(it.Has("qty") ? it["qty"] : 1)
+        this._mQty.Value := String(it.Has("qty") ? UiLogic.QtyText(it["qty"]) : 1)
+        Theme.SetText(this._mPause, I18n.T(UiLogic.MerchPaused(it) ? "Resume" : "Pause"))
     }
 
     ; Item from the edit boxes, its name title-cased ("gear b" -> "Gear B").
@@ -2759,7 +2698,7 @@ class Dashboard {
         if (name = "")
             return ""
         this._mName.Value := name
-        return Map("name", name, "qty", Max(1, UiLogic.UInt(this._mQty.Value, 1)))
+        return Map("name", name, "qty", UiLogic.QtyOrAll(this._mQty.Value, 1))
     }
 
     MerchAdd() {
@@ -2779,6 +2718,8 @@ class Dashboard {
         it := this._MerchItemFromEdits()
         if (!row || !IsObject(it))
             return Theme.SetText(this._mStatus, I18n.F("Select a {1} row and fill in the item name.", who))
+        if UiLogic.MerchPaused(this._merch[who][row])
+            it["paused"] := 1                   ; editing a paused item keeps it paused
         this._merch[who][row] := it
         this._MerchFill(who)
         this._MarkDirty("Merchants")
@@ -2794,6 +2735,27 @@ class Dashboard {
         this._MerchFill(who)
         this._MarkDirty("Merchants")
         Theme.SetText(this._mStatus, I18n.T("Removed. Save to keep it."))
+    }
+
+    ; Pause / Resume the selected row: a paused item stays on the list and
+    ; is not bought until it is resumed. -> true when a row was toggled
+    MerchPause() {
+        who := this._CurWho()
+        row := this._mlv[who].GetNext(0)
+        if !row
+            return (Theme.SetText(this._mStatus, I18n.F("Select a {1} row first.", who)), false)
+        it := this._merch[who][row]
+        if UiLogic.MerchPaused(it)
+            it.Delete("paused")
+        else
+            it["paused"] := 1
+        on := it.Has("paused")
+        this._MerchFill(who)
+        this._mlv[who].Modify(row, "Select Focus")
+        Theme.SetText(this._mPause, I18n.T(on ? "Resume" : "Pause"))
+        this._MarkDirty("Merchants")
+        Theme.SetText(this._mStatus, I18n.T(on ? "Paused: it is skipped until you resume it. Save to keep it." : "Resumed. Save to keep it."))
+        return true
     }
 
     _MerchSave() {
@@ -2824,7 +2786,7 @@ class Dashboard {
     _PageBiomes(p) {
         g := this._gui
         this._DryRow()
-        this._Panel(204, 208, 808, 408, "Biomes")
+        this._Panel(204, 208, 808, 408, "Biomes", "Qty is how many of a potion to use in that biome. Type all to use every one you own, still within the potion safety caps on the Potions page.")
         ; the biome list (left half)
         bw := [180, 64, 120]
         ; "Rare" here marks one biome (es / pt / fr singular; the Stats
@@ -2847,7 +2809,7 @@ class Dashboard {
         this._bpIds := ch.ids
         ; the buttons wide enough for their text with a margin (Theme.BtnPad)
         this._bpDdl := Theme.Dropdown(g, 632, 562, 172, ch.labels)
-        this._bpQty := Theme.Edit(g, 810, 561, 44, 28, "1", "Number")
+        this._bpQty := Theme.Edit(g, 810, 561, 44, 28, "1")       ; a number or all
         Theme.Button(g, "x860 y561 w64 h28", "Add", (*) => this.BiomePotionAdd())
         Theme.Button(g, "x930 y561 w66 h28", "Remove", (*) => this._BiomePotionRemove())
         this._ids["bpDdl"] := this._bpDdl, this._ids["bpQty"] := this._bpQty
@@ -2924,9 +2886,16 @@ class Dashboard {
     _BiomePotSummary(b) {
         if !(b.Has("potions") && b["potions"] is Array && b["potions"].Length)
             return ""
-        n := 0
-        for e in b["potions"]
-            n += (e is Map && e.Has("qty")) ? e["qty"] : 1
+        n := 0, all := false
+        for e in b["potions"] {
+            q := (e is Map && e.Has("qty")) ? e["qty"] : 1
+            if UiLogic.IsAllQty(q)
+                all := true
+            else if IsNumber(q)
+                n += q
+        }
+        if all
+            return n ? I18n.F("{1} ({2} uses + all)", b["potions"].Length, n) : I18n.F("{1} (all owned)", b["potions"].Length)
         return I18n.F("{1} ({2} uses)", b["potions"].Length, n)
     }
 
@@ -2949,7 +2918,7 @@ class Dashboard {
         lv.Delete()
         if (IsObject(b) && b.Has("potions") && b["potions"] is Array) {
             for e in b["potions"]
-                lv.Add(, e["name"], e.Has("qty") ? e["qty"] : 1)
+                lv.Add(, e["name"], e.Has("qty") ? UiLogic.QtyText(e["qty"]) : 1)
         }
         ; an empty list shows a hint instead
         empty := lv.GetCount() = 0
@@ -3008,7 +2977,7 @@ class Dashboard {
         name := (i >= 1 && i <= this._bpIds.Length) ? this._bpIds[i] : ""
         if (!this._bSel || name = "")
             return
-        qty := Max(1, UiLogic.UInt(this._bpQty.Value, 1))
+        qty := UiLogic.QtyOrAll(this._bpQty.Value, 1)
         b := this._bio[this._bSel]
         if !(b.Has("potions") && b["potions"] is Array)
             b["potions"] := []
@@ -3664,19 +3633,23 @@ class Dashboard {
         this._IntField(220, 490, "Load wait", "recovery.loadSec", 20, "s", 160)
         this._BoolField(220, 526, "Anti ghost server (rejoin if moved out of it)", "recovery.antiGhost", 1, 360)
 
-        this._Panel(616, 152, 396, 162, "Alerts")
+        this._Panel(616, 152, 396, 196, "Alerts")
         this._BoolField(632, 186, "Sound on rare biome", "General.sound", 1)
         this._BoolField(632, 214, "Ping @everyone on the biomes below", "General.everyonePing", 1)
         e := this._StrField(632, 244, "@everyone biomes", "General.everyoneBiomes", "DREAMSPACE,GLITCHED,CYBERSPACE", 214, 150)
         e.SetFont(Theme.FontOpt("muted", Theme.IsScaled(g)))      ; a point smaller: the default list fits the box
-        this._BoolField(632, 278, "Join Server link in biome and boss messages", "General.joinButton", 1, 360)
+        ; a role (or user) ping per rare biome (2026-11-22, a tester: not
+        ; only @everyone); checked like the webhook MENTION column on Save
+        e := this._StrField(632, 278, "Role pings per biome", "General.biomePings", "", 214, 150)
+        e.SetFont(Theme.FontOpt("muted", Theme.IsScaled(g)))
+        this._BoolField(632, 312, "Join Server link in biome and boss messages", "General.joinButton", 1, 360)
 
-        this._Panel(616, 330, 396, 68, "Routes", "Every walk that comes with the macro was recorded with Sol's RNG VIP gamepass, which walks faster. "
+        this._Panel(616, 364, 396, 68, "Routes", "Every walk that comes with the macro was recorded with Sol's RNG VIP gamepass, which walks faster. "
             . "Without VIP you walk slower and the walks fall short: turn this off and record your own walks under Help > Routes.")
-        this._BoolField(632, 362, "VIP gamepass routes", "General.vip", 1)
+        this._BoolField(632, 396, "VIP gamepass routes", "General.vip", 1)
 
-        this._Panel(616, 414, 396, 80, "Hotkeys")
-        this._hkText := Theme.Label(g, "x632 y440 w364 h44", "", "body")
+        this._Panel(616, 448, 396, 80, "Hotkeys")
+        this._hkText := Theme.Label(g, "x632 y474 w364 h44", "", "body")
         p.load := ObjBindMethod(this, "_SettingsLoad")
         p.save := ObjBindMethod(this, "_SettingsSave")
         p.validate := ObjBindMethod(this, "_SettingsCheck")
@@ -3687,12 +3660,26 @@ class Dashboard {
     ; rejoin would refuse (RecoveryTask.LinkOk, as the setup wizard) was
     ; saved quietly and auto-rejoin then failed at 3 AM.
     _SettingsCheck() {
+        why := Dashboard.BiomePingsProblem(this.Ctrl("General.biomePings").Value)
+        if (why != "")
+            return why
         typed := this._psWipe ? "" : Trim(this._psEdit.Value)
         if (typed = "")
             return ""
         if (SubStr(typed, 1, 23) != "https://www.roblox.com/" || StrLen(typed) <= 23 || RegExMatch(typed, "[\s`"<>``\\|^]"))
             return "settings: that is not a Roblox private server link (it starts with https://www.roblox.com/)"
         return ""
+    }
+
+    ; "" or why General.biomePings text cannot be saved: each entry is
+    ; BIOME=ID with a role ID (&123 / <@&123>) or a user ID, as the webhook
+    ; MENTION column (Webhook.NormalizeMention: no @everyone / @here).
+    static BiomePingsProblem(text) {
+        r := Webhook.ParseBiomePings(text)
+        if !r.bad.Length
+            return ""
+        return 'role pings: "' SubStr(r.bad[1], 1, 40) '" is not BIOME=ID. Write SINGULARITY=&123456789012345678 '
+            . "(& + role ID, or a user ID), entries separated by commas"
     }
 
     ; ---- page: Look (the theme editor) -------------------------------------------
@@ -6114,11 +6101,13 @@ class Dashboard {
 
     _PageCheck(p) {
         g := this._gui
-        this._Panel(204, 152, 396, 464, "Check my setup", "Looks at Roblox, your screen, the Roblox logs, your private server link, Discord webhooks, "
-            . "calibration and apps that pull focus away from Roblox. It sends no input. [!] = may cause trouble, [X] = will not work.")
-        Theme.Button(g, "x220 y186 w130 h30", "Check now", (*) => this._CheckNow(), "primary")
-        this._ids["checkSummary"] := Theme.Label(g, "x362 y192 w222 h20", "", "muted")
-        this._checkOut := Theme.Edit(g, 220, 228, 364, 372, "", "Multi ReadOnly -WantReturn VScroll")
+        this._Panel(204, 152, 396, 464, "Check my setup", "Check now looks at Roblox, your screen, the Roblox logs, your private server link, Discord webhooks, "
+            . "calibration and apps that pull focus away from Roblox. It sends no input. [!] = may cause trouble, [X] = will not work. "
+            . "Test my calibration tries every recorded calibration spot and says which ones need redoing. Stop the macro first: it opens and closes your inventory and Aura Storage.")
+        Theme.Button(g, "x220 y186 w110 h30", "Check now", (*) => this._CheckNow(), "primary")
+        Theme.Button(g, "x338 y186 w190 h30", "Test my calibration", (*) => this._TestCal())
+        this._ids["checkSummary"] := Theme.Label(g, "x220 y222 w364 h20", "", "muted")
+        this._checkOut := Theme.Edit(g, 220, 248, 364, 352, "", "Multi ReadOnly -WantReturn VScroll")
         this._ids["checkOut"] := this._checkOut
         this._Panel(616, 152, 396, 200, "Send my log")
         Theme.Label(g, "x632 y184 w364 h60", "Makes a zip of your log and this check. Webhook links, server links, the bot token, Discord ids and your Windows name are taken out. "
@@ -6160,6 +6149,34 @@ class Dashboard {
         }
         this._checkOut.Value := UiLogic.Scrub(text, this._Secrets(), true)
         Theme.SetText(this._ids["checkSummary"], I18n.F(Dashboard.CheckCounts[(n["warn"] = 1 ? 1 : 0) + (n["fail"] = 1 ? 2 : 0) + 1], n["ok"], n["warn"], n["fail"]))
+    }
+
+    static CalTags := Map("REDO", "[REDO]", "OK", "[OK]", "NOT TESTED", "[--]", "", "[i]")
+
+    _TestCal() {
+        Theme.SetText(this._ids["checkSummary"], I18n.T("Testing your calibration..."))
+        this.ShowCalTest(this._Fire("testCalibration"))
+    }
+
+    ; rows: Array of {verdict, name, detail, fix} (CalTest.Run): the notes,
+    ; then REDO, OK and NOT TESTED steps
+    ShowCalTest(rows) {
+        if !IsObject(rows) {
+            Theme.SetText(this._ids["checkSummary"], I18n.T("Not checked: the macro is not ready"))
+            return
+        }
+        text := "", n := Map("REDO", 0, "OK", 0, "NOT TESTED", 0)
+        for r in rows {
+            v := r.HasProp("verdict") ? r.verdict : ""
+            if n.Has(v)
+                n[v] += 1
+            tag := Dashboard.CalTags.Has(v) ? Dashboard.CalTags[v] : "[i]"
+            text .= tag "  " r.name (r.HasProp("detail") && r.detail != "" ? ": " r.detail : "") "`r`n"
+            if (r.HasProp("fix") && r.fix != "")
+                text .= "       " r.fix "`r`n"
+        }
+        this._checkOut.Value := UiLogic.Scrub(text, this._Secrets(), true)
+        Theme.SetText(this._ids["checkSummary"], I18n.F("{1} to redo, {2} ok, {3} not tested", n["REDO"], n["OK"], n["NOT TESTED"]))
     }
 
     _LogZip() {
@@ -6214,7 +6231,7 @@ class Dashboard {
         this._Panel(204, 152, 808, 64, "Limited time")
         this._ids["limitedNote"] := Theme.Label(g, "x220 y184 w776 h20", "Halloween event: the game removes hunting later in November.", "muted")
         this._Panel(204, 232, 808, 220, "Hunting (Halloween)", "In every weather biome (not rare, not event): puts on the combat aura, respawns, finds the orbs' and minions' health bars, "
-            . "walks up and uses the aura's skills (any aura with skills; never the number keys), then respawns (and puts your aura back when that is on). Once per biome. "
+            . "walks up and uses the aura's skills (any aura with skills; never the number keys), then respawns. Once per biome. "
             . "NORMAL has shown no orbs: it is not hunted unless Hunt in NORMAL too is on, only the aura and a respawn are made ready there. "
             . "Needs the aura storage steps calibrated (as the obby). Auto roll can equip a new aura mid-hunt; the skills then do nothing until the next hunt. "
             . "Shift lock keeps the character facing the target in fights; it needs Roblox's Shift Lock Switch setting on. "
@@ -6223,15 +6240,18 @@ class Dashboard {
         auraEdit := this._StrField(220, 304, "Combat aura", "Minions.aura", "Eden", 160)
         auraEdit.OnEvent("LoseFocus", (ctl, *) => this._BigAuraCheck(ctl))
         this._IntField(220, 342, "Hunt at most", "Minions.maxSec", 120, "seconds", 170, 60)
-        this._BoolField(632, 266, "Put my aura back after", "Minions.putBack", 0)
-        this._BoolField(632, 304, "Use shift lock in fights", "Minions.shiftLock", 1)
-        this._BoolField(632, 342, "Fight the Graveyard boss", "Minions.boss", 1)
-        this._BoolField(632, 380, "Hunt in NORMAL too", "Minions.normal", 0)
-        this._Panel(204, 468, 808, 112, "Bosses and Blood Rain", "Boss message: when the chat names Sinister S. or Sinister P., the boss message is sent (Discord & Clips > Discord, Boss), "
-            . "whether hunting is on or off. Cursed Rune Fragment: one is used from your inventory when GRAVEYARD or PUMPKIN MOON starts (it starts Blood Rain), "
+        ; "Put my aura back after" removed 2026-11-23 (nobody used it)
+        this._BoolField(632, 266, "Use shift lock in fights", "Minions.shiftLock", 1)
+        this._BoolField(632, 304, "Fight the Graveyard boss", "Minions.boss", 1)
+        this._BoolField(632, 342, "Hunt in NORMAL too", "Minions.normal", 0)
+        ; 2026-11-22: the orb message (a tester) on its own row, the panel taller
+        this._Panel(204, 468, 808, 150, "Bosses, orbs and Blood Rain", "Boss message: when the chat names Sinister S. or Sinister P., the boss message is sent (Discord & Clips > Discord, Boss), "
+            . "whether hunting is on or off. Orb message (off by default): the same for a biome orb the chat names, as 'Typhoon orb has spawned'. "
+            . "Cursed Rune Fragment: one is used from your inventory when GRAVEYARD or PUMPKIN MOON starts (it starts Blood Rain), "
             . "then none until the next Graveyard / Pumpkin Moon night. Needs the inventory calibration steps.")
         this._BoolField(220, 502, "Send the boss message (Sinister S. / P.)", "Limited.bossAlert", 1, 420)
-        this._BoolField(220, 540, "Use ONE Cursed Rune Fragment per Graveyard / Pumpkin Moon", "Limited.cursedRune", 0, 520)
+        this._BoolField(220, 540, "Send the orb message (e.g. Typhoon orb)", "Limited.orbAlert", 0, 420)
+        this._BoolField(220, 578, "Use ONE Cursed Rune Fragment per Graveyard / Pumpkin Moon", "Limited.cursedRune", 0, 520)
         p.validate := ObjBindMethod(this, "_HuntingCheck")
         this._SaveBar(p)
     }

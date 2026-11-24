@@ -6,6 +6,7 @@
 #Include %A_LineFile%\..\Ocr.ahk
 #Include %A_LineFile%\..\ui\UiLogic.ahk
 #Include %A_LineFile%\..\tasks\Recovery.ahk
+#Include %A_LineFile%\..\tasks\ReelPause.ahk
 ; ---------------------------------------------------------------------------
 ; SetupCheck: the "Check my setup" button. Plain-English checks of everything
 ; the macro needs from the PC. Reads only; it never sends a key or a click.
@@ -35,6 +36,9 @@
 ;       front ()           Roblox is the foreground window
 ;       rollText ()        OCR text of the Roll button box (design px
 ;                          1160,1290,240,70), read only when Roblox is in front
+;       reelPause ()       "" or this session's slow-PC warning
+;                          {n, of, longest, advice, ...} (ReelPause.Last); a
+;                          "reels" warn row only when there is one
 ;     A probe that throws gives an "info" row ("could not check"), never an error.
 ;   SetupCheck.Summary(results) -> "8 ok, 1 warning, 0 problems"
 ;   SetupCheck.Report(results)  -> plain text block (for the support zip)
@@ -64,7 +68,7 @@ class SetupCheck {
         ["inv_open", SetupCheck.InvNeeds], ["inv_items_tab", SetupCheck.InvNeeds], ["inv_search", SetupCheck.InvNeeds],
         ["inv_use", SetupCheck.InvNeeds], ["inv_tile1_rect", SetupCheck.InvNeeds], ["inv_desc_rect", SetupCheck.InvNeeds],
         ["aura_", [["Obby.enabled", 0], ["Minions.enabled", 0]]],
-        ["chat_rect", [["merchant.enabled", 1], ["Limited.bossAlert", 1]]],
+        ["chat_rect", [["merchant.enabled", 1], ["Limited.bossAlert", 1], ["Limited.orbAlert", 0]]],
         ["fisher_", [["Craft.enabled", 1]]],
         ["cauldron_", [["Craft.cauldron", 0]]],
         ["stella_", [["Craft.cauldron", 0]]],
@@ -74,7 +78,7 @@ class SetupCheck {
         ["buff_expand", [["Obby.enabled", 0]]],
         ["obby_", [["Obby.enabled", 0]]]]
     ; recorded when the user wants them, never needed (the tasks work without)
-    static CalOptional := ["cauldron_result_2", "fisher_leave", "fisher_shop_close", "stella_dialog", "daily_claim", "daily_close", "daily_quests_open"]
+    static CalOptional := ["cauldron_result_2", "cauldron_craft", "fisher_leave", "fisher_shop_close", "stella_dialog", "daily_claim", "daily_close", "daily_quests_open"]
 
     static Run(cfg, probes := "") {
         out := []
@@ -217,6 +221,12 @@ class SetupCheck {
         else
             add("ahk", "AutoHotkey version", "fail", "AutoHotkey " av.v " is too old (needs " SetupCheck.MinAhk " or newer)"
                 , "Install the latest AutoHotkey v2 from autohotkey.com")
+
+        ; ---- reels paused (the slow-PC warning fired this session) ----------------
+        rp := call("reelPause", () => ReelPause.Last)
+        if (rp.ok && IsObject(rp.v) && rp.v.HasProp("n"))
+            add("reels", "Reels paused on this PC", "warn", "your PC paused during " rp.v.n " of " rp.v.of " fishing reels (longest " rp.v.longest " ms), which can lose fish"
+                , "Try: " (rp.v.HasProp("advice") ? rp.v.advice : ReelPause.Advice("")))
 
         ; ---- live read ----------------------------------------------------------
         fr := call("front", () => WinActive("ahk_exe " Roblox.Exe) ? 1 : 0)

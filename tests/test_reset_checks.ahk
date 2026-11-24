@@ -746,15 +746,61 @@ Test_Sell_PreemptClosesPopupShopAndDialog() {
     }
 }
 
+Test_Sell_StuckRewalksRejoinFirst() {
+    ; live 2026-11-22 03:44: a "Fish Caught!" card froze over the fishing
+    ; panel through 4 respawns and paused the macro for the night. The first
+    ; stuck streak asks the stuck-UI escape for a rejoin instead: no walk, no
+    ; pause, the streak starts over, and the rejoin is due after this task.
+    t := FsMakeCfg()
+    FsScreen.Install()
+    UiStuck.Reset()
+    try {
+        st := SchedState()
+        st.needRepath := true
+        st.repathStreak := SellTask.MaxRepathStreak
+        io := RsIO()
+        logs := [], told := []
+        d := FsDeps(io, "", true, logs)
+        d.stuck := (msg) => told.Push(msg)
+        ctx := SchedCtx()
+        SellTask(t.cfg, st, d).Run(ctx)
+        AssertEq(ctx.IsPaused(), false, "not paused on the first stuck streak")
+        AssertEq(io.Count("down Esc") + io.Count("down r"), 0, "no reset or walk")
+        AssertEq(told.Length, 0, "no stuck report yet")
+        AssertEq(UiStuck.Due(), true, "the stuck-UI rejoin is due")
+        AssertEq(st.repathRejoin, true, "remembers it asked")
+        AssertEq(st.repathStreak, 0, "fresh tries after the rejoin")
+        AssertEq(st.needRepath, true, "the re-path is still due")
+        found := false
+        for l in logs
+            found := found || InStr(l, "rejoining to clear it")
+        AssertTrue(found, "logs why it rejoins")
+        ; a catch after the rejoin: a later stuck streak may rejoin again
+        st.repathRejoin := false
+        st.repathStreak := SellTask.MaxRepathStreak
+        UiStuck.Reset()
+        ctx2 := SchedCtx()
+        SellTask(t.cfg, st, FsDeps(RsIO(), "", true, [])).Run(ctx2)
+        AssertEq(ctx2.IsPaused(), false, "rejoins again after fishing worked")
+        AssertEq(UiStuck.Due(), true, "second rejoin asked")
+    } finally {
+        UiStuck.Reset()
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
 Test_Sell_StuckRewalksPauseInsteadOfLooping() {
-    ; re-paths with no catch in between: the next one pauses the macro and
-    ; reports it instead of resetting + walking again (reset, menu, reset...)
+    ; still stuck after the rejoin (no catch in between): the next streak
+    ; pauses the macro and reports it instead of resetting + walking again
+    ; (reset, menu, reset...)
     t := FsMakeCfg()
     FsScreen.Install()
     try {
         st := SchedState()
         st.needRepath := true
         st.repathStreak := SellTask.MaxRepathStreak
+        st.repathRejoin := true
         io := RsIO()
         logs := [], told := []
         d := FsDeps(io, "", true, logs)
@@ -766,6 +812,7 @@ Test_Sell_StuckRewalksPauseInsteadOfLooping() {
         AssertEq(told.Length, 1, "reported once")
         AssertTrue(InStr(told[1], "PAUSED") && InStr(told[1], "F2"), "says it paused and how to go on")
         AssertEq(st.repathStreak, 0, "F2 gives fresh tries")
+        AssertEq(st.repathRejoin, false, "after F2 a new stuck streak rejoins first again")
         AssertEq(st.needRepath, true, "the re-path is still due after F2")
         ; one below the limit: walks as usual
         st2 := SchedState()

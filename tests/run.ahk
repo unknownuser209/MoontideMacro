@@ -124,3 +124,4 @@ Out(line) {
 #Include test_polish.ahk
 #Include test_stuckui.ahk
 #Include test_autocal.ahk
+#Include test_caltest.ahk

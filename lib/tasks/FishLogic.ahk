@@ -435,7 +435,8 @@ class FishLogic {
             "roblox", Roblox,
             "now", () => A_TickCount,
             "grab", (x1, x2, ys, stride) => StripGrab.Rows(x1, x2, ys, stride),
-            "log", (msg) => 0
+            "log", (msg) => 0,
+            "webhook", ""
         )
         for name, val in defaults
             if !d.HasOwnProp(name)
@@ -477,6 +478,10 @@ class FishLogic {
     static ReelSeenMs := 2500
     ; Window for the arrow's speed estimate (ReelDecide).
     static ReelSpeedMs := 80
+    ; An older sample than this is from before a pause in the polls: not
+    ; used for the speed. Normal polls keep the oldest under ReelSpeedMs +
+    ; one gap (the owner's PC: under 80 + 94 ms).
+    static ReelStaleMs := 250
 
     ; Right after the cast the bite pixel must stay white this long to count
     ; as white scenery (a moment of white is the panel animating).
@@ -763,6 +768,12 @@ class FishLogic {
         st.hist.Push([nowMs, scan.m])
         while (st.hist.Length > 2 && nowMs - st.hist[2][1] >= FishLogic.ReelSpeedMs)
             st.hist.RemoveAt(1)
+        ; after a pause in the polls (a slow PC: 0.6..1.6 s, tester log
+        ; 2026-11-23) the oldest sample is from before it: a speed over the
+        ; whole pause says nothing about now (the arrow bounced meanwhile).
+        ; Start again from this sample (no lead until the next one).
+        if (nowMs - st.hist[1][1] > FishLogic.ReelStaleMs)
+            st.hist := [[nowMs, scan.m]]
         old := st.hist[1]
         v := (nowMs - old[1] >= 20) ? (scan.m - old[2]) / (nowMs - old[1]) : 0
         return scan.m + v * leadMs < target

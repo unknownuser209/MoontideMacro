@@ -189,13 +189,13 @@ class RlSim {
     }
 }
 
-RlRun(swing, readyMs, &sim, &logs, momentum := false, biteAfter := 2000) {
+RlRun(swing, readyMs, &sim, &logs, momentum := false, biteAfter := 2000, ioIn := "") {
     t := FsMakeCfg()
     t.cfg.Set("General.legacyReel", 0)
     FsScreen.Install()
     try {
         st := SchedState()
-        io := FsIO()
+        io := IsObject(ioIn) ? ioIn : FsIO()
         logs := []
         sim := RlSim(io, swing, readyMs, momentum, biteAfter)
         s := sim
@@ -697,6 +697,51 @@ Test_Reel_LeftoverCardIsClosedNotRepathed() {
     }
 }
 
+; live 2026-11-22: the catch card froze over the panel, raised ~346 px; its
+; Fish button reads only in RaisedRect until the frozen card's X is clicked
+class RlRaisedIO extends FsIO {
+    raised := true
+    Ocr(x, y, w, h, scale := 1) {
+        if (this.raised && this.Count("click@1523,645") >= 1)
+            this.raised := false
+        if (x = FishingTask.RaisedRect[1] && y = FishingTask.RaisedRect[2])
+            return this.raised ? "Fis" : ""
+        if (x = 1050)
+            return this.raised ? "" : "Fish"
+        return ""
+    }
+}
+
+Test_Reel_FrozenRaisedCardIsClosedNotRepathed() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        st := SchedState()
+        io := RlRaisedIO()
+        logs := []
+        FsScreen.fn := (x, y) => 0x101010
+        FishingTask(t.cfg, st, FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertTrue(FsHasLog(logs, "fishing: the catch card froze over a raised fishing panel - closing it by its X"), "logged")
+        AssertEq(io.Count("click@1523,645"), 1, "its X once")
+        AssertEq(FsHasLog(logs, "no fishing panel"), false, "not taken for 'not at the spot'")
+        AssertTrue(io.Count("click@1161,1124") >= 1, "then casts")
+        AssertTrue(io.firstClick["click@1523,645"] < io.firstClick["click@1161,1124"], "close before the cast")
+        ; between tasks too (the tidy): seen and closed
+        io2 := RlRaisedIO()
+        lo := FishingTask(t.cfg, SchedState(), FsDeps(io2, "", true, [])).Leftovers()
+        AssertEq(lo[2].up.Call(), "frozen Fish Caught card", "tidy sees it")
+        AssertEq(lo[2].close.Call("", SchedCtx()), 1, "tidy closes it")
+        ; no panel anywhere: never clicks the frozen card's X blind
+        io3 := RlPanelIO("", "")
+        FishingTask(t.cfg, SchedState(), FsDeps(io3, "", true, [])).CatchOnce(SchedCtx())
+        AssertEq(io3.Count("click@1523,645"), 0, "no blind click")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
 RlRunCard(card, &logs) {
     t := FsMakeCfg()
     t.cfg.Set("General.legacyReel", 0)
@@ -894,7 +939,7 @@ Test_Reel_SnowAfterTheReelEndsTheLoop() {
         for l in logs
             if InStr(l, "fishing: reel ")
                 line := l
-        AssertTrue(RegExMatch(line, "^fishing: reel \d+ ms \(ended\), polls \d+, avg gap \d+ ms, max gap \d+ ms, clicks \d+, empty up to \d+.*, frame seen$"), "one reel line: " line)
+        AssertTrue(RegExMatch(line, "^fishing: reel \d+ ms \(ended\), polls \d+, avg gap \d+ ms, max gap \d+ ms, clicks \d+, empty up to \d+.*, frame seen, slowest grab \d+ / work \d+ / wait \d+ ms$"), "one reel line: " line)
     } finally
         FsClean(t.dir)
 }
@@ -939,4 +984,253 @@ Test_Reel_LogsOneLinePerReel() {
             n++, line := l
     AssertEq(n, 1, "one reel line")
     AssertTrue(RegExMatch(line, "polls (\d+), avg gap (\d+) ms, max gap (\d+) ms, clicks (\d+)", &m) && m[1] > 50 && m[4] > 5, "polls and clicks counted: " line)
+    AssertTrue(RegExMatch(line, ", slowest grab \d+ / work \d+ / wait \d+ ms$"), "slowest pass parts logged: " line)
+}
+
+; FsIO whose Wait notes Input.InReel, and once (from stallAt) takes stallMs
+; longer: the App's tick running inside the reel's sleep on a slow PC.
+class RlStallIO extends FsIO {
+    __New(stallAt := 0, stallMs := 0) {
+        super.__New()
+        this.stallAt := stallAt, this.stallMs := stallMs, this.stalled := false
+        this.inReel := 0, this.outside := 0
+    }
+    Wait(ms, ctx := "") {
+        if Input.InReel
+            this.inReel++
+        else
+            this.outside++
+        if (this.stallMs && !this.stalled && this.stallAt && this.clock >= this.stallAt) {
+            this.stalled := true
+            this.clock += this.stallMs
+        }
+        return super.Wait(ms, ctx)
+    }
+}
+
+; Tester log 2026-11-23 (60 % caught): every reel paused 0.6..1.6 s; the App's
+; tick did its slow work in the reel's sleeps. Input.InReel tells it a reel
+; runs (set for the whole reel, clear before and after).
+Test_Reel_InReelWhileTheReelRuns() {
+    io := RlStallIO(), sim := "", logs := ""
+    o := RlRun(0, 0, &sim, &logs, false, 2000, io)
+    AssertEq(o.r, "ok", "caught")
+    AssertTrue(io.inReel > 50, "Input.InReel in the reel's waits (" io.inReel ")")
+    AssertTrue(io.outside > 0, "not before / after the reel (" io.outside " waits)")
+    AssertEq(Input.InReel, false, "cleared after the reel")
+}
+
+; A stall still shows in the reel line, now with where it was: a long wait
+; = something else ran meanwhile (the 2026-11-23 cause), not the capture.
+Test_Reel_StallIsLoggedAsAWait() {
+    io := RlStallIO(3000, 1000), sim := "", logs := ""
+    RlRun(0, 0, &sim, &logs, false, 2000, io)
+    line := ""
+    for l in logs
+        if InStr(l, "fishing: reel ")
+            line := l
+    AssertTrue(RegExMatch(line, "max gap (\d+) ms.*slowest grab (\d+) / work (\d+) / wait (\d+) ms$", &m), "reel line: " line)
+    AssertTrue(m[1] >= 1000, "the 1 s stall is the max gap: " line)
+    AssertTrue(m[4] >= 1000 && m[2] < 1000 && m[3] < 1000, "and it was a wait, not the capture or the scan: " line)
+}
+
+; After a pause in the polls the speed is not taken over the pause: the
+; arrow 1 s ago at 1043, now at 1243, left of the fish (target 1261): it
+; clicks. The stale speed (+0.2 px/ms, 100 ms lead -> 1263) said no.
+Test_Reel_DecideIgnoresSpeedOverAStall() {
+    st := {}
+    FishLogic.ReelDecide({m: 1043, p1: 1250, p2: 1326}, st, 0, 100, 0.15)
+    AssertEq(FishLogic.ReelDecide({m: 1243, p1: 1250, p2: 1326}, st, 1000, 100, 0.15), true, "left of the fish after a 1 s pause -> click")
+    AssertEq(st.hist.Length, 1, "history started again from this sample")
+    ; normal polls still lead with the speed
+    st := {}
+    FishLogic.ReelDecide({m: 1203, p1: 1250, p2: 1326}, st, 0, 100, 0.15)
+    AssertEq(FishLogic.ReelDecide({m: 1243, p1: 1250, p2: 1326}, st, 40, 100, 0.15), false, "fast approach 40 ms apart -> stop early")
+}
+
+; ---- slow-PC warning (lib\tasks\ReelPause.ahk) -----------------------------
+
+; n reels with the given max gaps (an Array, or one number for all), the
+; rest of each reel healthy; -> the last Add's result. Clock 20 s per reel.
+RlPauseFeed(rp, gaps, &t, parts := "", lost := false) {
+    w := ""
+    for g in gaps {
+        p := IsObject(parts) ? parts : {grab: 20, work: 10, wait: g}
+        w := rp.Add({gap: g, grab: p.grab, work: p.work, wait: p.wait, lost: lost}, t)
+        t += 20000
+    }
+    return w
+}
+
+; Healthy PCs measure 47-94 ms max gaps: never a warning, however long it runs.
+Test_ReelPause_HealthyGapsNeverWarn() {
+    rp := ReelPause(), t := 0
+    try {
+        gaps := []
+        Loop 300
+            gaps.Push([47, 63, 71, 80, 94][Mod(A_Index, 5) + 1])
+        for g in gaps
+            AssertEq(rp.Add({gap: g, grab: 31, work: 32, wait: 16, lost: Mod(A_Index, 3) = 0}, t += 20000), "", "healthy reel " A_Index " (" g " ms)")
+        ; 2 slow reels in 10 (each under 800 ms): still not enough
+        AssertEq(RlPauseFeed(rp, [400, 80, 80, 450, 80, 80, 80, 80, 80, 80], &t), "", "2 slow reels in 10: no warning")
+        AssertEq(ReelPause.Last, "", "nothing for Check my setup")
+    } finally {
+        rp.Reset()
+    }
+}
+
+; 3 reels of the last 10 paused >= 300 ms: the warning, with the count, the
+; longest pause and how many of those fish got away.
+Test_ReelPause_ThreeSlowInTenWarns() {
+    rp := ReelPause(), t := 0
+    try {
+        AssertEq(RlPauseFeed(rp, [80, 80, 80, 80, 80, 80, 80], &t), "", "7 healthy reels")
+        AssertEq(RlPauseFeed(rp, [350], &t, "", true), "", "1 slow")
+        AssertEq(RlPauseFeed(rp, [650], &t, "", true), "", "2 slow")
+        w := RlPauseFeed(rp, [420], &t)
+        AssertTrue(IsObject(w), "3 slow in the last 10: a warning")
+        AssertEq(w.n, 3, "3 slow reels")
+        AssertEq(w.of, 10, "of the last 10")
+        AssertEq(w.longest, 650, "the longest pause")
+        AssertEq(w.lost, 2, "2 of them got away")
+        AssertTrue(InStr(w.text, "Your PC paused during 3 of the last 10 reels (longest 650 ms), which can lose fish (2 got away).") = 1, w.text)
+        AssertTrue(InStr(w.text, "Try: ") && InStr(w.text, "Graphics Quality"), "what to try: " w.text)
+        AssertTrue(ReelPause.Last == w, "kept for Check my setup")
+        ; 2 reels over 800 ms are enough on their own
+        rp2 := ReelPause(), t2 := 0
+        AssertEq(RlPauseFeed(rp2, [80, 80, 80, 80, 900], &t2), "", "1 bad")
+        AssertTrue(IsObject(RlPauseFeed(rp2, [1600], &t2)), "2 reels >= 800 ms: a warning")
+        ; slow reels that fell out of the 10-reel window do not count
+        rp3 := ReelPause(), t3 := 0
+        AssertEq(RlPauseFeed(rp3, [400, 400, 80, 80, 80, 80, 80, 80, 80, 80, 80, 400], &t3), "", "the first two left the window")
+    } finally {
+        rp.Reset()
+    }
+}
+
+; Not before 5 reels this session: 4 terrible reels say nothing, the 5th does.
+Test_ReelPause_NotBeforeFiveReels() {
+    rp := ReelPause(), t := 0
+    try {
+        AssertEq(RlPauseFeed(rp, [1500, 1500, 1500, 1500], &t), "", "4 reels: too early")
+        AssertTrue(IsObject(RlPauseFeed(rp, [80], &t)), "the 5th reel: a warning")
+        rp.Reset()
+        AssertEq(ReelPause.Last, "", "Reset clears Check my setup's row")
+        AssertEq(RlPauseFeed(rp, [1500, 1500, 1500, 1500], &t), "", "a new session counts again")
+    } finally {
+        rp.Reset()
+    }
+}
+
+; At most once per 60 minutes, then again if it is still slow.
+Test_ReelPause_OncePerHour() {
+    rp := ReelPause(), t := 0
+    try {
+        AssertTrue(IsObject(RlPauseFeed(rp, [900, 900, 900, 900, 900], &t)), "first warning")
+        first := t - 20000
+        n := 0
+        while (t < first + ReelPause.GapMs) {
+            n += IsObject(RlPauseFeed(rp, [900], &t)) ? 1 : 0
+        }
+        AssertEq(n, 0, "no second warning within the hour")
+        AssertTrue(IsObject(RlPauseFeed(rp, [900], &t)), "60 min later and still slow: again")
+    } finally {
+        rp.Reset()
+    }
+}
+
+; Which part was slow picks the advice: grab = screen capture (graphics,
+; recording apps), work = CPU (close apps), wait = Windows woke the macro
+; late (power mode); unclear = the general advice.
+Test_ReelPause_HintPicksTheAdvice() {
+    AssertEq(ReelPause.Part(900, 20, 16, 950), "grab", "a slow capture")
+    AssertEq(ReelPause.Part(30, 700, 16, 760), "work", "a slow scan")
+    AssertEq(ReelPause.Part(30, 20, 1000, 1050), "wait", "a late wake")
+    AssertEq(ReelPause.Part(200, 180, 190, 600), "", "no part took half the pause: unclear")
+    cases := Map("grab", [{grab: 900, work: 20, wait: 16}, "screen capture was slow", "OBS"]
+        , "work", [{grab: 30, work: 800, wait: 16}, "processor was busy", "heavy apps"]
+        , "wait", [{grab: 30, work: 20, wait: 900}, "woke the macro late", "Best performance"])
+    for part, c in cases {
+        rp := ReelPause(), t := 0
+        try {
+            RlPauseFeed(rp, [80, 80, 80], &t)
+            w := RlPauseFeed(rp, [950, 950], &t, c[1])
+            AssertTrue(IsObject(w), part ": warned")
+            AssertEq(w.part, part, part ": the part")
+            AssertTrue(InStr(w.text, c[2]) && InStr(w.text, c[3]) && InStr(w.advice, c[3]), part ": " w.text)
+        } finally {
+            rp.Reset()
+        }
+    }
+    rp := ReelPause(), t := 0
+    try {
+        w := RlPauseFeed(rp, [950, 950, 950, 950, 950], &t, {grab: 400, work: 300, wait: 350})
+        AssertEq(w.part, "", "split pauses: no part named")
+        AssertEq(w.advice, ReelPause.Advice(""), "the general advice")
+        AssertTrue(InStr(w.advice, "Graphics Quality") && InStr(w.advice, "recording apps") && InStr(w.advice, "laptop"), w.advice)
+    } finally {
+        rp.Reset()
+    }
+}
+
+class RlPauseWh {
+    __New() => this.sent := []
+    Send(event, title, desc, color, opts := "") => this.sent.Push({event: event, title: title, desc: desc})
+}
+
+; FsIO whose reel stalls stallMs once per reel (the 40th wait inside it).
+class RlSlowIO extends FsIO {
+    __New(stallMs) {
+        super.__New()
+        this.stallMs := stallMs, this.n := 0
+    }
+    Wait(ms, ctx := "") {
+        if Input.InReel {
+            if (++this.n = 40)
+                this.clock += this.stallMs
+        } else {
+            this.n := 0
+        }
+        return super.Wait(ms, ctx)
+    }
+}
+
+; The reel path feeds the tracker after each reel: a PC that stalls ~1 s in
+; every reel gets one log line and one errors webhook on the 5th catch, and
+; no second one on the 6th.
+Test_Reel_SlowPcWarnsAfterTheReel() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    task := ""
+    try {
+        io := RlSlowIO(1000), logs := [], wh := RlPauseWh()
+        d := FsDeps(io, "", true, logs)
+        d.webhook := wh
+        task := FishingTask(t.cfg, SchedState(), d)
+        Loop 6 {
+            sim := RlSim(io)
+            s := sim
+            FsScreen.fn := (x, y) => s.Pixel(x, y)
+            AssertEq(task.CatchOnce(SchedCtx()), "ok", "catch " A_Index)
+            AssertEq(Input.InReel, false, "fed outside the reel")
+            n := 0
+            for l in logs
+                n += InStr(l, "fishing: slow PC: ") ? 1 : 0
+            AssertEq(n, A_Index >= 5 ? 1 : 0, "slow-PC lines after catch " A_Index)
+        }
+        AssertEq(wh.sent.Length, 1, "one webhook")
+        AssertEq(wh.sent[1].event, "errors", "the errors webhook")
+        AssertEq(wh.sent[1].title, FishingTask.PauseTitle, "its title")
+        AssertTrue(InStr(wh.sent[1].desc, "Your PC paused during 5 of the last 5 reels"), wh.sent[1].desc)
+        AssertTrue(InStr(wh.sent[1].desc, "woke the macro late"), "the stall was a wait: " wh.sent[1].desc)
+        AssertTrue(IsObject(ReelPause.Last), "Check my setup sees it")
+        task.Reset()
+        AssertEq(ReelPause.Last, "", "Start: a new session")
+    } finally {
+        if IsObject(task)
+            task.Reset()
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
 }

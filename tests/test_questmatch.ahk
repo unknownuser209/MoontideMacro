@@ -407,9 +407,9 @@ Test_QuestMatch_NewBoardQuests() {
     m := QuestMatch.Match("To the Temple`nComplete the obby", q)
     AssertEq(IsObject(m) ? m.name : "", "To the Temple", "temple")
     AssertTrue(IsObject(m) && m.enabled, "temple enabled")
-    m := QuestMatch.Match("Your First Gear`nVisit Jake", q)
-    AssertEq(IsObject(m) ? m.name : "", "Your First Gear", "gear")
-    AssertTrue(IsObject(m) && !m.enabled, "gear disabled (cannot craft)")
+    ; removed 2026-11-23 (nobody had seen them): no entry, the board's quest is left alone
+    AssertEq(QuestMatch.Match("Your First Gear`nVisit Jake", q), "", "no gear quest")
+    AssertEq(QuestMatch.Match("Time of Patience", q), "", "no Time of Patience")
     ; the old matches still hold
     AssertEq(QuestMatch.Match("Epic Hunt", q).name, "Epic Aura Hunt", "epic hunt")
     AssertEq(QuestMatch.Match("Storfoll Breakthrough", q).name, "Breakthroughs", "breakthrough")
@@ -426,14 +426,32 @@ Test_QuestMatch_OldQuestsFileGetsNewQuestsDisabled() {
     m := QuestMatch.Match("To the Temple", data)
     AssertEq(IsObject(m) ? m.name : "", "To the Temple", "temple appended")
     AssertTrue(IsObject(m) && !m.enabled, "appended disabled")
-    m := QuestMatch.Match("Your First Gear", data)
-    AssertTrue(IsObject(m) && !m.enabled, "gear appended disabled")
+    AssertEq(QuestMatch.Match("Your First Gear", data), "", "the removed gear quest is not appended")
     m := QuestMatch.Match("Delivery I", data)
     AssertTrue(IsObject(m) && !m.enabled, "user's own setting kept")
     n := 0
     for ty in data["types"]
         n += (ty["name"] = "Obby") ? 1 : 0
     AssertEq(n, 1, "existing type reused")
+    DirDelete(d, true)
+}
+
+Test_QuestMatch_RemovedQuestsDropFromAnOldFile() {
+    ; a quests.json from before 2026-11-23 still has Time of Patience and Gear
+    d := A_Temp "\qm_cfg_old_" A_TickCount
+    DirCreate(d "\data")
+    FileAppend('{"types":[{"name":"Time of Patience","enabled":true,"quests":[{"name":"Time of Patience","enabled":true}]}'
+        . ',{"name":"Gear","enabled":true,"quests":[{"name":"Your First Gear","enabled":false}]}'
+        . ',{"name":"Obby","enabled":true,"quests":[{"name":"To the Temple","enabled":true}]}]}', d "\data\quests.json", "UTF-8")
+    cfg := Config.Load(d)
+    data := cfg.Data("quests")
+    names := ""
+    for ty in data["types"]
+        names .= ty["name"] ","
+    AssertTrue(!InStr(names, "Patience") && !InStr(names, "Gear"), "both types gone (" names ")")
+    AssertEq(QuestMatch.Match("Time of Patience", data), "", "no Time of Patience")
+    AssertEq(QuestMatch.Match("Your First Gear", data), "", "no gear")
+    AssertEq(QuestMatch.Match("To the Temple", data).name, "To the Temple", "the rest kept")
     DirDelete(d, true)
 }
 
@@ -923,6 +941,7 @@ class QmShop {
         this.scales := Map()     ; "x,y" -> last OCR scale asked for
         this.noMerchant := false ; Use shows "There's no merchant spawned"
         this.promptAfter := ""   ; a Roblox purchase prompt shows after this log entry (Esc closes it)
+        this.maxBtn := true      ; the Set to Max button reads
     }
     _Pt(p) => "move " p.x "," p.y
     _LastMove() {
@@ -997,6 +1016,8 @@ class QmShop {
             return "Stock Left: " StrReplace(StrReplace(String(this.stock.Has(sel) ? this.stock[sel] : 10), "1", "I"), "0", "O")
         if (x = L.notice.x && y = L.notice.y)
             return (this.confirm && this._LastMove() = this._Pt(L.buy)) ? "You purchosed some " sel "s" : ""
+        if (x = L.maxBtn.x && y = L.maxBtn.y)
+            return this.maxBtn ? "Set to Mox" : ""
         return ""
     }
 }
@@ -1138,6 +1159,38 @@ Test_Merchant_BuysByNameFromTheShopTabs() {
     t2.Notify("Mari")
     t2.Run(SchedCtx())
     AssertTrue(InStr(wh2.sent[wh2.sent.Length].desc, "no 'You purchased' notice seen"), "unconfirmed purchase says so")
+}
+
+Test_Merchant_PausedItemsAreSkipped() {
+    ; 2026-11-22 tester ask: a paused item stays on the list, not bought
+    wants := Map("Mari", [
+        Map("name", "Lucky Potion", "qty", 2, "paused", 1),
+        Map("name", "Mixed Potion", "qty", 1)
+    ], "Jester", [])
+    io := QmIO()
+    wh := QmWh()
+    shop := QmShop(io, ["Lucky Potion", "Mixed Potion", "", "", ""])
+    t := QmMerchTask(wants, shop, io, wh)
+    t.Notify("Mari")
+    AssertEq(t.Run(SchedCtx()), 1, "visited for the item that is not paused")
+    L := MerchantTask.Layout
+    tab := (k) => "move " (L.tabs[k].x + L.tabs[k].w // 2) "," (L.tabs[k].y + L.tabs[k].h // 2)
+    AssertEq(io.Index(tab(1)), 0, "paused Lucky Potion never clicked")
+    AssertTrue(io.Index(tab(2)) > 0, "Mixed Potion bought")
+    d := wh.sent[wh.sent.Length].desc
+    AssertTrue(!InStr(d, "Lucky Potion"), "the paused item is not reported")
+    ; every item paused: no walk at all
+    io2 := QmIO()
+    wh2 := QmWh()
+    t2 := QmMerchTask(Map("Mari", [Map("name", "Lucky Potion", "qty", 1, "paused", true)], "Jester", [])
+        , QmShop(io2, ["Lucky Potion", "", "", "", ""]), io2, wh2)
+    t2.Notify("Mari")
+    t2.Run(SchedCtx())
+    AssertEq(io2.Index("move 130,130"), 0, "no teleport when every item is paused")
+    AssertTrue(InStr(wh2.sent[wh2.sent.Length].desc, "paused"), "the report says why")
+    AssertEq(UiLogic.MerchPaused(Map("name", "x", "paused", 0)), false, "paused 0 = buying")
+    AssertEq(UiLogic.MerchPaused(Map("name", "x", "paused", "true")), true, "paused true (text)")
+    AssertEq(UiLogic.MerchPaused("Heavenly Potion"), false, "a plain name is never paused")
 }
 
 Test_Merchant_ShopNotOpenNothingBought() {
@@ -1970,4 +2023,108 @@ Test_Quests_UnfinishedQuestPanelRealFrame() {
     AssertTrue(QuestsTask.PanelUp(panel), "the panel is up")
     AssertTrue(!QuestMatch.IsComplete(panel), "no turn-in wording in the panel")
     AssertTrue(!RegExMatch(panel, "\d\s*/\s*\d"), "no x/y progress count in the panel")
+}
+
+; ---- qty "all" (2026-11-22 tester ask: buy the whole stock) -----------------
+
+Test_Merchant_QtyAllParsing() {
+    for v in ["all", "ALL", " All ", "max", "Max"] {
+        s := MerchantTask.ParseItem(Map("name", "Lucky Potion", "qty", v))
+        AssertTrue(s.all, "'" v "' is all")
+        AssertEq(s.qty, MerchantTask.MaxQty, "'" v "': MaxQty when the stock does not read")
+    }
+    s := MerchantTask.ParseItem(Map("name", "Lucky Potion", "qty", 3))
+    AssertEq(s.qty "|" s.all, "3|0", "a number works as before")
+    AssertEq(MerchantTask.ParseItem(Map("name", "Lucky Potion", "qty", 80)).qty, MerchantTask.MaxQty, "a number clamps to MaxQty")
+    AssertEq(MerchantTask.ParseItem(Map("name", "Lucky Potion", "qty", 0)).qty, 1, "0 -> 1")
+    AssertEq(MerchantTask.ParseItem(Map("name", "Lucky Potion")).qty, 1, "no qty -> 1")
+    s := MerchantTask.ParseItem(Map("name", "Lucky Potion", "qty", "lots"))
+    AssertEq(s.qty "|" s.all, "1|0", "other text -> 1, not all")
+    s := MerchantTask.ParseItem("Lucky Potion")
+    AssertEq(s.qty "|" s.all, "1|0", "a bare string is 1")
+    ; the JSON file as a user writes it
+    wants := Json.Parse('{"Mari":[{"name":"Lucky Potion","qty":"all"},{"name":"Speed Potion","qty":"MAX"},{"name":"Mixed Potion","qty":4},"Gear B"]}')["Mari"]
+    got := ""
+    for it in wants {
+        s := MerchantTask.ParseItem(it)
+        got .= s.name ":" (s.all ? "all" : s.qty) ","
+    }
+    AssertEq(got, "Lucky Potion:all,Speed Potion:all,Mixed Potion:4,Gear B:1,", "json all / max / number / bare")
+}
+
+Test_Merchant_QtyAllBuysTheWholeStock() {
+    wants := Map("Mari", [
+        Map("name", "Lucky Potion", "qty", "all"),      ; stock 20 -> 20
+        Map("name", "Speed Potion", "qty", "Max"),      ; stock unreadable -> MaxQty
+        Map("name", "Mixed Potion", "qty", "all")       ; sold out
+    ], "Jester", [])
+    io := QmIO()
+    wh := QmWh()
+    logs := []
+    shop := QmShop(io, ["Lucky Potion", "Speed Potion", "Mixed Potion", "", ""]
+        , Map("Lucky Potion", 20, "Speed Potion", "", "Mixed Potion", 0))
+    t := MerchantTask({cfg: QmCfg(, Map("merchants", wants)), io: io, webhook: wh, cal: QmMerchCal()
+        , log: (s) => logs.Push(s), ocr: (x, y, w, h, scale := 1) => shop.Ocr(x, y, w, h, scale)})
+    shop.maxBtn := false                     ; Set to Max not read: the old typed path
+    t.Notify("Mari")
+    AssertEq(t.Run(SchedCtx()), 1, "one visit")
+    L := MerchantTask.Layout
+    AssertEq(QmTyped(io, io.Index("move " L.open.x "," L.open.y)), "20" MerchantTask.MaxQty, "typed the stock (20), then MaxQty")
+    buys := 0
+    for e in io.log
+        buys += (e = "move " L.buy.x "," L.buy.y) ? 1 : 0
+    AssertEq(buys, 2, "Purchase clicked twice (sold out skipped)")
+    d := wh.sent[wh.sent.Length].desc
+    AssertTrue(InStr(d, "bought 20 Lucky Potion"), "the whole stock bought")
+    AssertTrue(InStr(d, "bought " MerchantTask.MaxQty " Speed Potion"), "MaxQty when the stock did not read")
+    AssertTrue(InStr(d, "Mixed Potion: sold out"), "sold out kept")
+    seen := ""
+    for s in logs
+        seen .= s "`n"
+    AssertTrue(InStr(seen, "Speed Potion is set to all but neither Set to Max nor its stock read"), "the fallback is logged")
+    AssertTrue(InStr(seen, "Lucky Potion is set to all but Set to Max did not read: typing the stock (20)"), "typed-stock fallback logged")
+    AssertEq(wh.Count("errors"), 0, "no errors")
+}
+
+Test_Merchant_QtyAllPressesSetToMax() {
+    ; 2026-11-23, the owner: "all" presses the shop's Set to Max, nothing typed
+    wants := Map("Mari", [
+        Map("name", "Lucky Potion", "qty", "all"),
+        Map("name", "Speed Potion", "qty", "Max")      ; stock unreadable: still Set to Max
+    ], "Jester", [])
+    io := QmIO()
+    wh := QmWh()
+    shop := QmShop(io, ["Lucky Potion", "Speed Potion", "", "", ""], Map("Lucky Potion", 20, "Speed Potion", ""))
+    t := QmMerchTask(wants, shop, io, wh)
+    t.Notify("Mari")
+    AssertEq(t.Run(SchedCtx()), 1, "one visit")
+    L := MerchantTask.Layout
+    mb := L.maxBtn
+    pMax := "move " (mb.x + mb.w // 2) "," (mb.y + mb.h // 2)
+    nMax := 0, nBuy := 0, iFirstMax := 0, iFirstBuy := 0
+    for i, e in io.log {
+        if (e = pMax)
+            nMax++, iFirstMax := iFirstMax ? iFirstMax : i
+        if (e = "move " L.buy.x "," L.buy.y)
+            nBuy++, iFirstBuy := iFirstBuy ? iFirstBuy : i
+    }
+    AssertEq(nMax, 2, "Set to Max pressed for each all item")
+    AssertEq(nBuy, 2, "then Purchase for each")
+    AssertTrue(iFirstMax && iFirstMax < iFirstBuy, "Set to Max before Purchase")
+    AssertEq(io.Index("move " L.qty.x "," L.qty.y), 0, "the amount box never clicked")
+    AssertEq(QmTyped(io, io.Index("move " L.open.x "," L.open.y)), "", "nothing typed")
+    d := wh.sent[wh.sent.Length].desc
+    AssertTrue(InStr(d, "bought 20 Lucky Potion"), "the stock shown is reported")
+    AssertTrue(InStr(d, "bought all Speed Potion"), "no stock read: reported as all")
+}
+
+Test_Merchant_SetToMaxReadsOnTheRealShop() {
+    mb := MerchantTask.Layout.maxBtn
+    f := A_ScriptDir "\screens\jester_shop.jpg"
+    t := Ocr.ReadFile(f, mb.x, mb.y, mb.w, mb.h, MerchantTask.SmallScale)
+    AssertTrue(RegExMatch(t, MerchantTask.MaxRe) > 0, "Set to Max reads on jester_shop.jpg: '" t "'")
+    ; the amount box beside it never reads as the button
+    q := MerchantTask.Layout.qty
+    t2 := Ocr.ReadFile(f, q.x - 230, mb.y, 460, mb.h, MerchantTask.SmallScale)
+    AssertEq(RegExMatch(t2, MerchantTask.MaxRe), 0, "the amount box is not Set to Max: '" t2 "'")
 }

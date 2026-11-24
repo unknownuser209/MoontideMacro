@@ -9,23 +9,30 @@
 ;   t := CraftTask(deps)   deps as TaskEnv (cfg, webhook, log, io, cal, pixel,
 ;                          now) plus  roblox  (object with Focus(), default Roblox)
 ;   t.name = "craft", t.priority = 4   (Scheduler task contract)
-;   t.CanRun(state)  true on the first run since start, after an aborted run, or
-;                    when the game's crafted notification ("... crafted
-;                    ...", read by OCR in the calibrated notify_rect, at
-;                    most every NotifyPollMs) shows AND at least
-;                    Craft.minIntervalMin (default 10) minutes have passed
-;                    since the last Run started (no loop of fisher trips).
-;                    A seen notification is latched until Run happens, so
-;                    a fading toast is not lost. Without notify_rect only
-;                    the first run and the timed buys happen.
-;                    TIMED BUY: Craft.buyEveryMin (default 30, 0 = off)
-;                    after the last buy the next Sell visit buys again
-;                    (BuyDue), and with no Sell visit for BuyGraceMs more
-;                    the task makes its own trip. The toast alone was not
-;                    enough: live 2026-11-20 it was read 0 times in 4 h, so
-;                    the potions ran out, nothing crafted, no toast came,
-;                    and nothing was bought again (16 Heavenly for 5 h). false when Craft.enabled = 0 and
-;                    Craft.cauldron = 0 (the cauldron runs alone with only it on).
+;   t.CanRun(state)  THE BUY HAPPENS ONLY AFTER THE GAME'S CRAFTED
+;                    NOTIFICATION ("... crafted ...", read by OCR in the
+;                    calibrated notify_rect, at most every NotifyPollMs, and
+;                    only once Craft.minIntervalMin (default 10) minutes
+;                    have passed since the last run or buy: one toast that
+;                    stays up is one buy). Nothing else buys: not the Start,
+;                    not a timer, not a Sell visit on its own (2026-11-23:
+;                    the owner had 30k Lucky Potions and no fish points
+;                    left; the buy on every Start, the timed buy every 30
+;                    min at each Sell visit and the retry after ANY cut-short
+;                    run all bought without a toast). A seen notification is
+;                    latched (_notified) until ONE buy happens: the next
+;                    Sell visit (BuyDue / BuyHere) or a craft trip, whichever
+;                    is first; the other then has nothing to buy. A buy cut
+;                    short before any Confirm was clicked keeps the latch
+;                    (retried); once a Confirm was clicked it is cleared
+;                    (never bought twice for one toast). Without notify_rect
+;                    nothing is ever bought (logged once).
+;                    THE CAULDRON (Craft.cauldron) keeps its own triggers
+;                    (_cauldronDue): its first visit since Start, each
+;                    crafted notification, a cut-short cauldron run. A
+;                    cauldron-only run never buys.
+;                    false when Craft.enabled = 0 and Craft.cauldron = 0
+;                    (the cauldron runs alone with only it on).
 ;   t.Run(ctx)       -> number of potions whose confirm was clicked with the shop UI seen.
 ;
 ; SETTINGS (settings.ini [Craft]; defaults in Config.IniDefaults)
@@ -35,12 +42,11 @@
 ;                                        Calibrate.Potions()
 ;                                        validates it: the app must have called
 ;                                        Calibrate.Use(path, cfg))
-;   qty          1                       units per potion per visit (1..999)
-;   minIntervalMin 10                    minutes between notification-triggered
-;                                        runs (1..1440; else 10)
-;   buyEveryMin  30                      buy again this many minutes after the
-;                                        last buy, toast or not (0 = off,
-;                                        1..1440; else 30)
+;   qty          1                       units per potion per buy (1..999), typed
+;                                        once per crafted notification
+;   minIntervalMin 10                    minutes after a run / buy before the
+;                                        notification is read again (1..1440;
+;                                        else 10)
 ;   qty_<id>     (optional)              per-potion override; <id> is the potion
 ;                                        name lower-cased, non-alphanumerics as "_"
 ;                                        (qty_lucky_potion = 3)
@@ -75,7 +81,9 @@
 ;       (cauldron_gui), the search box, the result cards, Open Recipe and
 ;       the X are FOUND ON SCREEN when they are not recorded, or when the
 ;       recorded title box does not read (_Workshop, lib\AutoCal.ahk); a
-;       full calibration whose title box reads is used as before.
+;       full calibration whose title box reads is used as before. The
+;       Craft button (cauldron_craft) is optional: found on screen by its
+;       word when it is not recorded.
 ;   Roblox focus (failure -> log, ctx-aware wait, retry later) -> ResetToSpawn.
 ;   Buy: camera zoom -> toShop route -> dialog clicks -> Captain Flarg shows
 ;     two buttons, Sell Fish and Open Shop: wait up to ShopWaitMs until OCR
@@ -107,8 +115,9 @@
 ;     around fisher_open_shop reads none of Open Shop / Sell / Leave; else
 ;     click fisher_leave). Anything still open is reported as an error.
 ;   After buying: with the cauldron part, ResetToSpawn; otherwise the "back" route.
-;   SAME VISIT AS THE SELL: when a buy is due (BuyDue) while Sell is at the
-;   fisher, Sell calls BuyHere right after closing its shop: E (skipped when
+;   SAME VISIT AS THE SELL: when a buy is due (BuyDue: a crafted notification
+;   is latched) while Sell is at the fisher, Sell calls BuyHere right after
+;   closing its shop (BuyHere itself refuses without the latch): E (skipped when
 ;   his Open Shop button is still up, or when the Fishing Shop itself is
 ;   still open: E over the open shop brings his dialog back on top of it and
 ;   its "Click to skip" eats the next tile click), dialog, Open Shop, the
@@ -116,7 +125,8 @@
 ;   Open Shop never readable (ShopWaitMs, one extra skip click halfway) ->
 ;   nothing is bought and Captain Flarg's dialog is LEFT (fisher_leave) and
 ;   checked, so the walk back never starts with his dialog open. In BuyHere
-;   the buy then stays due, so a craft trip retries it.
+;   the buy then stays due, so a craft trip retries it (once: a craft trip
+;   whose shop does not open clears the latch, reported).
 ;   PREEMPTED at Captain Flarg (a higher task is due; not F3 / pause): the
 ;   purchase window, the shop and his dialog are closed first (checked), so
 ;   the next task does not start with them on screen.
@@ -132,8 +142,12 @@
 ;     ResultCards cards are read (card N = cauldron_result moved N-1 times by
 ;     the cauldron_result_2 offset; without that step only the first) and the
 ;     one whose description shows its Lord (GameLists.DescHint) is used.
-;     Click it, Open Recipe, Add
-;     All, close (click out of the cauldron), then
+;     Click it, Open Recipe, Add All, then CRAFT (just in case auto craft
+;     did not: the recorded cauldron_craft, else the button found on
+;     screen by its word, CraftTask.IsCraftButton, in CraftBox around Add
+;     All and the Workshop's left panel; not found -> logged, a screen of
+;     the open recipe saved (io.Shot), the trip still counts and closes),
+;     close (click out of the cauldron), then
 ;     ResetToSpawn: the next task starts from spawn (LeftSpot() tells the
 ;     App, which runs the sell trip next: it walks to the fishing spot).
 ;     There is no return route.
@@ -258,11 +272,38 @@ class CraftTask {
     static DialogBody := {x: 960, y: 915, w: 940, h: 265, scale: 2
         , words: ["skip", "click", "flarg", "florg", "captain", "want", "avvv", "arrr"]}
     static DefaultMinIntervalMin := 10
-    static DefaultBuyEveryMin := 30
-    static BuyGraceMs := 900000    ; timed buy not done by a Sell visit 15 min later: own trip
     static CauldronIds := ["cauldron_search", "cauldron_open_recipe", "cauldron_add_all", "cauldron_close"]   ; points
     static CauldronRects := ["cauldron_gui", "cauldron_result"]
     static ResultCards := 3        ; Godly Potion: three cards share the title
+    ; THE CRAFT BUTTON (owner 2026-11-23: "click add all and craft just in
+    ; case"). No frame of the opened recipe yet: the button is found by its
+    ; word in a box around Add All (cauldron_add_all, preset 1104,911: the
+    ; recipe window in the middle) that also takes in the Workshop's left
+    ; panel (Open Recipe / Auto at y ~1095 on tests\screens\workshop_open),
+    ; never the result list on the right. Read at 1x, then 2x.
+    static CraftBox := {right: 900, up: 500, down: 450}
+    static CraftScales := [1, 2]
+    ; the word through the game-font fold (a as o, G for C, ! / l as i):
+    ; 'Craft', 'Croft', 'CRAFT', 'Craft!', 'Cratt', 'Craff', '(raft',
+    ; 'Grafl', 'Cr aft'; never 'Crafted' (the toast), 'Crafting', 'Auto',
+    ; 'Add All'.
+    static CraftWordRe := "^[cs]?ro(ft|ff|tt|fi|it|f)i?$"
+    ; A line that is the Craft button's label: ONE real word (3+ letters
+    ; after the fold; an icon read as 'o' or a dot is let through) and that
+    ; word is Craft. "Auto Craft", "Add All Craft", a chat sentence: no.
+    static IsCraftButton(text) {
+        if RegExMatch(GameText.Fold(text), CraftTask.CraftWordRe)   ; 'Cr aft': a space inside the word
+            return true
+        hit := false
+        for w in StrSplit(GameText.Norm(text), " ") {
+            if (StrLen(w) < 3)
+                continue
+            if (hit || !RegExMatch(w, CraftTask.CraftWordRe))
+                return false
+            hit := true
+        }
+        return hit
+    }
     static GuiRe := "i)workshop"
     static StellaRe := "i)\bstel"
     ; Both through the game-font fold (GameText): "workshop" has a k, which
@@ -299,13 +340,12 @@ class CraftTask {
         this._roblox := IsObject(rb) ? rb : Roblox
         sm := TaskEnv.Dep(deps, "sample", "")      ; (x, y) -> 0xRRGGBB
         this._sample := IsObject(sm) ? sm : (x, y) => Pixel.Get(x, y)
-        this._ranOnce := false       ; a Run has started since launch
-        this._notified := false      ; crafted notification seen, Run not yet done
+        this._notified := false      ; crafted notification seen, its ONE buy not yet done (the only buy trigger)
+        this._cauldronDue := true    ; a cauldron visit is due: the first since Start, a notification, a cut-short visit
         this._notifyReadAt := ""     ; env.Now() of the last notify_rect read
-        this._retry := false         ; last Run was cut short
-        this._lastRunAt := ""        ; env.Now() when the last Run started
-        this._lastBuyAt := ""        ; env.Now() of the last buy (Run with buying, or BuyHere)
-        this._skipBuy := false       ; BuyHere bought during the sell visit
+        this._lastRunAt := ""        ; env.Now() when the last Run started or BuyHere bought
+        this._confirmed := 0         ; Confirm clicks in the current buy (a cut-short buy with one is not retried)
+        this._toldNoNotify := false  ; "no notify_rect: nothing is bought" logged
         this._portalAt := ""         ; the cauldron route's "portalAt" (steps up to the portal), "" = PortalRoute
         this._ws := ""               ; Stella's Workshop as found on screen this run (_Workshop)
         this._cur := ""              ; ... the parts in use while it is open
@@ -335,25 +375,6 @@ class CraftTask {
         return Integer(m) * 60000
     }
 
-    ; Craft.buyEveryMin (0 = off, 1..1440, else 30) in ms; 0 when off.
-    _BuyEveryMs() {
-        env := this._env
-        m := CraftTask.DefaultBuyEveryMin
-        if IsObject(env.cfg)
-            try m := env.cfg.Get("Craft.buyEveryMin", CraftTask.DefaultBuyEveryMin)
-        if !(IsInteger(m) && m >= 0 && m <= 1440)
-            m := CraftTask.DefaultBuyEveryMin
-        return Integer(m) * 60000
-    }
-
-    ; Is a timed buy due (extraMs later than buyEveryMin after the last buy)?
-    _TimedBuyDue(extraMs := 0) {
-        every := this._BuyEveryMs()
-        if (every <= 0 || this._lastBuyAt = "")
-            return false
-        return this._env.Now() - this._lastBuyAt >= every + extraMs
-    }
-
     ; The buy part is the "Fish shop" switch (Craft.enabled), the cauldron
     ; part its own (Craft.cauldron). The cauldron never ran with the Fish
     ; shop (then "Craft cycle") off, 2026-11-19: only both off stops the task.
@@ -366,22 +387,25 @@ class CraftTask {
             return false
         if (this._aborts > 0 && env.Now() - this._abortAt < this._RetryGapMs())
             return false
-        if (!this._ranOnce || this._notified || this._retry)
+        ; a latched notification's buy (or its retry), a due cauldron visit
+        if (this.BuyDue() || (this._CauldronOn() && this._cauldronDue))
             return true
-        ; a timed buy no Sell visit picked up: its own trip
-        if (this._BuyOn() && this._TimedBuyDue(CraftTask.BuyGraceMs)) {
-            env.Log("craft: timed buy due and no Sell visit did it: going to the Fisher")
-            return true
-        }
-        ; minimum interval between notification-triggered runs
+        ; minimum interval after a run / buy: a toast still up (or the next
+        ; craft right after) is not a second buy
         if (this._lastRunAt !== "" && env.Now() - this._lastRunAt < this._MinIntervalMs())
             return false
         r := env.cal.Rect("notify_rect")
-        if !IsObject(r)
+        if !IsObject(r) {
+            if (this._BuyOn() && !this._toldNoNotify) {
+                this._toldNoNotify := true
+                env.Log("craft: notify_rect is not calibrated: the Fish shop buys nothing (it buys only after the crafted notification)")
+            }
             return false
+        }
         ; CanRun runs on the App's tick while a route plays: a slow OCR here
-        ; freezes the walk with a key held (2026-10-27 review). Read later.
-        if Input.InRoute
+        ; freezes the walk with a key held (2026-10-27 review), or pauses the
+        ; fishing reel (Input.InReel). Read later.
+        if Input.Hot()
             return false
         now := env.Now()
         if (this._notifyReadAt !== "" && now - this._notifyReadAt < CraftTask.NotifyPollMs)
@@ -390,27 +414,30 @@ class CraftTask {
         t := (env.ocrFn)(r.x, r.y, r.w, r.h)
         if !RegExMatch(t, CraftTask.NotifyRe)
             return false
-        this._notified := true
-        env.Log("craft: crafted notification seen ('" SubStr(RegExReplace(t, "\s+", " "), 1, 50) "'): buying again")
+        CalHealth.Ok("notify_rect", r)
+        buy := this._BuyOn()
+        this._notified := buy
+        if this._CauldronOn()
+            this._cauldronDue := true
+        env.Log("craft: crafted notification seen ('" SubStr(RegExReplace(t, "\s+", " "), 1, 50) "'): "
+            . (buy ? "one buy at the Fisher" : "cauldron visit"))
         return true
     }
 
-    ; Sell hook: is a Fisher buy due (the first one since Start, a "crafted"
-    ; notification, a cut-short run, buyEveryMin since the last buy)? Sell
-    ; then buys in the same visit.
-    BuyDue() {
-        if !this._BuyOn()
-            return false
-        return !this._ranOnce || this._notified || this._retry || this._TimedBuyDue()
-    }
+    ; Sell hook: is a Fisher buy due? Only a latched crafted notification
+    ; (CanRun) makes one; Sell then buys in the same visit, once.
+    BuyDue() => this._BuyOn() && this._notified
 
     ; Buys while already standing at Captain Flarg (Sell just closed its
     ; shop): E opens his dialog again, then the same shop steps as a craft
     ; trip, without the respawn and the walk. The craft task then has no
-    ; buying left to do (a cauldron step still runs on its own).
+    ; buying left to do (a cauldron step still runs on its own). Without a
+    ; latched crafted notification (BuyDue) it buys nothing.
     ; -> purchases with the shop UI seen, or -1 when stopped.
     BuyHere(ctx) {
         env := this._env
+        if !this.BuyDue()
+            return 0
         plan := this._Plan()
         if !plan.buy
             return 0
@@ -425,28 +452,23 @@ class CraftTask {
             if !env.Wait(CraftTask.SettleMs, ctx)
                 return -1
         }
+        this._confirmed := 0
         r := this._ShopPhase(ctx, plan, lines)
         if (r = -1) {
-            this._retry := true
+            ; cut short: retried (the latch stays) only if no Confirm was
+            ; clicked yet; one clicked = this toast's buy is done
+            this._BuyDone(true)
             return -1
         }
         if (r = CraftTask.NotOpened) {
             ; nothing was bought: the buy stays due (the craft trip tries
             ; again) instead of waiting for the next crafted notification
             ; (2026-10-27 review). 0, not < 0: Sell still walks back.
-            this._retry := true
             return 0
         }
-        this._lastRunAt := env.Now()
-        this._lastBuyAt := env.Now()
-        this._notified := false
-        this._retry := false
+        this._BuyDone()
         for line in lines
             env.Log("craft: " line)
-        if plan.cauldron
-            this._skipBuy := true                ; Run does the cauldron only
-        else
-            this._ranOnce := true
         desc := ""
         for line in lines
             desc .= (desc = "" ? "" : "`n") "- " line
@@ -459,20 +481,31 @@ class CraftTask {
     ; sell trip next, which walks there, instead of fishing failing first.
     LeftSpot() => this._leftSpot
 
+    ; The latched notification's buy happened: cleared, and the notification
+    ; is not read again for minIntervalMin. cutShort: only when a Confirm was
+    ; clicked (else the latch stays and the buy is retried).
+    _BuyDone(cutShort := false) {
+        if (cutShort && this._confirmed = 0)
+            return
+        this._notified := false
+        this._lastRunAt := this._env.Now()
+    }
+
     Run(ctx) {
         this._leftSpot := false
         this._lastRunAt := this._env.Now()
-        if (this._BuyOn() && !this._skipBuy)
-            this._lastBuyAt := this._lastRunAt
-        this._ranOnce := true
-        this._notified := false
-        this._retry := false
+        if !this._BuyOn()
+            this._notified := false      ; no latch kept for when the Fish shop is turned on
+        this._confirmed := 0
         done := false
         try {
             return this._Visit(ctx, &done)
         } finally {
+            if (this._confirmed > 0)
+                this._BuyDone()          ; a Confirm was clicked: never bought twice for one toast
             if !done {
-                this._retry := true      ; stopped / unfocused: try again later
+                ; stopped / unfocused: a latched buy (no Confirm clicked)
+                ; and a due cauldron visit stay due and are tried again later
                 if ctx.ShouldStop() {
                     this._aborts := 0    ; cut short: again once the stop is over
                 } else {
@@ -491,10 +524,17 @@ class CraftTask {
         if ctx.ShouldStop()
             return 0
         plan := this._Plan()
-        if this._skipBuy {                       ; bought during the sell visit
-            this._skipBuy := false
-            plan.buy := false
-        }
+        ; ONLY a latched crafted notification buys (BuyDue); a part that is
+        ; due but cannot run (not set up: _Plan reported it) is cleared, so
+        ; the task does not come back every tick for nothing
+        want := this.BuyDue()
+        if (want && !plan.buy)
+            this._notified := false
+        plan.buy := plan.buy && want
+        cDue := this._cauldronDue && plan.cauldron
+        if !plan.cauldron
+            this._cauldronDue := false
+        plan.cauldron := cDue
         if (!plan.buy && !plan.cauldron) {
             done := true
             return 0
@@ -514,8 +554,11 @@ class CraftTask {
         if plan.buy {
             r := this._BuyPhase(ctx, plan, lines)
             if (r = -1)
-                return 0
-            shopSeen := Max(r, 0)                ; NotOpened: reported, nothing bought
+                return 0                         ; (finally: retried unless a Confirm was clicked)
+            ; this toast's buy is done; NotOpened (reported, nothing
+            ; bought) too: a trip is not repeated until the next toast
+            this._BuyDone()
+            shopSeen := Max(r, 0)
             if plan.cauldron {
                 if !Input.ResetToSpawn(ctx, io)
                     return 0
@@ -527,6 +570,7 @@ class CraftTask {
         if plan.cauldron {
             if !this._CauldronPhase(ctx, plan, lines)
                 return 0
+            this._cauldronDue := false
         }
         desc := ""
         for line in lines {
@@ -653,6 +697,8 @@ class CraftTask {
         plan.hint := GameLists.DescHint(target)
         r2 := env.cal.Rect("cauldron_result_2")      ; optional: only the Godly Potions use it
         plan.cpts["cauldron_result_2"] := IsObject(r2) ? r2 : ""
+        cb := env.cal.Point("cauldron_craft")         ; optional: found on screen when not recorded (_CraftPoint)
+        plan.cpts["cauldron_craft"] := IsObject(cb) ? cb : ""
         plan.cRoute := route
     }
 
@@ -909,6 +955,8 @@ class CraftTask {
             if env.BuyPrompt("craft")
                 return this._NotOpened(ctx, plan, lines, "a Roblox purchase prompt came up after the dialog clicks (closed with Esc); nothing bought")
             seen := this._WaitOpenShop(ctx, plan, a)
+            if (seen = 0)                       ; his dialog was up: the button's own read missed
+                CalHealth.Fail("fisher_open_shop", "Open Shop did not read at it while Captain Flarg's dialog was up", plan.shopPt)
         }
         if (seen < 0)
             return -1
@@ -944,8 +992,11 @@ class CraftTask {
         up := (env.Unsafe("craft") = "") ? this._WaitShop(ctx) : 0
         if (up < 0)
             return -1
-        if !up
+        if !up {
+            CalHealth.Fail("fisher_open_shop", "a click on it did not open the Fishing Shop", plan.shopPt)
             return this._NotOpened(ctx, plan, lines, "the Fishing Shop did not open after Open Shop (its title did not read); nothing bought")
+        }
+        CalHealth.Ok("fisher_open_shop", plan.shopPt)
         env.Click(CraftTask.BuyTab)                ; the shop may still be on Sell
         if !env.Wait(CraftTask.SettleMs, ctx)
             return -1
@@ -1309,14 +1360,19 @@ class CraftTask {
             return ""
         if env.BuyPrompt("craft")
             return {found: "", read: "", why: "a Roblox purchase prompt came up after the tile click (closed with Esc)"}
-        first := ""
+        first := "", named := false
         for sc in CraftTask.NameScales {
             t := (env.ocrFn)(r.x, r.y, r.w, r.h, sc)
             if (A_Index = 1)
                 first := t
-            if CraftTask.IsItem(t, name)
+            if CraftTask.IsItem(t, name) {
+                CalHealth.Ok("fisher_picked_name", r)
                 return {found: t, read: first}
+            }
+            named := named || CraftTask.ShopIndex(t) > 0
         }
+        ; another item's name reads: the box is right (the tile was not)
+        named ? CalHealth.Ok("fisher_picked_name", r) : CalHealth.Fail("fisher_picked_name", "no shop item's name read in it after a tile click", r)
         return {found: "", read: first}
     }
 
@@ -1493,6 +1549,7 @@ class CraftTask {
             }
             if this._PurchaseUp(plan) {
                 Screen.WithMode("C", () => env.Click(conf))
+                this._confirmed += 1             ; bought (or as good as): a cut-short buy is not repeated
                 if !env.Wait(gap, ctx)
                     return ""
                 if (this._ClosePurchase(ctx, plan) < 0)      ; it stays open after a purchase
@@ -1556,8 +1613,11 @@ class CraftTask {
         this._guiRead := ""
         if IsObject(gui) {
             this._guiRead := this._GuiText(gui)
-            if (CraftTask.WorkshopUp(this._guiRead) && CraftTask._Full(c))
-                return c
+            if CraftTask.WorkshopUp(this._guiRead) {
+                CalHealth.Ok("cauldron_gui", gui)
+                if CraftTask._Full(c)
+                    return c
+            }
         }
         ws := AutoCal.Workshop(env.Lines())
         if !IsObject(ws)
@@ -1565,10 +1625,13 @@ class CraftTask {
         t := this._GuiText(ws.gui)
         if !CraftTask.WorkshopUp(t)
             return ""
+        if (IsObject(gui) && !CraftTask.WorkshopUp(this._guiRead))
+            CalHealth.Fail("cauldron_gui", "Stella's Workshop title did not read in it; the window was found elsewhere on screen", gui)
         this._guiRead := t
         p := Map("cauldron_gui", ws.gui, "cauldron_search", ws.search, "cauldron_close", ws.close
             , "cauldron_open_recipe", IsObject(ws.open) ? ws.open : (c.Has("cauldron_open_recipe") ? c["cauldron_open_recipe"] : "")
-            , "cauldron_add_all", c.Has("cauldron_add_all") ? c["cauldron_add_all"] : "", "auto", ws)
+            , "cauldron_add_all", c.Has("cauldron_add_all") ? c["cauldron_add_all"] : ""
+            , "cauldron_craft", c.Has("cauldron_craft") ? c["cauldron_craft"] : "", "auto", ws)
         if !this._wsTold {
             this._wsTold := true
             env.Log("craft: Stella's Workshop found on screen (its title at " ws.title.x "," ws.title.y "): the search box, the result cards, Open Recipe and its X are placed from it"
@@ -1640,6 +1703,56 @@ class CraftTask {
         if !env.Wait(CraftTask.SettleMs, ctx)
             return -1
         return env.BuyPrompt("craft") ? 0 : 1
+    }
+
+    ; Where to click Craft, or "": the recorded cauldron_craft first, else
+    ; the button found on screen by its word (_FindCraft).
+    _CraftPoint(p) {
+        pt := p.Has("cauldron_craft") ? p["cauldron_craft"] : ""
+        return IsObject(pt) ? pt : this._FindCraft(p)
+    }
+
+    ; The box the Craft button is looked for in (design px), or "" without
+    ; Add All: from the screen's left edge (the Workshop's left panel is in
+    ; it) to CraftBox.right past Add All, but short of the Workshop's title
+    ; (the result list on the right is never searched); CraftBox.up above
+    ; Add All to CraftBox.down under it.
+    static CraftSearchBox(p) {
+        add := p.Has("cauldron_add_all") ? p["cauldron_add_all"] : ""
+        if !IsObject(add)
+            return ""
+        gui := p.Has("cauldron_gui") ? p["cauldron_gui"] : ""
+        b := CraftTask.CraftBox
+        x1 := Min(Screen.DesignW, add.x + b.right)
+        if (IsObject(gui) && gui.x > add.x + 50)
+            x1 := Min(x1, gui.x - 20)
+        y0 := Max(0, add.y - b.up), y1 := Min(Screen.DesignH, add.y + b.down)
+        return {x: 0, y: y0, w: x1, h: y1 - y0}
+    }
+
+    ; The Craft button by its word (IsCraftButton) in CraftSearchBox, the
+    ; line nearest Add All; 1x first, then 2x. -> {x, y} or "".
+    _FindCraft(p) {
+        env := this._env
+        box := CraftTask.CraftSearchBox(p)
+        if !IsObject(box)
+            return ""
+        add := p["cauldron_add_all"]
+        for sc in CraftTask.CraftScales {
+            best := "", bestD := ""
+            for L in env.Lines(box, sc) {
+                if (L.x < box.x || L.x > box.x + box.w || L.y < box.y || L.y > box.y + box.h || !CraftTask.IsCraftButton(L.text))
+                    continue
+                d := (L.x - add.x) ** 2 + (L.y - add.y) ** 2
+                if (!IsObject(best) || d < bestD)
+                    best := L, bestD := d
+            }
+            if IsObject(best) {
+                env.Log("craft: the Craft button found on screen at " best.x "," best.y " (read '" Trim(best.text) "')")
+                return {x: best.x, y: best.y}
+            }
+        }
+        return ""
     }
 
     _CauldronPhase(ctx, plan, lines) {
@@ -1782,7 +1895,7 @@ class CraftTask {
                 return Input.ResetToSpawn(ctx, io)
             }
             r := this._CauldronClick(ctx, gui, {x: card.x + card.w // 2, y: card.y + card.h // 2}, "the result card")
-            for id in ["cauldron_open_recipe", "cauldron_add_all", "cauldron_close"] {
+            for id in ["cauldron_open_recipe", "cauldron_add_all"] {
                 if (r < 1)
                     break
                 if !IsObject(p[id]) {           ; "Open Recipe" did not read and is not recorded
@@ -1794,8 +1907,33 @@ class CraftTask {
             }
             if (r < 0)
                 return false
-            lines.Push(r ? "cauldron: opened (Stella's Workshop seen), " plan.target " found, clicked Open Recipe and Add All (contents not verified)"
-                : "cauldron: " plan.target " found, but Stella's Workshop went away (or a purchase prompt came up): stopped before Add All was confirmed")
+            if (r = 0) {
+                lines.Push("cauldron: " plan.target " found, but Stella's Workshop went away (or a purchase prompt came up): stopped before Add All was confirmed")
+                return Input.ResetToSpawn(ctx, io)
+            }
+            ; Add All clicked: Craft (just in case auto craft did not), then
+            ; the close as before. A Craft button not found never fails the
+            ; trip: a screen of the open recipe is saved for the next look.
+            done := "Open Recipe and Add All", why := ""
+            cpt := this._CraftPoint(p)
+            if IsObject(cpt) {
+                r := this._CauldronClick(ctx, gui, cpt, "the Craft button")
+                if (r < 0)
+                    return false
+                if r
+                    done := "Open Recipe, Add All and Craft"
+                else
+                    why := "; Craft not clicked (Stella's Workshop went away or a purchase prompt came up)"
+            } else {
+                shot := HasMethod(io, "Shot") ? io.Shot() : ""
+                env.Log("craft: the Craft button was not found on screen (and is not calibrated): not clicked")
+                if (shot != "")
+                    env.Log("craft: screen of the open recipe saved to " shot)
+                why := "; Craft button not found" (shot != "" ? " (screen saved)" : "")
+            }
+            if (this._CauldronClick(ctx, gui, p["cauldron_close"], "cauldron_close") < 0)
+                return false
+            lines.Push("cauldron: opened (Stella's Workshop seen), " plan.target " found, clicked " done " (contents not verified)" why)
         } else {
             msg := "cauldron GUI did not open after " CraftTask.GuiTries " tries (Stella's dialog?); nothing crafted"
             shot := HasMethod(io, "Shot") ? io.Shot() : ""

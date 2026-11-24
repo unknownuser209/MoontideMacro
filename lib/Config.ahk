@@ -59,9 +59,54 @@ class Config {
         if FileExist(this.iniPath) {
             this._ReadIni()
             this._JoinOnce()
+            this._DropRetired()
         } else {
             this._ApplyIniDefaults()
             this.Save()
+        }
+    }
+
+    ; Settings the app no longer has (2026-11-23: Minions.putBack, "Put my
+    ; aura back after", nobody used it): dropped on load, gone from the
+    ; file at the next Save.
+    static RetiredKeys := ["Minions.putBack"]
+
+    _DropRetired() {
+        for path in Config.RetiredKeys {
+            p := Config._SplitPath(path)
+            if (this.sections.Has(p[1]) && this.sections[p[1]].Has(p[2]))
+                this.sections[p[1]].Delete(p[2])
+        }
+    }
+
+    ; Quests removed from the list (2026-11-23, nobody had seen them on the
+    ; board). An older quests.json loses them on load (saved with the next
+    ; SaveData); a type left empty goes too.
+    static RetiredQuests := ["Time of Patience", "Your First Gear"]
+
+    static _DropRetiredQuests(data) {
+        if !(data.Has("types") && data["types"] is Array)
+            return
+        gone := Map()
+        gone.CaseSense := "Off"
+        for n in Config.RetiredQuests
+            gone[n] := 1
+        i := data["types"].Length
+        while (i >= 1) {
+            t := data["types"][i]
+            if (t is Map && t.Has("quests") && t["quests"] is Array) {
+                had := t["quests"].Length
+                j := had
+                while (j >= 1) {
+                    q := t["quests"][j]
+                    if (q is Map && q.Has("name") && gone.Has(String(q["name"])))
+                        t["quests"].RemoveAt(j)
+                    j--
+                }
+                if (had > 0 && t["quests"].Length = 0)
+                    data["types"].RemoveAt(i)
+            }
+            i--
         }
     }
 
@@ -95,15 +140,15 @@ class Config {
         g["joinDefaultOn"] := "1"     ; set once the v1.5 "Join Server link on by default" change was applied (see _JoinOnce)
         g["everyonePing"] := "1"      ; 1 = live rare webhook for the biomes below also pings @everyone
         g["everyoneBiomes"] := "DREAMSPACE,GLITCHED,CYBERSPACE"
+        g["biomePings"] := ""         ; BIOME=role or user ID, comma list (SINGULARITY=&123): the live rare message also pings it (2026-11-22)
         d["General"] := g
         ; Which potions the craft/fisher tasks buy: comma list of full names,
         ; each must match a name in data\potions.json.
         cr := Config._CIMap()
         cr["potions"] := "Lucky Potion"
         cr["enabled"] := "0"          ; Fish shop buys on/off: off for a new install (it spends in-game money; audit 2026-11-20). Only a NEW settings.ini gets these; a missing key still reads 1 (the code defaults), so no existing user changes
-        cr["qty"] := "1"              ; units bought per potion per visit (1..999)
-        cr["minIntervalMin"] := "10"  ; minutes between notification-triggered craft runs
-        cr["buyEveryMin"] := "30"     ; buy again this many minutes after the last buy, crafted toast or not (0 = off)
+        cr["qty"] := "1"              ; units bought per potion per crafted notification (1..999)
+        cr["minIntervalMin"] := "10"  ; minutes after a craft run / buy before the crafted notification is read again
         ; Optional per-potion override: qty_<id> = number, <id> = the potion
         ; name lower-cased with non-alphanumerics as "_" (qty_lucky_potion = 3).
         cr["cauldron"] := "0"         ; 1 = also visit Stella's cauldron (needs recorded routes)
@@ -140,6 +185,7 @@ class Config {
         ; PUMPKIN MOON night.
         lm := Config._CIMap()
         lm["bossAlert"] := "1"        ; 1 = a Sinister S. / P. line in the chat sends the "sinister" message
+        lm["orbAlert"] := "0"         ; 1 = an orb line in the chat ("Typhoon Orb has spawned") sends the "sinister" message (2026-11-22; off: orbs come in most biomes)
         lm["cursedRune"] := "0"       ; 1 = use ONE Cursed Rune Fragment when GRAVEYARD or PUMPKIN MOON starts
         d["Limited"] := lm
         ; Rare aura alert (2026-11-16): a new aura the player rolled, as rare
@@ -183,7 +229,6 @@ class Config {
         mn["enabled"] := "0"
         mn["aura"] := "Eden"          ; combat aura worn for the hunt
         mn["maxSec"] := "120"         ; longest hunt per biome
-        mn["putBack"] := "0"          ; 1 = the aura from before back after the hunt
         mn["shiftLock"] := "1"        ; 1 = shift lock on in fights (Roblox's Shift Lock Switch setting on)
         mn["boss"] := "1"             ; 1 = look for (and fight) the boss once per GRAVEYARD start
         mn["bigAuras"] := "Equinox,Luminosity"   ; big auras: the fight camera stays zoomed all the way out (and a warning)
@@ -217,7 +262,6 @@ class Config {
         u["animations"] := "1"        ; 0 = no UI animations
         u["setupDone"] := "0"         ; 1 = the first-run setup wizard was finished or skipped
         u["theme"] := "Moontide"      ; the theme in use: a preset (Theme.Names) or a saved theme (ThemeStore, Settings > Look)
-        u["simple"] := "0"            ; 1 = simple mode: only the main dashboard pages (new installs start with it on)
         u["lang"] := "en"             ; window language (lib/I18n.ahk, lang\<code>.json): en, es, pt, fil, fr, de, vi
         ; the old custom theme (before saved themes): ThemeStore.Migrate turns these into the theme "My theme" once
         u["customBg"] := "0D1117"     ; window background
@@ -516,7 +560,7 @@ class Config {
         if (status != "ok")
             result := Config.Defaults(name)
         else if (name = "quests")
-            Config._AddMissingQuests(result)
+            Config._DropRetiredQuests(result), Config._AddMissingQuests(result)
         this.dcache[name] := result
         this.dstat[name] := status
     }
@@ -648,16 +692,14 @@ class Config {
             ["Fishing", ["River Angler", "Minnow Rookie", "Deep-Sea Hunter", "Legendary Fisher"]],
             ["Finding a Person", ["Finding a Person"]],
             ["Lucky Clover", ["Lucky Clover"]],
-            ["Time of Patience", ["Time of Patience"]],
             ["Meditation", ["Meditation I", "Meditation II", "Meditation III"]],   ; "play for N minutes" (2026 board)
-            ["Obby", ["To the Temple"]],        ; complete the obby, get a Basic Blessing (user list 2026-11-18)
-            ["Gear", ["Your First Gear"]]       ; visit Jake, craft a Luck Glove: the macro cannot, so off
-        ]
+            ["Obby", ["To the Temple"]]         ; complete the obby, get a Basic Blessing (user list 2026-11-18)
+        ]   ; Time of Patience and Gear (Your First Gear) removed 2026-11-23: nobody had seen them
         out := []
         for t in types {
             qs := []
             for q in t[2]
-                qs.Push(Map("name", q, "enabled", (q = "Your First Gear") ? 0 : 1))
+                qs.Push(Map("name", q, "enabled", 1))
             out.Push(Map("name", t[1], "enabled", 1, "quests", qs))
         }
         return Map("types", out)

@@ -394,8 +394,9 @@ class RecoveryTask {
             return true
         ; this runs from CanRun on the App's tick: a 1000x560 OCR there froze
         ; a walk mid-route with a key held (review). A route is not walked on
-        ; a disconnect screen anyway.
-        if Input.InRoute
+        ; a disconnect screen anyway. Nor mid-reel (Input.InReel): the same
+        ; read paused a tester's reels ~1 s and the fish got away.
+        if Input.Hot()
             return false
         now := env.Now()
         if (this._discAt !== "" && now - this._discAt < RecoveryTask.DiscPollMs)

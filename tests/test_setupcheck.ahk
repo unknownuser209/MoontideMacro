@@ -50,7 +50,8 @@ ScProbes(over := "") {
         "procs", (n) => false,
         "ahkVersion", () => "2.0.19",
         "front", () => 1,
-        "rollText", () => "Roll")
+        "rollText", () => "Roll",
+        "reelPause", () => "")
     if IsObject(over)
         for k, v in over
             p[k] := v
@@ -283,4 +284,28 @@ Test_SetupCheck_NoCfgDoesNotThrow() {
     res := SetupCheck.Run("", ScProbes())
     AssertEq(ScFind(res, "private").level, "warn", "no cfg = no link")
     AssertEq(ScFind(res, "webhooks").level, "info", "no cfg = no webhooks")
+}
+
+; The slow-PC warning fired this session (ReelPause.Last): a "reels" warn
+; row with its advice; none without one, and a throwing probe adds nothing.
+Test_SetupCheck_ReelsPausedRow() {
+    AssertEq(ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes()), "reels"), "", "no warning: no row")
+    w := {n: 4, of: 10, longest: 1200, lost: 2, part: "grab", advice: ReelPause.Advice("grab")}
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("reelPause", () => w))), "reels")
+    AssertTrue(IsObject(r), "warned: a row")
+    AssertEq(r.level, "warn", "a warning")
+    AssertEq(r.name, "Reels paused on this PC", "its name")
+    AssertTrue(InStr(r.detail, "4 of 10") && InStr(r.detail, "1200 ms"), "how many and how long: " r.detail)
+    AssertTrue(InStr(r.fix, "Graphics Quality") && InStr(r.fix, "OBS"), "the capture advice: " r.fix)
+    AssertEq(ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("reelPause", () => ScThrow()))), "reels"), "", "a throwing probe: no row")
+    ; the default probe reads ReelPause.Last
+    old := ReelPause.Last
+    try {
+        ReelPause.Last := w
+        p := ScProbes()
+        p.Delete("reelPause")
+        AssertTrue(IsObject(ScFind(SetupCheck.Run(ScGoodCfg(), p), "reels")), "default probe: ReelPause.Last")
+    } finally {
+        ReelPause.Last := old
+    }
 }

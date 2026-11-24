@@ -31,8 +31,8 @@ class HelpTexts {
         ; the Portable Crack, not the Portable Device: users mix them up (2026-11-20)
         add("Limbo.enabled", "Uses the Portable Crack (not the Portable Device) and waits in Limbo for Eden. Every other task pauses, and so do anti ghost and the stuck reset; if the crack cannot be used, they run until the next try.")
         ; crafting
-        add("Craft.enabled", "Buys the potions listed on this page at the Fisher shop (Captain Flarg) on start, every 30 min and after each Potion Crafted notification. Stella's cauldron step has its own switch and runs without this one.")
-        add("Craft.cauldron", "Visits Stella's cauldron, with or without the Fish shop. Needs the cauldron walk recorded (Help > Routes).")
+        add("Craft.enabled", "Buys the potions listed on this page at the Fisher shop (Captain Flarg), only after a Potion Crafted notification: one buy per notification. Stella's cauldron step has its own switch and runs without this one.")
+        add("Craft.cauldron", "Visits Stella's cauldron, with or without the Fish shop: it finds your recipe and presses Open Recipe, Add All and Craft. Needs the cauldron walk recorded (Help > Routes).")
         ; quests / merchants
         add("quests.enabled", "Accepts, tracks and turns in quests at the quest board.")
         add("General.questIntervalMin", "How often to visit the quest board, in minutes.")
@@ -57,16 +57,17 @@ class HelpTexts {
         add("Minions.enabled", "Hunts orbs and minions in biomes like Windy, Rainy or Snowy (not NORMAL, not rare ones) and fishes in between. Orbs show up about 40 s into a biome. Works best with Eden.")
         add("Minions.aura", "The aura worn for fights. Small auras like Eden work best: big ones hide the targets.")
         add("Minions.boss", "Also fights the GRAVEYARD boss when it spawns.")
-        add("Limited.bossAlert", "Sends a 'Boss Spawned - Sinister S. / P.' card to the webhooks with Boss ticked when the chat names Sinister S. or P., even with hunting off. Join Server button as for biome messages. Pings the webhook's Mention.")
+        add("Limited.bossAlert", "Sends a 'Sinister S. / P. has spawned' card to the webhooks with Boss ticked when the chat names Sinister S. or P., even with hunting off. Join Server button as for biome messages. Pings the webhook's Mention.")
+        add("Limited.orbAlert", "Sends a '<name> orb has spawned' card (e.g. 'Typhoon orb has spawned') to the webhooks with Boss ticked when the chat says a biome orb spawned. Off by default: orbs come in most biomes.")
         add("Limited.cursedRune", "Uses ONE Cursed Rune Fragment (it starts Blood Rain) when Graveyard or Pumpkin Moon starts. No second one until the next Graveyard / Pumpkin Moon night.")
         add("Minions.normal", "Also hunts in the NORMAL biome, not only in Windy, Rainy, Snowy and the like.")
         add("Minions.maxSec", "The longest one hunt may take before the macro goes back to fishing.")
-        add("Minions.putBack", "Puts your previous aura back on after the hunt.")
         add("Minions.shiftLock", "Uses Roblox shift lock while fighting (turn on Shift Lock Switch in Roblox settings first).")
         ; alerts
         add("General.sound", "Plays a sound on this PC when a rare biome starts.")
         add("General.everyonePing", "Pings @everyone on your Discord for the biomes listed below.")
         add("General.everyoneBiomes", "The biomes that ping @everyone, separated by commas (for example GLITCHED, DREAMSPACE).")
+        add("General.biomePings", "Pings a role when that rare biome starts. Write BIOME=&role ID, comma separated: SINGULARITY=&123456789012345678 (no & = a user). Role ID: Developer Mode on, Server Settings > Roles > right-click a role > Copy Role ID.")
         add("AuraAlert.enabled", "Sends a Discord message with a screenshot to the webhooks with Rare ticked when you roll a new rare aura, and pings the user ID.")
         add("AuraAlert.userId", "The Discord user ID to ping (Discord: Settings > Advanced > Developer Mode, then right-click yourself > Copy User ID). Empty = no ping.")
         add("AuraAlert.minRarity", "Only auras this rare or rarer (1 in N) send the alert, for example 10m or 1b.")
@@ -101,7 +102,6 @@ class HelpTexts {
         add("recovery.stuckMin", "If nothing has worked for this long, the macro respawns and starts over. Needs Auto-rejoin and anti-AFK on.")
         ; look
         add("UI.animations", "Fades, moving stars and the running pulse. They only move while this window is in front.")
-        add("UI.simple","Simple mode shows only the main pages. Turn it off to see every page and option.")
         return m
     }
 }

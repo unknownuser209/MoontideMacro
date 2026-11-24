@@ -74,6 +74,11 @@ class CrIO {
     }
 }
 
+; CrIO that saves a screen: Shot() is logged ("shot") and gives a path.
+class CrShotIO extends CrIO {
+    Shot() => (this.log.Push("shot"), A_Temp "\vesper_shot_test.png")
+}
+
 class CrCal {
     __New(points, pots, rects := "") {
         this.p := points
@@ -214,7 +219,10 @@ CrRead(name) => Json.Parse(FileRead(A_ScriptDir "\..\data\" name ".json", "UTF-8
 ;   "roblox" CrRoblox, "px" CrPx,
 ;   "lines" (x, y, w, h [, scale]) -> Array of lines with their places (the
 ;   screen read lib\AutoCal.ahk finds windows by; default none read),
-;   "ocrFn" a whole OCR function in place of the fake (a real frame)
+;   "ocrFn" a whole OCR function in place of the fake (a real frame),
+;   "toast" false -> no crafted notification latched (default: one is)
+;   "points" Map id -> point added to / replacing the recorded points,
+;   "shot" true -> the io saves screens (CrShotIO: Shot() logged as "shot")
 ; -> {t, io, wh, px, rb, cfg}
 CrMake(opts := "") {
     if !(opts is Map)
@@ -241,6 +249,9 @@ CrMake(opts := "") {
             if rects.Has(id)
                 rects.Delete(id)
         }
+    if opts.Has("points")
+        for id, v in opts["points"]
+            points[id] := v
     pots := opts.Has("pots") ? opts["pots"] : ["Lucky Potion", "Speed Potion"]
     routes := CrRead("routes")
     ; simple distinguishable fisher routes (the shipped ones are checked in Test_Craft_ShippedData)
@@ -263,7 +274,7 @@ CrMake(opts := "") {
             routes[name] := Map("steps", opts[key])
     }
     cfg := CrCfg(gets, Map("coords", CrRead("coords"), "routes", routes))
-    io := CrIO()
+    io := (opts.Has("shot") && opts["shot"]) ? CrShotIO() : CrIO()
     wh := CrWh()
     px := opts.Has("px") ? opts["px"] : CrPx()
     px.dyn["400,100"] := () => CrLast(io, ["move 1400,100"]) > CrLast(io, ["move 1500,100", "move 1945,355", "move 1600,100"])
@@ -305,6 +316,10 @@ CrMake(opts := "") {
         pixel: (x, y, c, tol) => px.Is(x, y, c, tol),
         sample: (x, y) => px.Color(x, y)
     })
+    ; a crafted notification already seen and latched: the ONLY thing that
+    ; buys (the shop tests start from it). opts "toast" false = none seen.
+    if !(opts.Has("toast") && !opts["toast"])
+        t._notified := true
     return {t: t, io: io, wh: wh, px: px, rb: rb, cfg: cfg, ocr: ocr}
 }
 
@@ -396,7 +411,7 @@ Test_Craft_ConfigDefaultsRegistered() {
     AssertEq(cr["cauldron"], "0", "cauldron toggle default off")
     AssertEq(cr["craftTarget"], "", "craftTarget default empty")
     AssertEq(cr["minIntervalMin"], "10", "minIntervalMin default 10")
-    AssertEq(cr["buyEveryMin"], "30", "buyEveryMin default 30")
+    AssertTrue(!cr.Has("buyEveryMin"), "no timed buy setting: only the crafted notification buys")
 }
 
 Test_Craft_ShippedData() {
@@ -416,13 +431,15 @@ Test_Craft_ShippedData() {
 
 ; ---- CanRun ------------------------------------------------------------------
 
-Test_Craft_FirstRunBuysConfiguredPotions() {
+Test_Craft_ToastBuysConfiguredPotions() {
     m := CrMake(Map("gets", Map("Craft.qty_lucky_potion", 3)))
     AssertEq(m.t.name, "craft", "task name")
     AssertEq(m.t.priority, 4, "task priority")
-    AssertEq(m.t.CanRun(SchedState()), true, "first run")
+    AssertEq(m.t.CanRun(SchedState()), true, "crafted notification latched")
     AssertEq(m.t.Run(SchedCtx()), 2, "two buys with the shop UI seen")
     io := m.io
+    AssertEq(io.Count("type 3"), 1, "Lucky's qty typed once")
+    AssertEq(io.Count("move 400,100"), 2, "one Confirm per potion")
     iWalk := io.Idx("down w")
     iLucky := io.Idx("move 100,100")
     iQty := io.Idx("move 300,100", iLucky)
@@ -456,7 +473,7 @@ Test_Craft_FirstRunBuysConfiguredPotions() {
 Test_Craft_NotifyTriggersRerun() {
     clk := {t: 1000000}
     m := CrMake(Map("now", () => clk.t))
-    AssertEq(m.t.CanRun(SchedState()), true, "first run")
+    AssertEq(m.t.CanRun(SchedState()), true, "notification latched")
     m.t.Run(SchedCtx())
     AssertEq(m.t.CanRun(SchedState()), false, "idle without notification")
     clk.t += 10 * 60000                 ; past the default 10 min interval
@@ -493,11 +510,11 @@ Test_Craft_NotifyNeedsIntervalAndCraftedText() {
     AssertEq(m.t.CanRun(SchedState()), false, "a different notification is not a craft")
     AssertEq(m.t.CanRun(SchedState()), false, "polled again at once")
     AssertEq(CrCount(m.ocr.reads, "5,6,70,80") - n0, 1, "read at most once per NotifyPollMs")
-    ; no notify_rect: only the first run
-    m3 := CrMake(Map("now", () => clk.t, "noNotifyRect", true, "gets", Map("Craft.buyEveryMin", 0)))
+    ; no notify_rect: no notification, so no reruns
+    m3 := CrMake(Map("now", () => clk.t, "noNotifyRect", true))
     m3.t.Run(SchedCtx())
     clk.t += 60 * 60000
-    AssertEq(m3.t.CanRun(SchedState()), false, "no notify_rect (timed buy off) -> no notification reruns")
+    AssertEq(m3.t.CanRun(SchedState()), false, "no notify_rect -> no notification reruns")
     ; configurable interval; bad values fall back to 10
     m2 := CrMake(Map("now", () => clk.t, "gets", Map("Craft.minIntervalMin", 2)))
     m2.t.Run(SchedCtx())
@@ -685,7 +702,7 @@ Test_Craft_PreemptInTheShopClosesIt() {
 Test_Craft_BuyHereDuringTheSellVisit() {
     ; Sell is at Captain Flarg: buy in the same visit, no respawn, no walk
     m := CrMake()
-    AssertTrue(m.t.BuyDue(), "first buy since start is due")
+    AssertTrue(m.t.BuyDue(), "a latched crafted notification makes a buy due")
     AssertEq(m.t.BuyHere(SchedCtx()), 2, "both potions bought")
     io := m.io
     AssertEq(io.Idx("down e"), 1, "first thing: E to talk to Flarg again")
@@ -708,68 +725,107 @@ Test_Craft_BuyHereDuringTheSellVisit() {
     AssertEq(m3.t.BuyDue(), false, "Craft.enabled = 0")
 }
 
-Test_Craft_TimedBuyAtTheSellVisit() {
-    ; live 2026-11-20: the crafted toast was read 0 times in 4 h, so after the
-    ; buy at Start nothing was bought again: the potions ran out, the game
-    ; crafted nothing (16 Heavenly for 5 h) and no toast could ever come
-    clk := {t: 3000000}
-    m := CrMake(Map("now", () => clk.t, "noNotifyRect", true))
-    lines := []
-    m.t._env._logFn := (txt) => lines.Push(txt)
-    AssertEq(m.t.BuyHere(SchedCtx()), 2, "first buy at the sell visit")
-    AssertEq(m.t.BuyDue(), false, "just bought: no buy at the next visit")
-    clk.t += 29 * 60000
-    AssertEq(m.t.BuyDue(), false, "29 min later: not yet")
-    clk.t += 60000
-    AssertEq(m.t.BuyDue(), true, "30 min after the last buy: the Sell visit buys again (no toast needed)")
-    AssertEq(m.t.CanRun(SchedState()), false, "no own trip yet: the next Sell visit does it")
-    m.io.log := []
-    AssertEq(m.t.BuyHere(SchedCtx()), 2, "bought again")
-    AssertEq(m.t.BuyDue(), false, "timer restarts at the buy")
-    logged := ""
-    for l in lines
-        logged .= l "`n"
-    AssertTrue(RegExMatch(logged, "craft: [^`n]*Lucky Potion"), "the purchases are in macro.log")
-    ; no Sell visit for the grace too: the task goes itself
-    clk.t += 30 * 60000 + CraftTask.BuyGraceMs - 1000
-    AssertEq(m.t.CanRun(SchedState()), false, "Sell still has time to do it")
-    clk.t += 1000
-    AssertEq(m.t.CanRun(SchedState()), true, "no Sell visit did it: own trip")
-    m.t.Run(SchedCtx())
-    AssertEq(m.t.CanRun(SchedState()), false, "the trip restarts the timer")
-    AssertEq(m.t.BuyDue(), false, "and the Sell visit has nothing to buy")
-    ; settings: 0 = off, a bad value falls back to 30, a value is honoured
-    m0 := CrMake(Map("now", () => clk.t, "noNotifyRect", true, "gets", Map("Craft.buyEveryMin", 0)))
-    m0.t.BuyHere(SchedCtx())
-    clk.t += 24 * 3600000
-    AssertEq(m0.t.BuyDue(), false, "buyEveryMin = 0: only start and the toast")
-    AssertEq(m0.t.CanRun(SchedState()), false, "buyEveryMin = 0: no own trip")
-    mb := CrMake(Map("now", () => clk.t, "noNotifyRect", true, "gets", Map("Craft.buyEveryMin", "x")))
-    mb.t.BuyHere(SchedCtx())
-    clk.t += 30 * 60000
-    AssertEq(mb.t.BuyDue(), true, "bad value: 30 min")
-    m5 := CrMake(Map("now", () => clk.t, "noNotifyRect", true, "gets", Map("Craft.buyEveryMin", 5)))
-    m5.t.BuyHere(SchedCtx())
-    clk.t += 5 * 60000
-    AssertEq(m5.t.BuyDue(), true, "buyEveryMin = 5 honoured")
-    ; Fish shop off: never
-    moff := CrMake(Map("now", () => clk.t, "gets", Map("Craft.enabled", 0)))
-    clk.t += 24 * 3600000
-    AssertEq(moff.t.BuyDue(), false, "Fish shop off: no timed buy")
+; ---- the crafted notification is the ONLY buy trigger (2026-11-23: the
+; owner had 30k Lucky Potions and no fish points left: the buy on every
+; Start, the timed buy every 30 min at each Sell visit and the retry after
+; any cut-short run all bought without a toast) ----
+
+Test_Craft_NoBuyWithoutTheToast() {
+    clk := {t: 1000000}
+    m := CrMake(Map("toast", false, "now", () => clk.t))
+    AssertEq(m.t.CanRun(SchedState()), false, "first run since Start: no buy")
+    AssertEq(m.t.BuyDue(), false, "first Sell visit since Start: no buy")
+    AssertEq(m.t.BuyHere(SchedCtx()), 0, "BuyHere itself refuses without the toast")
+    AssertEq(m.t.Run(SchedCtx()), 0, "a run anyway buys nothing")
+    AssertEq(m.io.log.Length, 0, "no input at all")
+    ; an hour of Sell visits (the old timed buy came after 30 min)
+    Loop 12 {
+        clk.t += 5 * 60000
+        AssertEq(m.t.CanRun(SchedState()), false, "no own trip " A_Index * 5 " min later")
+        AssertEq(m.t.BuyDue(), false, "no buy at the Sell visit " A_Index * 5 " min later")
+        AssertEq(m.t.BuyHere(SchedCtx()), 0, "nothing bought at the Sell visit " A_Index * 5 " min later")
+    }
+    AssertEq(m.io.log.Length, 0, "still no input")
+    AssertEq(m.wh.Count("craft"), 0, "no craft report")
+    ; no notify_rect: never, and said once
+    m2 := CrMake(Map("toast", false, "now", () => clk.t, "noNotifyRect", true))
+    logs := CrLogs(m2)
+    clk.t += 60 * 60000
+    AssertEq(m2.t.CanRun(SchedState()), false, "no notify_rect: no buy")
+    clk.t += 60 * 60000
+    AssertEq(m2.t.CanRun(SchedState()), false, "no notify_rect: still none an hour later")
+    AssertEq(m2.t.BuyDue(), false, "no notify_rect: no Sell buy")
+    n := 0
+    for l in logs
+        n += InStr(l, "notify_rect is not calibrated") ? 1 : 0
+    AssertEq(n, 1, "'nothing is bought without notify_rect' logged once")
+    ; a cut-short cauldron visit is retried, but it never buys
+    m3 := CrMake(Map("toast", false, "cauldron", true, "now", () => clk.t))
+    AssertEq(m3.t.CanRun(SchedState()), true, "the cauldron's first visit since Start is due")
+    AssertEq(m3.t.BuyDue(), false, "but no buy")
+    c := CrPreemptCtx(m3.io, "down a")
+    m3.t.Run(c)
+    AssertTrue(c.at > 0, "preempted on the cauldron walk")
+    AssertEq(m3.t.CanRun(SchedState()), true, "the cauldron visit is retried")
+    AssertEq(m3.t.BuyDue(), false, "a cut-short run without a toast is no buy")
+    m3.io.log := []
+    m3.t.Run(SchedCtx())
+    AssertEq(m3.io.Count("down f"), 1, "the cauldron step ran")
+    AssertEq(m3.io.Count("down w") + m3.io.Count("move 100,100") + m3.io.Count("move 400,100"), 0, "no fisher walk, no potion, no Confirm")
+    AssertEq(m3.t.CanRun(SchedState()), false, "nothing more due")
 }
 
-Test_Craft_TimedBuyNotStartedByAFailedShop() {
-    ; Open Shop never read: nothing bought, so the timer does not restart
-    ; (the buy stays due through _retry as before)
-    clk := {t: 4000000}
-    m := CrMake(Map("now", () => clk.t, "noNotifyRect", true))
-    m.t.BuyHere(SchedCtx())
-    t0 := clk.t
-    clk.t += 30 * 60000
-    m.ocr.map["1150,65,300,70"] := "Sell Fish"
-    AssertEq(m.t.BuyHere(SchedCtx()), 0, "Open Shop never read: nothing bought")
-    AssertEq(m.t._lastBuyAt, t0, "a visit that bought nothing keeps the last buy time")
-    AssertEq(m.t.BuyDue(), true, "still due")
+Test_Craft_OneBuyPerToast() {
+    clk := {t: 2000000}
+    m := CrMake(Map("toast", false, "now", () => clk.t, "gets", Map("Craft.qty_lucky_potion", 3)))
+    io := m.io
+    m.ocr.map["5,6,70,80"] := "Auto crafted Heavenly Potion x1"
+    AssertEq(m.t.CanRun(SchedState()), true, "the toast is read")
+    AssertEq(m.t.BuyDue(), true, "the next Sell visit buys")
+    ; three Sell visits in a row (App._AfterSell: BuyDue ? BuyHere : 0)
+    afterSell := (*) => m.t.BuyDue() ? m.t.BuyHere(SchedCtx()) : 0
+    AssertEq(afterSell(), 2, "the first Sell visit after the toast buys both potions")
+    AssertEq(m.t.BuyDue(), false, "and clears the toast")
+    AssertEq(afterSell(), 0, "the second Sell visit buys nothing")
+    AssertEq(afterSell(), 0, "the third neither")
+    AssertEq(io.Count("move 400,100"), 2, "one Confirm per potion: one buy")
+    AssertEq(io.Count("type 3"), 1, "Lucky's qty 3 typed once")
+    AssertEq(io.Count("type 1"), 1, "Speed's qty 1 typed once")
+    AssertEq(m.wh.Count("craft"), 1, "one craft report")
+    ; the toast is still up: no second buy for it (minIntervalMin)
+    AssertEq(m.t.CanRun(SchedState()), false, "the same toast still on screen is no new buy")
+    clk.t += 9 * 60000
+    AssertEq(m.t.CanRun(SchedState()), false, "9 min later: still none")
+    AssertEq(m.t.BuyDue(), false, "and no Sell buy")
+    ; a craft run the scheduler picked before the Sell visit bought: nothing more
+    AssertEq(m.t.Run(SchedCtx()), 0, "a run after the Sell visit's buy buys nothing")
+    AssertEq(io.Count("move 400,100"), 2, "still two Confirms")
+    ; the next toast: the next buy, once (here by the craft trip)
+    clk.t += 10 * 60000
+    AssertEq(m.t.CanRun(SchedState()), true, "a toast 10 min later")
+    AssertEq(m.t.Run(SchedCtx()), 2, "the craft trip buys")
+    AssertEq(m.t.BuyDue(), false, "the Sell visit after it has nothing to buy")
+    AssertEq(afterSell(), 0, "nothing bought at that Sell visit")
+    AssertEq(m.t.CanRun(SchedState()), false, "no second trip for that toast")
+    AssertEq(io.Count("move 400,100"), 4, "two buys for two toasts")
+    AssertEq(io.Count("type 3"), 2, "Lucky's qty once per toast")
+}
+
+Test_Craft_CutShortBuyRetriedOnlyBeforeAConfirm() {
+    ; preempted at Buy (no Confirm yet): this toast's buy is retried
+    m := CrMake(Map("pots", ["Lucky Potion"]))
+    AssertEq(m.t.BuyHere(CrPreemptCtx(m.io, "move 1400,100")), -1, "preempted in the shop")
+    AssertEq(m.io.Count("move 400,100"), 0, "no Confirm before the preempt")
+    AssertEq(m.t.BuyDue(), true, "still due: retried")
+    AssertEq(m.t.BuyHere(SchedCtx()), 1, "bought on the retry")
+    AssertEq(m.t.BuyDue(), false, "then cleared")
+    AssertEq(m.io.Count("move 400,100"), 1, "one Confirm in all")
+    ; preempted right after Lucky's Confirm: nothing is bought twice
+    m2 := CrMake()
+    m2.t.Run(CrPreemptCtx(m2.io, "move 400,100"))
+    AssertEq(m2.io.Count("move 400,100"), 1, "one Confirm before the preempt")
+    AssertEq(m2.t.BuyDue(), false, "a Confirm was clicked: this toast's buy is done")
+    AssertEq(m2.t.CanRun(SchedState()), false, "no retry trip")
 }
 
 Test_Craft_ClosesPurchaseWindowThenShop() {
@@ -1690,7 +1746,7 @@ Test_Craft_BothOffNeverRuns() {
 
 Test_Craft_BuyingOnCauldronOffIsUnchanged() {
     m := CrMake()
-    AssertEq(m.t.CanRun(SchedState()), true, "first run")
+    AssertEq(m.t.CanRun(SchedState()), true, "notification latched")
     AssertEq(m.t.Run(SchedCtx()), 2, "both potions bought")
     AssertEq(m.io.Count("down f"), 0, "no cauldron")
     AssertTrue(m.io.Idx("down q") > 0, "back route walked")
@@ -1875,6 +1931,129 @@ Test_Craft_CauldronClicksOnlyWithTheWorkshopOpen() {
     AssertTrue(m3.io.Idx("down Esc", m3.io.Idx("move 900,100")) > 0, "closed with Esc")
     AssertEq(m3.io.Count("move 1000,100"), 0, "Add All never clicked after the prompt")
     AssertTrue(CrPromptReported(m3.wh), "reported")
+}
+
+; ---- the Craft button after Add All (owner 2026-11-23: "click add all and
+; craft just in case") ------------------------------------------------------
+
+; a line read on the screen, centred at x, y
+CrLine(text, x, y) => {text: text, x: x, y: y, l: x - 50, t: y - 15, r: x + 50, b: y + 15}
+
+Test_Craft_CauldronCraftAfterAddAll() {
+    ; the fakes' Add All is at 1000,100, the Workshop's title box at x 600:
+    ; the box searched is 0..1900 x 0..550. The Craft line nearest Add All
+    ; is clicked; "Auto Craft", "Crafted" and the toast never are.
+    lines := [CrLine("Add All", 1000, 100), CrLine("Auto Craft", 1300, 300), CrLine("Heavenly Potion was automatically crafted", 900, 400)
+        , CrLine("Crafted", 500, 200), CrLine("Croft", 1000, 300), CrLine("Craft", 1600, 500)]
+    m := CrMake(Map("cauldron", true, "lines", (x, y, w, h, scale := 1) => lines))
+    logs := CrLogs(m)
+    AssertEq(m.t.Run(SchedCtx()), 2, "buys done")
+    io := m.io
+    iAdd := io.Idx("move 1000,100")
+    iCraft := io.Idx("move 1000,300", iAdd)
+    iClose := io.Idx("move 1100,100", iCraft)
+    AssertTrue(iAdd > 0 && iCraft > iAdd && iClose > iCraft, "Add All, then Craft, then the close")
+    AssertEq(CrClicksAt(io, "move 1000,300"), 1, "Craft clicked once")
+    AssertEq(io.Count("move 1300,300") + io.Count("move 500,200") + io.Count("move 900,400") + io.Count("move 1600,500"), 0
+        , "never Auto Craft, Crafted, the toast, nor a farther Craft line")
+    AssertTrue(io.Idx("down Enter", iClose) > iClose, "respawns afterwards")
+    AssertTrue(CrSaid(logs, "the Craft button found on screen at 1000,300"), "logged where")
+    d := m.wh.Desc("craft")
+    AssertTrue(InStr(d, "clicked Open Recipe, Add All and Craft"), "the report says Craft was clicked: " d)
+    AssertTrue(!InStr(d, "crafted"), "never claims the potion was crafted")
+    AssertEq(m.wh.Count("errors"), 0, "no errors")
+    AssertEq(m.t._cauldronDue, false, "the visit is done")
+    ; read only at 2x (small letters): found on the second read
+    m2 := CrMake(Map("cauldron", true, "lines", (x, y, w, h, scale := 1) => scale = 2 ? [CrLine("CRAFT!", 800, 350)] : [CrLine("Add All", 1000, 100)]))
+    m2.t.Run(SchedCtx())
+    AssertTrue(m2.io.Idx("move 800,350", m2.io.Idx("move 1000,100")) > 0, "found at 2x and clicked after Add All")
+}
+
+Test_Craft_CauldronCraftRecordedPointFirst() {
+    ; cauldron_craft recorded: clicked, the screen is never searched for it
+    n := {reads: 0}
+    m := CrMake(Map("cauldron", true, "points", Map("cauldron_craft", {x: 1200, y: 100, color: 0x55555A})
+        , "lines", (x, y, w, h, scale := 1) => (n.reads += 1, [CrLine("Craft", 1000, 300)])))
+    m.t.Run(SchedCtx())
+    io := m.io
+    iAdd := io.Idx("move 1000,100")
+    iCraft := io.Idx("move 1200,100", iAdd)
+    AssertTrue(iAdd > 0 && iCraft > iAdd && io.Idx("move 1100,100", iCraft) > iCraft, "Add All, the recorded Craft, the close")
+    AssertEq(io.Count("move 1000,300"), 0, "not the one a screen read would give")
+    AssertEq(n.reads, 0, "no screen read with the point recorded")
+    AssertTrue(InStr(m.wh.Desc("craft"), "Add All and Craft"), "reported")
+    ; the found-on-screen Workshop keeps the recorded Craft point too
+    p := Map("cauldron_craft", {x: 1200, y: 100}, "cauldron_add_all", {x: 1000, y: 100})
+    AssertEq(m.t._CraftPoint(p).x, 1200, "the recorded point wins")
+}
+
+Test_Craft_CauldronCraftNotFoundStillCloses() {
+    ; no Craft in the box (one far right in the result list, one under it):
+    ; logged, a screen of the open recipe saved, not an error, the close
+    ; still clicked and the visit counts as done
+    m := CrMake(Map("cauldron", true, "shot", true
+        , "lines", (x, y, w, h, scale := 1) => [CrLine("Craft", 2200, 300), CrLine("Craft", 1000, 900), CrLine("Open Recipe", 300, 400)]))
+    logs := CrLogs(m)
+    AssertEq(m.t.Run(SchedCtx()), 2, "buys done")
+    io := m.io
+    iAdd := io.Idx("move 1000,100")
+    iShot := io.Idx("shot", iAdd)
+    iClose := io.Idx("move 1100,100", iShot)
+    AssertTrue(iAdd > 0 && iShot > iAdd && iClose > iShot, "Add All, the screen saved, then the close")
+    AssertEq(CrClicksAt(io, "move 1100,100"), 1, "closed")
+    AssertEq(io.Count("move 2200,300") + io.Count("move 1000,900") + io.Count("move 300,400"), 0, "nothing outside the box, nor Open Recipe again")
+    AssertTrue(io.Idx("down Enter", iClose) > iClose, "respawns afterwards")
+    AssertTrue(CrSaid(logs, "Craft button was not found"), "logged")
+    AssertTrue(CrSaid(logs, "screen of the open recipe saved to"), "the screen's path logged")
+    d := m.wh.Desc("craft")
+    AssertTrue(InStr(d, "clicked Open Recipe and Add All") && InStr(d, "Craft button not found (screen saved)"), "reported: " d)
+    AssertEq(m.wh.Count("errors"), 0, "not an error: Add All happened")
+    AssertEq(m.t._cauldronDue, false, "the trip still counts")
+    ; no screen could be saved: said without "(screen saved)"
+    m2 := CrMake(Map("cauldron", true))
+    m2.t.Run(SchedCtx())
+    d2 := m2.wh.Desc("craft")
+    AssertTrue(InStr(d2, "Craft button not found") && !InStr(d2, "screen saved"), "no screen, not claimed: " d2)
+    AssertTrue(CrClicksAt(m2.io, "move 1100,100") = 1, "closed")
+}
+
+Test_Craft_CauldronCraftOnlyWithTheWorkshopOpen() {
+    ; the Workshop's title is gone after Add All: Craft is never clicked
+    m := CrMake(Map("cauldron", true, "lines", (x, y, w, h, scale := 1) => [CrLine("Craft", 1000, 300)]))
+    io := m.io
+    m.ocr.map.Delete("600,90,200,65")
+    m.ocr.dyn["600,90,200,65"] := () => io.Idx("move 1000,100") ? "" : "Stella's Workshop"
+    logs := CrLogs(m)
+    m.t.Run(SchedCtx())
+    AssertTrue(CrClicksAt(io, "move 1000,100") = 1, "Add All clicked")
+    AssertEq(io.Count("move 1000,300"), 0, "Craft never clicked without the Workshop")
+    AssertEq(io.Count("move 1100,100"), 0, "nor the close")
+    AssertTrue(CrSaid(logs, "the Craft button not clicked: Stella's Workshop is not open"), "logged why")
+    AssertTrue(InStr(m.wh.Desc("craft"), "Craft not clicked"), "reported")
+    ; the recorded point: the same
+    m2 := CrMake(Map("cauldron", true, "points", Map("cauldron_craft", {x: 1200, y: 100, color: 0x55555A})))
+    io2 := m2.io
+    m2.ocr.map.Delete("600,90,200,65")
+    m2.ocr.dyn["600,90,200,65"] := () => io2.Idx("move 1000,100") ? "" : "Stella's Workshop"
+    m2.t.Run(SchedCtx())
+    AssertEq(io2.Count("move 1200,100"), 0, "the recorded Craft never clicked without the Workshop")
+    ; a purchase prompt after Add All: closed, Craft never clicked
+    m3 := CrMake(Map("cauldron", true, "promptAfter", "move 1000,100", "lines", (x, y, w, h, scale := 1) => [CrLine("Craft", 1000, 300)]))
+    m3.t.Run(SchedCtx())
+    AssertTrue(m3.io.Idx("down Esc", m3.io.Idx("move 1000,100")) > 0, "the prompt closed with Esc")
+    AssertEq(m3.io.Count("move 1000,300"), 0, "Craft never clicked after the prompt")
+}
+
+Test_Craft_IsCraftButton() {
+    for t in ["Craft", "Croft", "CRAFT", "Craft!", "Cratt", "Craff", "(raft", "Grafl", "Cr aft", Chr(0x2022) " Craft", "Craft o"]
+        AssertTrue(CraftTask.IsCraftButton(t), "'" t "' is the Craft button")
+    for t in ["Crafted", "Crafting", "Auto", "Auto Craft", "Add All", "Add All Craft", "Craft Auto", "Open Recipe"
+            , "Heavenly Potion was automatically crafted", "Auto Crafted", "Draft", "Aircraft", "Soft", "", "o"]
+        AssertEq(CraftTask.IsCraftButton(t), false, "'" t "' is not")
+    ; the box: from the left edge to short of the Workshop's title, around Add All
+    b := CraftTask.CraftSearchBox(Map("cauldron_add_all", {x: 1104, y: 911}, "cauldron_gui", {x: 1975, y: 217, w: 403, h: 59}))
+    AssertEq(b.x "," b.y "," b.w "," b.h, "0,411,1955,950", "the preset's Add All with the Workshop found on screen")
+    AssertEq(CraftTask.CraftSearchBox(Map("cauldron_gui", {x: 1975, y: 217, w: 403, h: 59})), "", "no Add All: no box")
 }
 
 ; live 2026-11-10: 'Open Slpep' was not taken for his Open Shop button,

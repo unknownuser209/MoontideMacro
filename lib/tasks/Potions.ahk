@@ -4,6 +4,7 @@
 #Include %A_LineFile%\..\..\Ocr.ahk
 #Include %A_LineFile%\..\..\Pixel.ahk
 #Include %A_LineFile%\..\..\Calibrate.ahk
+#Include %A_LineFile%\..\..\CalHealth.ahk
 #Include %A_LineFile%\..\..\Biomes.ahk
 #Include %A_LineFile%\..\..\Scheduler.ahk
 #Include %A_LineFile%\..\..\Webhook.ahk
@@ -49,7 +50,9 @@
 ; Biome potion list (data\biomes.json): "potions": [{"name": "<potion id>",
 ; "qty": N}, ...]  ("id" is accepted instead of "name"). The id is the
 ; potions.json entry id (= its in-game name, except "Godly Potion (Sky)" /
-; "(Sea)" / "(Hell)").
+; "(Sea)" / "(Hell)"). qty "all" (or "max", any case) = Use until the owned
+; count reads 0 (the last one's tile is gone), at most AllMax uses; the
+; PotionSafety caps still clamp it (Plan before every click).
 ;
 ; How the game is read (in-game recon 2026-10-25):
 ;   - the selected-item panel shows NO name; its description box OCRs well
@@ -158,6 +161,9 @@ class PotionsTask {
     static OcrScale := 2
     static CloseTries := 3        ; clicks on inv_open while the inventory still reads open
     static MaxResumes := 5        ; re-queues of one event after a pause / focus loss
+    ; qty "all": Use clicks at most (the caps and the owned count stop it
+    ; first; this only bounds a potion whose caps are set very high)
+    static AllMax := 100
     ; Searched to find a tile with a different description when the item
     ; already selected has this potion's description (select proof).
     static PrimeSearch := "Potion"
@@ -181,7 +187,7 @@ class PotionsTask {
         "bad_event", "malformed biome event key",
         "event_done", "this biome event was already handled",
         "event_not_begun", "biome event was not claimed by this run",
-        "bad_qty", "qty in biomes.json is not a whole number >= 1",
+        "bad_qty", "qty in biomes.json is not a whole number >= 1 or all",
         "unreadable", "owned count could not be read (OCR, two reads must agree)",
         "bad_clock", "system date unreadable",
         "cap_biome", "per-biome cap reached",
@@ -499,6 +505,11 @@ class PotionsTask {
             return ""
         }
         want := entry.Has("qty") ? entry["qty"] : ""
+        ; 2026-11-22 tester ask: qty "all" uses every one owned. It plans as
+        ; AllMax uses, so the caps and the owned count clamp it as any qty.
+        all := PotionsTask.IsAll(want)
+        if all
+            want := PotionsTask.AllMax
         ; Rules that need no inventory (owned count not known yet).
         pre := this._safety.Plan(id, want, key, 999999)
         discover := (dry && pre.reason = "no_desc")
@@ -515,6 +526,8 @@ class PotionsTask {
             return ""
         }
         wantN -= done
+        if (all && !discover)
+            this._Log("Potions: " id " is set to all: Use until none are left (at most " PotionsTask.AllMax " uses, within the potion caps)")
         if this._Stopped(ctx)
             return this._Stop(biome, id, "aborted", "", dry)
         if !this._BiomeActive(ev)
@@ -527,6 +540,8 @@ class PotionsTask {
                 return this._Stop(biome, id, "aborted", "", dry)
             if (o != "ok") {
                 reason := (o = "not_open") ? "inv_not_open" : "inv_not_closed"
+                if (o = "not_open")
+                    CalHealth.Fail("inv_open", "the inventory did not open after a click on it (or its tabs did not read at inv_items_tab)")
                 this._Report(biome, id, "skip", reason, "", "", "", dry)
                 this._Error("Potions: " id " not used: " PotionsTask._Why(reason))
                 return reason
@@ -597,7 +612,7 @@ class PotionsTask {
                     after := "0", lastOne := true
                 }
                 used++
-                this._Report(biome, id, "used", "used", before, after, "use " used " of " wantN, dry)
+                this._Report(biome, id, "used", "used", before, after, "use " used " of " (all ? "all" : wantN), dry)
                 if !waited
                     return "aborted"
                 if lastOne
@@ -1352,6 +1367,9 @@ class PotionsTask {
         t := Trim(RegExReplace(String(s), "\s*[\r\n]+\s*", " / "))
         return (StrLen(t) > 160) ? SubStr(t, 1, 157) "..." : t
     }
+
+    ; qty "all" or "max", any case, spaces around ignored
+    static IsAll(v) => (v is String) && RegExMatch(Trim(v), "i)^(all|max)$")
 
     ; Biome list entry -> potion id ("id" key, else "name"), or "(bad entry)".
     static _EntryName(entry) {

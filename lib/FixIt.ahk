@@ -52,7 +52,11 @@ class FixIt {
             , fix: "Discord refused a message. Copy the webhook link again in Discord (channel settings > Integrations > Webhooks) and paste it in Discord & Clips > Discord.", page: "Webhooks", act: ""},
         {key: "update", re: "i)Update check failed", n: 2
             , title: "Updates cannot be checked"
-            , fix: "The macro could not reach GitHub. Check your internet, or download the newest zip from the releases page by hand.", page: "", act: ""}
+            , fix: "The macro could not reach GitHub. Check your internet, or download the newest zip from the releases page by hand.", page: "", act: ""},
+        ; lib\tasks\ReelPause.ahk (FishingTask._PauseCheck): at most once an hour
+        {key: "reelpause", re: "i)fishing: slow PC: ", n: 1
+            , title: "Reels keep pausing on this PC"
+            , fix: "Your PC froze for a moment during several fishing reels, which loses fish. Lower Roblox graphics (Esc > Settings > Graphics Quality), close browsers and other games, turn off recording apps, plug in a laptop.", page: "Check", act: ""}
     ]
 
     __New() {

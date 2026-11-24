@@ -158,9 +158,11 @@ The sidebar hubs:
   (Halloween orbs, minions and the Graveyard boss) is here; Sol's RNG removes
   it later in November and this tab goes with it. Also here: the **boss
   message** (when the chat names Sinister S. or Sinister P., your Boss webhook
-  gets a "Boss Spawned - Sinister S. / P." card with a Join Server button for
-  your private server, even with hunting off; it changes to "Boss Dead" when
-  the hunt sees it die) and **one Cursed Rune
+  gets a "Sinister S. / P. has spawned" card with a Join Server button for
+  your private server, even with hunting off; it changes to "Sinister S. is
+  dead" when the hunt sees it die), the **orb message** (off by default: the
+  same Boss webhook gets "Typhoon orb has spawned" when the chat names a
+  biome orb) and **one Cursed Rune
   Fragment per Graveyard / Pumpkin Moon night** (it starts Blood Rain).
 - **Biomes & Potions**: **Biomes** (the rare biome list and the potions used for
   each) and **Potions** (the potion list, unlock, descriptions and safety caps).
@@ -326,7 +328,9 @@ its own check reads right, else the macro looks on screen).
 4. **Stella's cauldron** (only if you use it): `cauldron_gui` (a box around
    the "Stella's Workshop" title), `cauldron_search`, `cauldron_result` (a
    box around the FIRST result card: its name must be your recipe before it
-   is clicked), `cauldron_open_recipe`, `cauldron_add_all`, `cauldron_close`,
+   is clicked), `cauldron_open_recipe`, `cauldron_add_all`, `cauldron_craft`
+   (optional: the recipe's Craft button, found by its word when not
+   recorded), `cauldron_close`,
    `stella_dialog` (a box around her name "Stella" in the dialog that shows
    when you walk into her; Esc is only pressed when that name is read).
 5. **Quest board** (open it): `quest_board_rect` (the quest text),

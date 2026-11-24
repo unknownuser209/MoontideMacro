@@ -136,6 +136,22 @@ Test_Config_ExistingIniNotOverwritten() {
     } finally CfgTmpClean(d)
 }
 
+Test_Config_RetiredKeyDropped() {
+    ; "Put my aura back after" (Minions.putBack) removed 2026-11-23: an old
+    ; settings.ini with it on loses it on load and on the next Save
+    d := CfgTmpDir()
+    try {
+        f := FileOpen(d "\settings.ini", "w", "UTF-8-RAW")
+        f.Write("[Minions]`r`nputBack=1`r`nboss=0`r`n")
+        f.Close()
+        cfg := Config.Load(d)
+        AssertEq(cfg.Get("Minions.putBack", "gone"), "gone", "retired key dropped")
+        AssertEq(cfg.Get("Minions.boss", 1), 0, "the other keys kept")
+        cfg.Save()
+        AssertTrue(!InStr(FileRead(d "\settings.ini", "UTF-8"), "putBack"), "gone from the file after Save")
+    } finally CfgTmpClean(d)
+}
+
 ; ---- Config: data json -----------------------------------------------------
 
 Test_Config_MissingOrBadJson_Defaults() {
@@ -236,11 +252,11 @@ Test_Config_ShippedDataMatchesDefaults() {
     for t in q {
         AssertEq(t["enabled"], 1, t["name"] " type enabled")
         for qq in t["quests"] {
-            AssertEq(qq["enabled"], (qq["name"] = "Your First Gear") ? 0 : 1, qq["name"] " enabled (Your First Gear: the macro cannot craft gear)")
+            AssertEq(qq["enabled"], 1, qq["name"] " enabled")
             n++
         }
     }
-    AssertEq(n, 27, "27 quests (3+5+1+1+5+4+1+1+1, spec 4.4, + Meditation I-III seen on the 2026 board, + To the Temple, Your First Gear)")
+    AssertEq(n, 25, "25 quests (3+5+1+1+5+4+1+1, spec 4.4, + Meditation I-III seen on the 2026 board, + To the Temple; Time of Patience and Your First Gear removed 2026-11-23)")
 }
 
 ; ---- Config: webhooks ------------------------------------------------------

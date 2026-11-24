@@ -21,7 +21,8 @@ Test_FixIt_RealLogLines() {
         , "nolink", "recovery: no private server link set (General.privateServer): cannot rejoin"
         , "rejoins", "recovery: rejoin limit reached (3 in 10 min): trying again when the oldest attempt is 10 min old"
         , "webhook", 'Webhook "main": send failed (HTTP 404), giving up'
-        , "inventory", "Potions: the inventory did not open (its tab labels did not read): all potion use stopped")
+        , "inventory", "Potions: the inventory did not open (its tab labels did not read): all potion use stopped"
+        , "reelpause", "fishing: slow PC: Your PC paused during 3 of the last 10 reels (longest 1200 ms), which can lose fish. Try: close other apps")
     for key, line in cases {
         f := FixIt()
         r := ""

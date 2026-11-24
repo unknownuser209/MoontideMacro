@@ -25,6 +25,11 @@
 ;                            those keys.
 ;                              mention    true -> put the webhook's mention in
 ;                                         message content (see rule below)
+;                              pings      Array of more user / role mentions
+;                                         (NormalizeMention rules; bad ones
+;                                         dropped), added after the webhook's
+;                                         own one, each id once (the rare
+;                                         biome's role pings, 2026-11-22)
 ;                              screenshot path to a PNG; uploaded as
 ;                                         multipart/form-data (payload_json +
 ;                                         files[0]) and shown in the embed.
@@ -92,9 +97,14 @@
 ;   "123"  or "@123"  or "<@123>"    -> user  -> content "<@123>"
 ;   "@&123" or "&123" or "<@&123>"   -> role  -> content "<@&123>"
 ; Anything else (non-numeric, @everyone, @here) is ignored. Content is only
-; set when opts.mention is true AND the webhook has a valid mention. The
-; payload always carries allowed_mentions limited to that one id (or none),
-; so embed text can never ping anyone.
+; set when opts.mention is true AND the webhook has a valid mention, or
+; opts.pings has some. The payload always carries allowed_mentions limited
+; to exactly those ids (roles in "roles", users in "users") or none, so
+; embed text can never ping anyone.
+;
+; Biome pings (Webhook.ParseBiomePings, General.biomePings): a list of
+; BIOME=mention entries separated by commas or semicolons, for example
+; "SINGULARITY=&123, GLITCHED=<@&456>". The mention follows the rule above.
 ;
 ; @everyone rule: opts.everyone is honoured ONLY by Send("rare", ...) and only
 ; when the title is not a "[TEST] " title. The content then carries "@everyone"
@@ -171,10 +181,12 @@ class Webhook {
         ; opts.ping: one user / role ID for this message, in place of each
         ; hook's own mention (the rare aura alert's user ID)
         ping := Webhook.NormalizeMention(Webhook._Opt(opts, "ping", ""))
+        pings := Webhook._Opt(opts, "pings", "")
         if (SubStr(String(title), 1, 7) = "[TEST] ") {      ; fake events never ping anyone
             wantMention := false
             wantEveryone := false
             ping := ""
+            pings := ""
         }
         shot := String(Webhook._Opt(opts, "screenshot", ""))
         fields := Webhook._Opt(opts, "fields", "")
@@ -183,6 +195,7 @@ class Webhook {
         title := Webhook._Decorate(eventType, title)
         for w in hooks {
             mention := (ping != "") ? ping : wantMention ? Webhook.NormalizeMention(w.Has("mention") ? w["mention"] : "") : ""
+            mention := Webhook.JoinMentions(mention, pings)
             this._Enqueue(w, eventType, title, desc, color, mention, wantEveryone, shot, "", fields, buttons, thumb)
         }
     }
@@ -525,22 +538,78 @@ class Webhook {
         nb := Webhook._NormButtons(buttons)
         if (nb.Length > 0)
             payload["components"] := [Map("type", 1, "components", nb)]
-        if everyone {
-            payload["content"] := "@everyone" (mention != "" ? " " mention : "")
-            am := Map("parse", ["everyone"])
-            if (mention != "")
-                am[InStr(mention, "&") ? "roles" : "users"] := [RegExReplace(mention, "\D")]
-            payload["allowed_mentions"] := am
-        } else if (mention != "") {
-            payload["content"] := mention
-            id := RegExReplace(mention, "\D")
-            payload["allowed_mentions"] := InStr(mention, "&")
-                ? Map("roles", [id]) : Map("users", [id])
-        } else {
-            payload["allowed_mentions"] := Map("parse", [])
+        ; mention: "" or one or more "<@id>" / "<@&id>" joined by spaces
+        ; (JoinMentions); allowed_mentions lists exactly those ids
+        am := everyone ? Map("parse", ["everyone"]) : Map()
+        roles := [], users := []
+        pos := 1
+        while (pos := RegExMatch(mention, "<@(&?)(\d+)>", &m, pos)) {
+            (m[1] = "&" ? roles : users).Push(m[2])
+            pos += m.Len
         }
+        if roles.Length
+            am["roles"] := roles
+        if users.Length
+            am["users"] := users
+        if everyone
+            payload["content"] := "@everyone" (mention != "" ? " " mention : "")
+        else if (mention != "")
+            payload["content"] := mention
+        payload["allowed_mentions"] := am.Count ? am : Map("parse", [])
         return payload
     }
+
+    ; first (a normalized mention or "") and pings (Array of raw mentions)
+    ; -> the mentions joined by spaces, bad ones dropped, each id once.
+    static JoinMentions(first, pings := "") {
+        out := "", seen := Map()
+        all := [first]
+        if (pings is Array)
+            all.Push(pings*)
+        for raw in all {
+            m := Webhook.NormalizeMention(raw)
+            if (m = "" || seen.Has(m))
+                continue
+            seen[m] := true
+            out .= (out = "" ? "" : " ") m
+        }
+        return out
+    }
+
+    ; General.biomePings text -> {pings: Map(biome -> Array of mentions),
+    ; bad: Array of the entries that are not BIOME=mention}. Entries are
+    ; split at "," or ";"; the biome key is lower case with single spaces
+    ; (as Clip.NameInList matches), so Biome() finds it in any case.
+    ; (2026-11-22: a tester wanted a role ping per rare biome, not only
+    ; @everyone.)
+    static ParseBiomePings(text) {
+        pings := Map(), bad := []
+        for part in StrSplit(String(text), [",", ";"]) {
+            part := Trim(part, " `t`r`n")
+            if (part = "")
+                continue
+            eq := InStr(part, "=")
+            biome := eq ? Webhook._BiomeKey(SubStr(part, 1, eq - 1)) : ""
+            men := eq ? Webhook.NormalizeMention(SubStr(part, eq + 1)) : ""
+            if (biome = "" || men = "") {
+                bad.Push(part)
+                continue
+            }
+            if !pings.Has(biome)
+                pings[biome] := []
+            pings[biome].Push(men)
+        }
+        return {pings: pings, bad: bad}
+    }
+
+    ; the mentions General.biomePings text gives biome name (Array, may be empty)
+    static BiomePings(text, name) {
+        k := Webhook._BiomeKey(name)
+        p := Webhook.ParseBiomePings(text).pings
+        return (k != "" && p.Has(k)) ? p[k] : []
+    }
+
+    static _BiomeKey(s) => StrLower(Trim(RegExReplace(String(s), "\s+", " ")))
 
     ; multipart/form-data body -> Buffer. fileBuf is a Buffer with raw PNG bytes.
     static BuildMultipart(jsonText, fileName, fileBuf, boundary)

@@ -28,7 +28,9 @@
 ;     rest white, upscaled by `scale` with no smoothing (1..8) and InkPad px
 ;     of white around. Same "" on any failure. ink "g" / "r": green / red
 ;     text (a channel above the other two by GreenInkDiff / RedInkDiff)
-;     black, the rest white; "w": white text re-laid with gaps.
+;     black, the rest white; "w": white text re-laid with gaps; "#RRGGBB":
+;     text of that one colour (each channel within ColorInkTol) black, the
+;     rest white (the Biome Selector's prompt, drawn in its Drive's colour).
 ;   Ocr.FindText(x, y, w, h, re, scale := 1) -> {x, y, text, l, t, r, b} or ""
 ;     (l, t, r, b = the line's box)
 ;   Ocr.Lines(x, y, w, h, scale := 1, re := ".") -> Array of those, one per
@@ -63,6 +65,9 @@ class Ocr {
     static WhiteGap := 0.18     ; ReadInk "w": gap between re-laid glyphs, a share of the box height
     static RedInkDiff := 60     ; ReadInk "r": red above green and blue by this (Memory Match's red Close over a bright sky, 2026-11-20)
     static GreenInkDiff := 25   ; ReadInk "g": green above red and blue by this (25: 'Accevi' through Eden's skill list)
+    static ColorInkTol := 40    ; ReadInk "#RRGGBB": every channel within this of the colour
+    ; ink "#RRGGBB" (one colour, ReadInk)
+    static IsColorInk(ink) => (ink is String) && RegExMatch(ink, "^#[0-9A-Fa-f]{6}$") > 0
     static InkPad := 24          ; ReadInk: white px around (the recognizer needs a margin)
     static TimeoutMs := 5000
     ; off 2560x1440 (not ReadInk): [factor of Screen.OcrScale, filter] tried
@@ -129,7 +134,7 @@ class Ocr {
     static ReadInk(x, y, w, h, scale, ink) {
         Prof.Begin("ocr")
         try {
-            return ((IsNumber(ink) && ink > 0) || ink == "g" || ink == "w" || ink == "r") ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
+            return ((IsNumber(ink) && ink > 0) || ink == "g" || ink == "w" || ink == "r" || Ocr.IsColorInk(ink)) ? Ocr._Read(x, y, w, h, scale, "", ink) : ""
         } catch Any {
             return ""
         } finally {
@@ -698,6 +703,18 @@ class Ocr {
                 Loop w * h {
                     bl := NumGet(p, 0, "UChar"), gr := NumGet(p, 1, "UChar"), rd := NumGet(p, 2, "UChar")
                     NumPut("UInt", (gr - Max(rd, bl) > Ocr.GreenInkDiff) ? 0xFF000000 : 0xFFFFFFFF, p)
+                    p += 4
+                }
+            } else if Ocr.IsColorInk(ink) {
+                ; one colour: the Biome Selector's prompt is drawn solid in
+                ; the Drive's colour on a see-through window; over a bright
+                ; green / sky scene the plain read got 'hb spurse Drive'
+                ; (live 2026-11-23); this colour alone reads it whole
+                c := Integer("0x" SubStr(ink, 2)), t := Ocr.ColorInkTol
+                cr := (c >> 16) & 255, cg := (c >> 8) & 255, cb := c & 255
+                Loop w * h {
+                    bl := NumGet(p, 0, "UChar"), gr := NumGet(p, 1, "UChar"), rd := NumGet(p, 2, "UChar")
+                    NumPut("UInt", (Abs(rd - cr) <= t && Abs(gr - cg) <= t && Abs(bl - cb) <= t) ? 0xFF000000 : 0xFFFFFFFF, p)
                     p += 4
                 }
             } else if (ink == "r") {

@@ -121,6 +121,7 @@ class SchedState {
         this.chatDue := false     ; App: chat check wanted; fishing yields between catches
         this.needRepath := false  ; re-path due: Sell (reset + walk + return) runs before fishing
         this.repathStreak := 0    ; re-paths since the last catch (Sell pauses the macro at SellTask.MaxRepathStreak)
+        this.repathRejoin := false ; Sell asked for a rejoin for a stuck streak; a catch clears it
         this.startSell := false   ; App.Start: the first sell run is still to come
         this.inLimbo := false     ; LimboTask: the player is in THE LIMBO
         this.ghost := false       ; App: the last join was not the private server (RecoveryTask rejoins)

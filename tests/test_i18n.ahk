@@ -364,8 +364,8 @@ Test_I18n_EveryLanguageFits() {
 }
 
 ; Top sidebar in every language with the Menu font at 10 and at the largest
-; size the Look page allows (28), simple mode off and on: no hub runs into
-; another, the magnifier, the simple-mode button or the chip; every one is
+; size the Look page allows (28): no hub runs into another, the magnifier
+; or the chip; every one is
 ; inside the window and the sidebar row, and each hub's text fits its button.
 Test_I18n_TopRowFits() {
     oldSb := Theme.Sidebar, oldNav := Theme.Fonts["nav"], oldWa := Theme.WorkAreaFn, oldSc := Theme.Scale, oldLy := Theme.Layout
@@ -382,27 +382,24 @@ Test_I18n_TopRowFits() {
             for code in I18n.Codes {
                 I18n.Use(code)
                 d := Dashboard(Config.Load(dir))
-                for simple in [false, true] {
-                    d.SetSimple(simple)
-                    what := code " nav " fs (simple ? " simple" : "")
-                    all := []
-                    for i, c in d._nav {
-                        if !c.Visible
-                            continue
-                        all.Push({c: c, n: "hub " i})
-                        t := I18nNeed(c, c.Text, 9999, true), p := UiDashPos(c)
-                        AssertTrue(t.w <= p.w && t.h <= p.h, what ": hub " i " text " t.w "x" t.h " fits " p.w "x" p.h)
-                    }
-                    all.Push({c: d.Ctrl("search:icon"), n: "magnifier"}, {c: d._simpleBtn, n: "simple mode"}, {c: d._chip, n: "chip"})
-                    for a in all {
-                        p := UiDashPos(a.c)
-                        AssertTrue(p.x >= 0 && p.x + p.w <= Dashboard.W && p.y >= 59 && p.y + p.h <= 107, what ": " a.n " inside the row: " p.x "," p.y "," p.w "," p.h)
-                    }
-                    for i, a in all {
-                        for j, b in all {
-                            if (i < j)
-                                AssertTrue(!ovR(UiDashPos(a.c), UiDashPos(b.c)), what ": " a.n " and " b.n " overlap")
-                        }
+                what := code " nav " fs
+                all := []
+                for i, c in d._nav {
+                    if !c.Visible
+                        continue
+                    all.Push({c: c, n: "hub " i})
+                    t := I18nNeed(c, c.Text, 9999, true), p := UiDashPos(c)
+                    AssertTrue(t.w <= p.w && t.h <= p.h, what ": hub " i " text " t.w "x" t.h " fits " p.w "x" p.h)
+                }
+                all.Push({c: d.Ctrl("search:icon"), n: "magnifier"}, {c: d._chip, n: "chip"})
+                for a in all {
+                    p := UiDashPos(a.c)
+                    AssertTrue(p.x >= 0 && p.x + p.w <= Dashboard.W && p.y >= 59 && p.y + p.h <= 107, what ": " a.n " inside the row: " p.x "," p.y "," p.w "," p.h)
+                }
+                for i, a in all {
+                    for j, b in all {
+                        if (i < j)
+                            AssertTrue(!ovR(UiDashPos(a.c), UiDashPos(b.c)), what ": " a.n " and " b.n " overlap")
                     }
                 }
                 UiDashClose(d), d := ""

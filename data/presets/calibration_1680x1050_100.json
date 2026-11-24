@@ -81,6 +81,11 @@
       "prompt": "Recipe open. Hover the Add All button."
     },
     {
+      "id": "cauldron_craft",
+      "kind": "point",
+      "prompt": "Recipe open. Hover the Craft button. Optional: found on screen when not recorded."
+    },
+    {
       "id": "cauldron_close",
       "kind": "point",
       "prompt": "Hover the button that closes the cauldron window."
