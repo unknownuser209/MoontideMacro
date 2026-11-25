@@ -42,7 +42,9 @@
 ;                                 times; a name never read is ours only
 ;                                 when the row clicked read as ours; any
 ;                                 other Drive named = Cancel).
-;                                 Then Confirm (selector_confirm). Each use
+;                                 Then Confirm (selector_confirm). The window
+;                                 closes itself when the biome changes (~4 s):
+;                                 waited for, else closed by its X. Each use
 ;                                 SPENDS one Drive. Its cooldowns start at
 ;                                 Confirm; a Drive not read (or a preempt
 ;                                 before Confirm) = nothing used: the
@@ -155,8 +157,19 @@ class BiomeItemsTask {
         , barLo: 0.95, barHi: 1.30}
     static BarRe := "i)ready|be\s*used|us[e3]d|t[o0]\s*be"
     static PromptRe := "i)selected|sure|c[o0]nfirm|cancel"
+    ; any word of the prompt, misread too ('You av selecte', 'You hm w
+    ; —select ed'): a read with none of them is not the prompt
+    static PromptWordsRe := "i)y[o0]u\b|s[ae]l[ae]ct|sure|c[o0]nfirm|cancel"
     static BtnRe := "i)c[o0]nfirm|cancel"     ; the prompt's buttons: dark on light, read where the bar is not (bright sky)
     static CloseTries := 3
+    ; After Confirm the Selector stays up until the new biome starts, then
+    ; closes by itself (live 2026-11-22..24: 28 uses, the biome ~3-5 s after
+    ; Confirm; every tidy found it gone without a click, most of them after
+    ; 3-6 s of _Locate reads that could not place the closing window). The
+    ; task waits for that itself (_AfterConfirm, SelfCloseMs); a window seen
+    ; up by the tidy later only waits out what is left of SelfCloseMs since
+    ; Confirm (nothing once that has passed), reading only whether it is up.
+    static SelfPollMs := 250
     ; The prompt's text is drawn solid in the selected Drive's colour (Abyss
     ; Curse blue 0x548EE0, Corrupt Ruin purple) on the see-through window: on
     ; a bright green / sky scene the plain read lost the Drive's name
@@ -184,6 +197,7 @@ class BiomeItemsTask {
     _selByName := false              ; _PickDrive clicked a row that read as the Drive (not by its place)
     _selAuto := ""                   ; the Drive list's rect found on screen (_FindSelector)
     _closeTry := ""
+    _confirmAt := ""                 ; env.Now() of the last Selector Confirm click (_TidySelector)
 
     __New(deps := "") {
         this._env := TaskEnv(deps)
@@ -425,8 +439,30 @@ class BiomeItemsTask {
     ; way _CloseSelector does; only while a Drive's name reads in it).
     Leftovers() {
         sel := {up: () => this._SelectorUp() ? "Biome Selector list" : ""
-            , close: (label, ctx) => this._CloseSelectorX(ctx)}
+            , close: (label, ctx) => this._TidySelector(ctx)}
         return [sel]
+    }
+
+    ; The tidy's close: right after a Confirm the Selector is left to close
+    ; by itself (SelfCloseMs, polled); still up after that, or no Confirm
+    ; just now: its X (_CloseSelectorX). -> 1 closed, 0 still up, -1 halted
+    _TidySelector(ctx) {
+        env := this._env
+        at := this._confirmAt
+        if (at != "") {
+            left := BiomeItemsTask.SelfCloseMs - (env.Now() - at), waited := 0
+            while (waited < left) {
+                if !env.Wait(BiomeItemsTask.SelfPollMs, ctx)
+                    return -1
+                waited += BiomeItemsTask.SelfPollMs
+                if !this._SelectorUp() {
+                    this._confirmAt := ""
+                    return 1
+                }
+            }
+            this._confirmAt := ""
+        }
+        return this._CloseSelectorX(ctx)
     }
 
     ; Esc on the Selector list (and once more when Esc only brought up the
@@ -601,8 +637,11 @@ class BiomeItemsTask {
                 if (shot != "")
                     env.Log("biome items: screen at the Selector's prompt saved to " shot (IsObject(loc) ? " (bar " loc.bar ")" : ""))
                 n := BiomeItemsTask.PromptDrive(pt)
-                env.Log("biome items: the Selector's prompt " (v.state = "other" && n ? "names " BiomeItemsTask.Drives[n] ", not " drive : "does not name " drive)
-                    . " (read: '" BiomeItemsTask._Brief(pt) "'): Cancel, nothing confirmed")
+                if !v.up
+                    env.Log("biome items: the Selector's prompt did not come up after the click on " drive " (read: '" BiomeItemsTask._Brief(pt) "'): nothing confirmed")
+                else
+                    env.Log("biome items: the Selector's prompt " (v.state = "other" && n ? "names " BiomeItemsTask.Drives[n] ", not " drive : "does not name " drive)
+                        . " (read: '" BiomeItemsTask._Brief(pt) "'): Cancel, nothing confirmed")
                 if (IsObject(loc) && RegExMatch(pt, BiomeItemsTask.PromptRe)) {
                     env.Click(this._PromptBtn(loc, "cancel"))
                     env.Wait(BiomeItemsTask.InvMs, ctx)
@@ -618,6 +657,7 @@ class BiomeItemsTask {
                 return this._NoDrive(c, it, drive, ctx)
             }
             env.Click(v.confirmPt)
+            this._confirmAt := env.Now()
             this._Used(it)
             if !env.Wait(BiomeItemsTask.UseMs, ctx)
                 return -1
@@ -627,6 +667,10 @@ class BiomeItemsTask {
             env.Report("biome", "Cursed Rune Fragment used", "Used one **" it.name "** (Blood Rain). No other one until the next Graveyard / Pumpkin Moon night.", 0x8E44AD)
         else
             env.Report("biome", "Biome item used", "Used **" it.name "**. Next one in " BiomeItemsTask.ServerCdMin " min (server cooldown).", 0x5865F2)
+        ; the Selector closes itself when the biome changes: waited for here,
+        ; not left to the tidy (a preempt still finishes it; a halt not)
+        if (sel && this._AfterConfirm(CleanupCtx(ctx)) < 0)
+            return 1
         if (this._TileIs(this._Read(c.inv_tile1_rect), it) || env.InvOpen(c.inv_items_tab))
             env.CloseInv(c.inv_open, c.inv_items_tab, ctx)       ; inventory still open: close it (checked)
         env.Wait(BiomeItemsTask.InvMs, ctx)
@@ -691,6 +735,11 @@ class BiomeItemsTask {
                 named.Push(A_Index)
         if (named.Length = 1)
             return named[1]
+        ; two Drives' words: the list's rows (live 2026-11-24 00:26: the
+        ; prompt never came up, 'Unknown Void Drive Corrupt Ruin' was taken
+        ; for it); a prompt names one Drive
+        if (named.Length >= 2)
+            return 0
         score := []
         for d in BiomeItemsTask.Drives
             score.Push(0)
@@ -1048,6 +1097,14 @@ class BiomeItemsTask {
             pt := IsObject(loc) ? this._PromptText(loc) : ""
             confirmPt := IsObject(loc) ? this._PromptBtn(loc, "confirm") : ""
             n := BiomeItemsTask.PromptDrive(pt)
+            ; a Drive named without any of the prompt's own words while the
+            ; list's rows read (the prompt hides them): a row, not the prompt
+            ; (live 2026-11-24 00:26: CONNECTION UNSTABLE, no prompt came up,
+            ; 'Unknown Void Drive' read where the prompt is placed)
+            if (n && !RegExMatch(pt, BiomeItemsTask.PromptWordsRe) && this._RowsShow(ctx))
+                n := 0
+            if ctx.ShouldStop()
+                return {state: "stop"}
             wide := "", cp := ""
             if (n != ti) {
                 ; the window read whole (live 05:09: pale bar and buttons on a
@@ -1081,6 +1138,15 @@ class BiomeItemsTask {
         }
         v.state := others ? "other" : "unread"
         return v
+    }
+
+    ; The list's rows read now (two or more): the prompt is not over them.
+    _RowsShow(ctx) {
+        r := this._SelRect()
+        if !IsObject(r)
+            return false
+        rows := this._ScanRows(r, ctx)
+        return IsObject(rows) && rows.Count >= 2
     }
 
     ; The whole Selector window read (the list rect with room for the title
@@ -1128,6 +1194,12 @@ class BiomeItemsTask {
             if ctx.ShouldStop()
                 return -1
             if !IsObject(loc) {
+                ; a window going (its close after Confirm / Cancel) still
+                ; reads as up for a moment while its bar and rows no longer
+                ; do: looked at again for FadeMs before it is reported
+                g2 := this._Fading(ctx)
+                if (g2 != 0)
+                    return g2
                 env.Log("biome items: the Biome Selector is up but could not be placed (its bar and rows did not read): not clicked")
                 return 0
             }
@@ -1150,6 +1222,47 @@ class BiomeItemsTask {
         shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
         env.Log("biome items: the Biome Selector did not close (" this._closeTry ")" (shot != "" ? "; screen saved to " shot : ""))
         return 0
+    }
+
+    ; The Selector up but not placed: gone within FadeMs (its close
+    ; animation)? -> 1 gone, 0 still up, -1 halted
+    static FadeMs := 2000
+    static FadePollMs := 300
+    _Fading(ctx) {
+        env := this._env
+        waited := 0
+        while (waited < BiomeItemsTask.FadeMs) {
+            if !env.Wait(BiomeItemsTask.FadePollMs, ctx)
+                return -1
+            waited += BiomeItemsTask.FadePollMs
+            if !this._SelectorUp()
+                return 1
+        }
+        return 0
+    }
+
+    ; After Confirm the Selector stays up a few seconds and closes by itself
+    ; when the biome changes (live 2026-11-22..24: the biome changed ~4 s
+    ; after Confirm; the tidy that looked at it while it went logged "is up
+    ; but could not be placed" and the window was gone a moment later, and a
+    ; tidy before it clicked its X). Waited for up to SelfCloseMs; still up
+    ; then: closed by its X (_CloseSelectorX: placed by a read first).
+    ; -> 1 gone, 0 still up, -1 halted
+    static SelfCloseMs := 7000
+    static SelfClosePollMs := 400
+    _AfterConfirm(cctx) {
+        env := this._env
+        waited := 0
+        while this._SelectorUp() {
+            if (waited >= BiomeItemsTask.SelfCloseMs) {
+                env.Log("biome items: the Biome Selector is still up " Round(waited / 1000, 1) " s after Confirm: closing it")
+                return this._CloseSelectorX(cctx)
+            }
+            if !env.Wait(BiomeItemsTask.SelfClosePollMs, cctx)
+                return -1
+            waited += BiomeItemsTask.SelfClosePollMs
+        }
+        return 1
     }
 
     ; Use clicked (Selector: Drive confirmed): its own and the server

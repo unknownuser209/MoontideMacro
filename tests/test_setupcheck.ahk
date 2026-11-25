@@ -309,3 +309,21 @@ Test_SetupCheck_ReelsPausedRow() {
         ReelPause.Last := old
     }
 }
+
+; Tester 2026-11-24: no VIP gamepass, "VIP gamepass routes" on by default,
+; every walk back stopped short of the fishing spot. The check says so.
+class ScRouteCfg extends ScCfg {
+    Data(name) => Map("sell_to_fisher", Map("steps", [["w", "down", 100], ["w", "up", 0]])
+        , "fisher_to_fishing", Map("steps", [["a", "down", 100], ["a", "up", 0]]))
+}
+
+Test_SetupCheck_WalksVipRow() {
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes()), "walks")
+    AssertEq(r.level, "info", "VIP routes on by default: info")
+    AssertTrue(InStr(r.fix, "VIP gamepass routes"), "says which setting")
+    r := ScFind(SetupCheck.Run(ScCfg(ScLink(), [], Map("General.vip", 0)), ScProbes()), "walks")
+    AssertEq(r.level, "ok", "standard walks")
+    r := ScFind(SetupCheck.Run(ScRouteCfg(ScLink()), ScProbes()), "walks")
+    AssertEq(r.level, "ok", "own recordings")
+    AssertTrue(InStr(r.detail, "own recorded"), "names the own walks")
+}

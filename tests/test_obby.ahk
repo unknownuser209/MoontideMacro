@@ -26,6 +26,8 @@ class ObStore {
         this.known := true
         this.blessing := true        ; the blessing shows (when the list is expanded)
         this.button := ""            ; forced button text ("" = Equip / Unequip)
+        this.buttonAt := Map()       ; scale -> forced button text at that OCR scale only
+        this.infoAt := Map()         ; scale -> forced [ Information ] lines text at that OCR scale ("" unread)
         this.leftover := ""          ; the search text from before
         this.logName := "-"          ; "-" = the log follows the game; else what the log still says
         this.special := []           ; auras under the Special tab (the rest: Regular)
@@ -87,6 +89,8 @@ class ObStore {
                 search := SubStr(search, 1, StrLen(search) - 1)
             else if (e = "down Delete")                 ; only sent after Home: the caret at the start
                 search := SubStr(search, 2)
+            else if (SubStr(e, 1, 11) = "game-equip ")  ; the game puts another aura on by itself
+                eq := SubStr(e, 12), hist.Push(eq)
             else if (SubStr(e, 1, 5) = "type ") {
                 search .= SubStr(e, 6)
                 daily := daily || (this.dailyOnType && !typed)
@@ -145,7 +149,7 @@ class ObStore {
         }
         return this._px[key]
     }
-    Ocr(x, y, w, h) {
+    Ocr(x, y, w, h, scale := 1) {
         s := this.State()
         pb := Input.PurchaseBox
         if (x = pb.x && y = pb.y)
@@ -189,11 +193,16 @@ class ObStore {
             return (s.open && sel != "") ? sel "`n1 in 3,000" : ""
         }
         i := ObbyTask.InfoBox
-        if (x = 300 + i.dx && y = 300 + i.dy)
+        if (x = 300 + i.dx && y = 300 + i.dy) {
+            if (s.open && s.selected != "" && this.infoAt.Has(scale))
+                return this.infoAt[scale]
             return (s.open && s.selected != "") ? "Rolled at: [ Unknown ]`nWith luck of [ Unknown ]" : ""
+        }
         if (x = 150 && y = 265) {
             if s.daily                               ; live 18:18: the popup's tiles under the box
                 return "x 10 x 2,000"
+            if this.buttonAt.Has(scale)
+                return this.buttonAt[scale]
             if (this.button != "")
                 return this.button
             ; like the game: the open storage shows Equip with nothing selected
@@ -254,7 +263,7 @@ QmObbyTask(initial := "Glock", gets := "", check := true, routes := "", owned :=
     t := ObbyTask({
         cfg: QmCfg(g, IsObject(routes) ? routes : QmObbyRoutes()),
         io: io, webhook: wh, cal: IsObject(cal) ? cal : QmObbyCal(check),
-        ocr: (x, y, w, h, scale := 1) => s.Ocr(x, y, w, h),
+        ocr: (x, y, w, h, scale := 1) => s.Ocr(x, y, w, h, scale),
         pixel: (x, y, c, tol) => s.Pixel(x, y, c, tol), rect: (x, y, w, h) => s.Rect(x, y, w, h),
         aura: () => s.Aura(),
         log: (m) => logs.Push(m)
@@ -959,7 +968,7 @@ Test_Obby_EquipNeedsTheStorageTitle() {
     s := o.s
     base := s.Ocr.Bind(s)
     sb := ObbyTask.StorageBox
-    s.DefineProp("Ocr", {Call: (self, x, y, w, h) => (x = 20 + sb.dx && y = 20 + sb.dy && self.State().selected != "") ? "" : base(x, y, w, h)})
+    s.DefineProp("Ocr", {Call: (self, x, y, w, h, scale := 1) => (x = 20 + sb.dx && y = 20 + sb.dy && self.State().selected != "") ? "" : base(x, y, w, h, scale)})
     AssertTrue(!o.t.PutOnSailor(SchedCtx()).ok, "no swap")
     AssertEq(o.s.State().eq, "Glock", "Equip never clicked (the mouse may rest on it)")
     AssertTrue(InStr(o.t._why, "not open"), "why says it")
@@ -1651,4 +1660,135 @@ Test_Obby_StorageFailuresFeedTheStuckUiEscape() {
     } finally {
         UiStuck.Reset()
     }
+}
+
+; ---- live 2026-11-24: the put-back of a logo-named aura (Pumpkinity) -------
+; Its name never reads (a script logo), so the log pick equips it. The see-
+; through panel's info lines missed at 1x by day ('Rolle a ... luc of') and
+; the pick took that for "no aura selected"; it said nothing and the swap
+; blamed the game's search (rejoin). A 1x miss is read again at 2x.
+Test_Obby_LogPickReadsTheInfoLinesAgainAt2x() {
+    UiStuck.Reset()
+    try {
+        o := QmObbyTask("Glock")
+        o.s.logo := ["Glock"]
+        o.s.infoAt := Map(1, "Rolle a : [Unknown ] With luc of [ Unknown]")
+        AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+        AssertEq(o.s.State().eq, "Glock", "Glock back on by the log")
+        AssertTrue(QmObbyLogHas(o.logs, "Glock found by the log"), "found by the log")
+        AssertEq(UiStuck.Total(), 0, "nothing counted as a stuck window")
+    } finally UiStuck.Reset()
+}
+
+; ...and the button: nothing at 1x (a dark frame read 'Equin'), Equip at 2x
+Test_Obby_ButtonReadAgainAt2xWhenThe1xReadMisses() {
+    o := QmObbyTask("Glock")
+    o.s.buttonAt := Map(1, "")
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen")
+    AssertEq(o.s.State().eq, "Glock", "Sailor on, then Glock back")
+    AssertEq(o.wh.Count("errors"), 0, "no error")
+}
+
+; the search listed the aura but no pick could confirm it: not a stuck
+; search (no rejoin, nothing counted), the reason logged, the put-back
+; owed to the next obby run once; a second miss in a row is reported
+Test_Obby_ListedButUnconfirmedIsNotAStuckSearch() {
+    UiStuck.Reset()
+    try {
+        o := QmObbyTask("Glock")
+        o.s.logo := ["Glock"]
+        sw := o.t.PutOnSailor(SchedCtx())
+        AssertTrue(sw.ok, "Sailor on")
+        o.s.infoAt := Map(1, "", 2, "")                 ; its info lines never read
+        AssertEq(o.t.PutBack(SchedCtx(), sw), false, "not put back")
+        AssertEq(UiStuck.Total(), 0, "not counted as a stuck search (" UiStuck.Text() ")")
+        AssertTrue(!QmObbyLogHas(o.logs, "rejoins"), "no rejoin")
+        AssertTrue(QmObbyLogHas(o.logs, "[ Information ] lines"), "the pick says why it stopped")
+        AssertTrue(QmObbyLogHas(o.logs, "tries again after the next obby run"), "owed")
+        AssertEq(o.t.Owed(), "Glock", "Glock still owed")
+        AssertEq(o.wh.Count("errors"), 0, "no error report yet")
+        ; the next run: the owed aura goes back
+        o.s.infoAt := Map()
+        sw2 := o.t.PutOnSailor(SchedCtx())
+        AssertEq(sw2.prev, "Glock", "the owed aura is the one before")
+        AssertTrue(o.t.PutBack(SchedCtx(), sw2), "put back")
+        AssertEq(o.s.State().eq, "Glock", "Glock on again")
+        AssertEq(o.t.Owed(), "", "nothing owed")
+        ; two misses in a row: the second is reported
+        o.s.infoAt := Map(1, "", 2, "")
+        sw3 := o.t.PutOnSailor(SchedCtx())
+        AssertEq(o.t.PutBack(SchedCtx(), sw3), false, "missed")
+        AssertEq(o.t.Owed(), "Glock", "owed once more (the miss before was cured)")
+        sw4 := o.t.PutOnSailor(SchedCtx())
+        AssertEq(o.t.PutBack(SchedCtx(), sw4), false, "missed again")
+        AssertEq(o.t.Owed(), "", "no longer owed")
+        AssertEq(o.wh.Count("errors"), 1, "reported once")
+        AssertTrue(QmObbyLogHas(o.logs, "put it back by hand"), "by hand")
+        AssertEq(UiStuck.Total(), 0, "never a stuck search")
+    } finally UiStuck.Reset()
+}
+
+; live 2026-11-23 11:49 / 14:11, 2026-11-24 07:49 / 17:51: ~45 s after
+; Sailor went on, the Roblox log named the aura from before again ("Aura:
+; :Flushed:_Pumpkinity equipped before"), the game's doing, not the macro's.
+; The two retries then walked without Sailor: 3 of 3 runs missed each time
+; (12 of the 75 logged misses). Before a retry the log is asked: another
+; aura on -> Sailor put on again first.
+Test_Obby_RetryPutsSailorBackWhenTheGameSwappedItMidRun() {
+    o := QmObbyTask("Glock", Map("Obby.retries", 2))
+    s := o.s, io := o.io
+    checks := 0
+    ; the first check: the game has put Glock back on (and no blessing); the
+    ; blessing shows only with Sailor on
+    s.DefineProp("Pixel", {Call: (self, x, y, c, tol) => (x = 600 && y = 600)
+        ? (self.State().expanded && (++checks = 1 ? (io.log.Push("game-equip Glock"), false) : self.State().eq == "Sailor"))
+        : (x = 500 && y = 500 && self._ButtonUp())})
+    AssertEq(o.t.Run(SchedCtx()), 1, "blessing seen on the retry")
+    AssertTrue(QmObbyLogHas(o.logs, "put on again before the retry"), "said why")
+    AssertEq(QmObbyDowns(io, "w"), 2, "one retry")
+    h := s.State().hist
+    AssertEq(h[h.Length], "Glock", "Glock back after")
+    ; the log naming Sailor still: no extra swap
+    o2 := QmObbyTask("Glock", Map("Obby.retries", 1))
+    o2.s.blessing := false
+    o2.t.Run(SchedCtx())
+    AssertTrue(!QmObbyLogHas(o2.logs, "before the retry"), "Sailor still on: no swap before the retry")
+}
+
+; live 2026-11-24 18:15-19:18: "Sailor" typed (the box read 'Soilor'), no
+; tab listed anything, 7 obbies skipped (the user's restarts reset the
+; 4-in-a-row count each time); a rejoin cured it. An aura the storage
+; listed before (a tile hint) that no tab lists while the box holds its
+; name: the game's search is stuck, the rejoin is due at once (once per
+; aura until it is found again)
+Test_Obby_StuckSearchForAnAuraFoundBeforeRejoinsAtOnce() {
+    UiStuck.Reset()
+    try {
+        o := QmObbyTask("Glock")
+        AssertEq(o.t.Run(SchedCtx()), 1, "a good run: Sailor's tile known")
+        UiStuck.Reset()
+        saved := o.s.owned
+        o.s.owned := ["Glock"]                      ; the search lists no Sailor
+        AssertTrue(!o.t.PutOnSailor(SchedCtx()).ok, "not on")
+        AssertEq(UiStuck.Due(), true, "the stuck-UI rejoin is due at once")
+        AssertTrue(QmObbyLogHas(o.logs, "the game's search is stuck"), "said why")
+        UiStuck.Reset()
+        o.t.PutOnSailor(SchedCtx())
+        AssertEq(UiStuck.Due(), false, "once per aura: then the usual count")
+        ; found again: the next stuck search trips at once again
+        o.s.owned := saved
+        AssertTrue(o.t.PutOnSailor(SchedCtx()).ok, "on after the rejoin")
+        AssertTrue(o.t.PutBack(SchedCtx(), {ok: true, had: false, prev: "Glock"}), "Glock back")
+        UiStuck.Reset()
+        ; (the fake replays its IO log against `owned`: start it afresh, closed, Glock on)
+        o.s.initial := o.s.State().eq, o.io.log := []
+        o.s.owned := ["Glock"]
+        o.t.PutOnSailor(SchedCtx())
+        AssertEq(UiStuck.Due(), true, "due at once again")
+        ; an aura never found before: the usual count only
+        UiStuck.Reset()
+        o2 := QmObbyTask("Glock", , , , ["Glock"])
+        o2.t.PutOnSailor(SchedCtx())
+        AssertEq(UiStuck.Due(), false, "never listed before: counted, not due")
+    } finally UiStuck.Reset()
 }

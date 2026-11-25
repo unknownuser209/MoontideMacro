@@ -80,6 +80,10 @@ class SellTask {
     ; Short hops forward + E (routes.json "nudge") after a walk that stopped
     ; short, before a full re-walk.
     static Nudges := 3
+    ; Hops FishingTask may take toward the fishing spot when its panel is
+    ; missing right after the shipped walk back (state.backHops). Not after the
+    ; user's own recording (its last direction is unknown).
+    static BackHops := 3
     ; Captain Flarg's dialog after the route's E (2560x1440 px, read
     ; 2026-10-25): title "Captain Flarg" (stylized font) over the body and
     ; "Click to skip." (plain font), body "Avvvvvv... What do you want??".
@@ -113,8 +117,10 @@ class SellTask {
         }
         if (this.state.needRepath && streak >= SellTask.MaxRepathStreak) {
             this.state.repathRejoin := false
+            opt0 := FishLogic.Settings(this.cfg, this._coords)
             msg := "re-walked " streak " times in a row without catching a fish, so the macro is PAUSED."
                 . " Something on screen is probably stuck open (a shop, a dialog, the Roblox menu): close it, then press F2."
+                . (opt0.vip && !this._OwnWalk("back") ? " If you don't own the VIP gamepass in Sol's RNG, untick 'VIP gamepass routes' (Settings page): the walks stop short without it." : "")
             d.log.Call("sell: " msg)
             if (d.HasOwnProp("stuck") && IsObject(d.stuck))
                 try d.stuck.Call(msg)
@@ -126,6 +132,7 @@ class SellTask {
         if !FishLogic.FocusOrWait(d, ctx, "sell")
             return
         d.log.Call("sell: starting")
+        this.state.backHops := 0
         tS := A_TickCount, tR := tS, tC := tS      ; per-trip timing line (speed work)
         opt := FishLogic.Settings(this.cfg, this._coords)
         variant := opt.vip ? "vip" : "nonvip"
@@ -257,6 +264,7 @@ class SellTask {
                 , (tF.bought - Max(tF.closed, tF.sold)) / 1000, (tL - tF.bought) / 1000))
         if !Input.PlayRoute(this._Walk(variant, "back"), ctx, io)
             return
+        this.state.backHops := this._OwnWalk("back") ? 0 : SellTask.BackHops
         d.log.Call(Format("sell: trip {:.1f} s (respawn {:.1f}, camera {:.1f}, walk {:.1f}, fisher {:.1f}, back {:.1f})"
             , (A_TickCount - tS) / 1000, (tR - tS) / 1000, (tC - tR) / 1000, (tW - tC) / 1000, (tL - tW) / 1000, (A_TickCount - tL) / 1000))
         this.state.fishLoops := 0
@@ -312,6 +320,16 @@ class SellTask {
     ; present, else the shipped vip / nonvip walk. sell_to_fisher is
     ; recorded up to Flarg; E is pressed after it here (TrimInteract drops a
     ; recorded E at the end).
+    ; The user's own recording is used for this walk (see _Walk).
+    _OwnWalk(which) {
+        own := (which = "toShop") ? "sell_to_fisher" : "fisher_to_fishing"
+        if !(this._routes.Has(own) && this._routes[own] is Map && this._routes[own].Has("steps"))
+            return false
+        ok := false
+        try ok := (this._routes[own]["steps"] is Array) && Input.ParseRoute(this._routes[own]["steps"]).Length > 0
+        return ok
+    }
+
     _Walk(variant, which) {
         own := (which = "toShop") ? "sell_to_fisher" : "fisher_to_fishing"
         if (this._routes.Has(own) && this._routes[own] is Map && this._routes[own].Has("steps")) {

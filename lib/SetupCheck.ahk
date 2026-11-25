@@ -160,6 +160,9 @@ class SetupCheck {
                 add("private", "Private server link", "ok", "a private server link is set")
         }
 
+        ; ---- walks: VIP routes without VIP stop short (tester 2026-11-24) ----
+        SetupCheck._WalkRow(cfg, add)
+
         ; ---- Discord webhooks (never printed) ------------------------------
         hooks := []
         try hooks := cfg.Webhooks()
@@ -311,6 +314,27 @@ class SetupCheck {
             return ""
         b := SetupCheck.RollBox
         return Ocr.Read(b.x, b.y, b.w, b.h, 1)
+    }
+
+    ; The shipped walks were recorded with the VIP gamepass (faster walking).
+    ; Without it they stop short of the fisher and the fishing spot.
+    static _WalkRow(cfg, add) {
+        if !(IsObject(cfg) && HasMethod(cfg, "Get"))
+            return
+        own := 0
+        try {
+            r := cfg.Data("routes")
+            for k in ["sell_to_fisher", "fisher_to_fishing"]
+                if (r.Has(k) && r[k] is Map && r[k].Has("steps") && r[k]["steps"] is Array && r[k]["steps"].Length)
+                    own++
+        }
+        if (own = 2)
+            add("walks", "Walks", "ok", "your own recorded walks to the Fisher and back are used")
+        else if cfg.Get("General.vip", 1)
+            add("walks", "Walks", "info", "VIP gamepass routes are on: the walks expect the VIP gamepass's faster walking"
+                , "If you don't own the VIP gamepass in Sol's RNG, untick VIP gamepass routes (Settings page), or the walks stop short of the fishing spot")
+        else
+            add("walks", "Walks", "ok", "standard walks (no VIP gamepass)")
     }
 
     static _CalRow(cfg, missing, add) {

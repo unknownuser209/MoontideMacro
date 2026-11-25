@@ -239,7 +239,9 @@ class CraftTask {
     ; S read as $ (live 1920x1080, 2026-11-11: 'open$hop')
     ; live 2026-11-21 08:55: 'Opq6 *hoo' and 'ghøp_ Op' (S as g, o as ø / q,
     ; n as 6; the two words swapped): nothing bought on a craft trip
-    static OpenShopRe := "i)[s$g]h[o0øq]+[pq]|\bopen\s*[s$][a-z]|\bop[eqo][n6]\b"
+    ; live 2026-11-23 05:35: 'Opw% *hop' (S as *): "hop" after any one
+    ; non-letter mark at a word start, not inside a word ('hope')
+    static OpenShopRe := "i)[s$g]h[o0øq]+[pq]|\bopen\s*[s$][a-z]|\bop[eqo][n6]\b|(?:^|\s)[^a-z\s]h[o0øq]+[pq](?![a-z])"
     static OpenShopUp(t) => RegExMatch(t, CraftTask.OpenShopRe) && !RegExMatch(t, "i)sell")
     static ScrollTopNotches := 10  ; wheel up over the grid: back to its top row
     static ScrollTries := 8        ; then one notch down at a time to find a potion
@@ -347,6 +349,7 @@ class CraftTask {
         this._confirmed := 0         ; Confirm clicks in the current buy (a cut-short buy with one is not retried)
         this._toldNoNotify := false  ; "no notify_rect: nothing is bought" logged
         this._portalAt := ""         ; the cauldron route's "portalAt" (steps up to the portal), "" = PortalRoute
+        this._bannerRead := ""       ; the last non-empty read of the Sanctuary banner's box (_WaitTeleport)
         this._ws := ""               ; Stella's Workshop as found on screen this run (_Workshop)
         this._cur := ""              ; ... the parts in use while it is open
         this._wsTold := false
@@ -744,13 +747,18 @@ class CraftTask {
         env := this._env
         b := CraftTask.BannerBox
         waited := 0, dark := false
+        this._bannerRead := ""
         Loop {
             if this._Dark() {
                 dark := true
             } else if dark {
                 return 1                            ; through the black frame
-            } else if (Mod(A_Index, 4) = 1 && RegExMatch((env.ocrFn)(b.x, b.y, b.w, b.h), CraftTask.BannerRe)) {
-                return 1
+            } else if (Mod(A_Index, 4) = 1) {
+                t := String((env.ocrFn)(b.x, b.y, b.w, b.h))
+                if (Trim(t) != "")
+                    this._bannerRead := SubStr(Trim(RegExReplace(t, "\s+", " ")), 1, 40)
+                if RegExMatch(t, CraftTask.BannerRe)
+                    return 1
             }
             if (waited >= CraftTask.TeleportWaitMs)
                 return dark ? 1 : 0
@@ -785,7 +793,16 @@ class CraftTask {
                     return false
                 return Input.PlayRoute(split.inside, ctx, io)
             }
-            env.Log("craft: the walk did not go through the portal into Stella's Sanctuary (walk " A_Index "/" CraftTask.WalkTries ")"
+            ; live 2026-11-23..24: six first walks missed, every second one
+            ; went through, nothing kept to tell why: the first miss saves
+            ; the screen, each says what was seen
+            if (A_Index = 1) {
+                shot := HasMethod(io, "Shot") ? io.Shot() : ""
+                if (shot != "")
+                    env.Log("craft: screen where the walk missed the portal saved to " shot)
+            }
+            env.Log("craft: the walk did not go through the portal into Stella's Sanctuary (walk " A_Index "/" CraftTask.WalkTries
+                . "; no dark frame in " Round(CraftTask.TeleportWaitMs / 1000, 1) " s, banner read: '" this._bannerRead "')"
                 . (A_Index < CraftTask.WalkTries ? ": respawning to walk again" : ""))
         }
         return Input.PlayRoute(split.inside, ctx, io)

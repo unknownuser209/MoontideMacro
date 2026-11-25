@@ -98,6 +98,17 @@ class BiOcr {
         this.dailyStuck := false    ; ... and its X does nothing
         this.prompt := false        ; a Roblox purchase prompt is up (Esc closes it)
         this.noOpen := false        ; the inventory button does nothing
+        this.staysMs := 0           ; after Confirm the window stays this long, then closes by itself (0: at once)
+        this.closeAt := ""          ; t when it closes by itself
+        this.fading := false        ; closing: the whole list still reads a Drive, no strip / bar / button does
+        this.fadeEnd := ""          ; t when the fading window is gone ("" = never)
+    }
+    ; the window closing by itself (the biome change after Confirm, a fade)
+    Tick() {
+        if (this.closeAt != "" && this.t >= this.closeAt)
+            this.selector := false, this.closeAt := ""
+        if (this.fading && this.fadeEnd != "" && this.t >= this.fadeEnd)
+            this.selector := false, this.fading := false
     }
     Scroll(n) => this.scrolled := (n > 0) ? 100 : 0
     ; the open prompt's Drive name as it reads now (pale on a bright scene:
@@ -142,7 +153,11 @@ class BiOcr {
             this.pickT := this.t
         } else if (this.selector && this.pick != "" && x = 600 && (Abs(y - 974) <= 30 || y = 600)) {
             this.confirmed := this.pick     ; Confirm
-            this.pick := "", this.selector := false
+            this.pick := ""
+            if this.staysMs
+                this.closeAt := this.t + this.staysMs
+            else
+                this.selector := false
         } else if (this.selector && this.pick != "" && x = 908 && (Abs(y - 974) <= 30 || y = 600)) {
             this.pick := ""                 ; Cancel
         } else if (this.selector && x = 1318 && Abs(y - 323) <= 30 && !this.xStuck) {
@@ -150,7 +165,10 @@ class BiOcr {
         }
     }
     Read(x, y, w, h) {
+        this.Tick()
         r := x "," y "," w "," h
+        if (x = 500 && w = 600 && this.selector && this.fading)
+            return (h >= 400) ? "Radiant Star Drive" : ""
         if (x = 500 && w = 600) {               ; a strip of the Selector list: the Drive under its middle
             if (this.selector && !this.barBlank && h <= 400 && y <= 1280 && y + h >= 1280)
                 return "BIOME SELECTOR IS READY TO BE USED"
@@ -661,6 +679,51 @@ Test_BiomeItems_PromptMisreadsStillNameTheDrive() {
     AssertEq(P("You have selected`n[ Corrupt Ruin Drive ]"), 4, "another Drive's prompt names that one")
     AssertEq(BiomeItemsTask.PromptIs("You ave selecte`nhb s*urse Drive ]", 4), false, "a misread Abyss Curse is never Corrupt Ruin")
     AssertEq(BiomeItemsTask.PromptName("You av selecte hb spurse Drive ]"), "hbspurse", "the name without the prompt's words")
+    ; live 2026-11-24 00:26: the prompt never came up (the game showed
+    ; CONNECTION UNSTABLE), the list's rows were read as the prompt and it was
+    ; logged as naming Unknown Void Drive. Two Drives named is the list.
+    AssertEq(P("Unknown Void Dr$ve Corrupt Ruln Dt4Ve`nUnknown Void Drive Cor"), 0, "two Drives' rows (live 00:26): no prompt names one")
+    AssertEq(P("Radiant Star Drive Infernal Flame Drive Unknown Void Drive"), 0, "the list read whole")
+}
+
+; live 2026-11-22..24: after Confirm the Biome Selector stays up ~4 s and
+; closes by itself when the biome changes. The task left it to the tidy,
+; which (when it looked during the close) logged "is up but could not be
+; placed" 12 times, and could click the X of a window already going. The
+; task now waits for it to close itself; only a window still up is closed.
+Test_BiomeItems_SelectorClosesItselfAfterConfirm() {
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m.ocr.staysMs := 4000
+    AssertEq(m.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m.ocr.confirmed, "Abyss Curse Drive", "confirmed")
+    AssertEq(m.ocr.selector, false, "the window is gone when the task ends (nothing left for the tidy)")
+    xClicked := false
+    for e in m.io.log
+        xClicked := xClicked || RegExMatch(e, "^move 1318,")
+    AssertTrue(!xClicked, "no X click on a window that closes by itself")
+    AssertTrue(!BiSaid(m, "could not be placed"), "no false 'could not be placed'")
+    ; a window that stays: closed by its X before the task ends
+    m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m2.ocr.staysMs := 9999999
+    AssertEq(m2.t.Run(SchedCtx()), 1, "used")
+    AssertEq(m2.ocr.selector, false, "closed by the task (its X)")
+    AssertEq(m2.t.Leftovers()[1].up.Call(), "", "the tidy finds nothing")
+}
+
+; The Selector going (its fade): the whole list still reads, its bar and
+; rows no longer do. Not "could not be placed": looked at again until gone.
+Test_BiomeItems_FadingSelectorIsNotReportedUnplaced() {
+    m := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m.ocr.selector := true, m.ocr.fading := true, m.ocr.fadeEnd := m.ocr.t + 800
+    AssertEq(m.t._CloseSelectorX(SchedCtx()), 1, "gone by itself")
+    AssertTrue(!BiSaid(m, "could not be placed"), "not reported")
+    AssertEq(BiClicks(m.io), 0, "nothing clicked")
+    ; one that stays unplaceable is still reported, never clicked blind
+    m2 := BiMake(Map("BiomeItems.biomeSelector", 1, "BiomeItems.selectorDrive", "Abyss Curse Drive"), ["Biome Selector"], ["x"])
+    m2.ocr.selector := true, m2.ocr.fading := true
+    AssertEq(m2.t._CloseSelectorX(SchedCtx()), 0, "still up")
+    AssertTrue(BiSaid(m2, "could not be placed"), "reported")
+    AssertEq(BiClicks(m2.io), 0, "nothing clicked")
 }
 
 Test_BiomeItems_TextColorsFindTheSolidText() {

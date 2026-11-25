@@ -50,6 +50,22 @@ Test_Screens_MerchantDialogUpNeverMissed() {
         AssertTrue(!MerchantTask.DialogUp(ScrRead(f, L.dialogArea), "Mari"), f ": no dialog")
 }
 
+; live 2026-11-24 10:57 / 15:36: Jester announced, the teleporter used, the
+; player still at the fishing spot (the macro's screenshots after three E
+; presses, leaderboard blacked out): the fishing panel's status line reads
+; there. At the merchant once her buttons are up it does not; right after a
+; real teleport (jester_dialog) it still fades out, so it is only asked
+; after E found no dialog.
+Test_Screens_MerchantStillAtTheFishingSpot() {
+    at := (f) => MerchantTask({ocr: (x, y, w, h, scale := 1) => Ocr.ReadFile(ScrPath(f), x, y, w, h, scale)})._AtFishingSpot()
+    for f in ["merchant_no_teleport_moon", "merchant_no_teleport_graveyard"] {
+        AssertTrue(at(f), f ": the fishing panel reads (not moved)")
+        AssertTrue(!MerchantTask.DialogUp(ScrRead(f, MerchantTask.Layout.dialogArea), "Jester"), f ": no dialog")
+    }
+    for f in ["mari_day_buttons", "mari_night_buttons", "mari_black_buttons", "jester_buttons", "mari_day_dialog", "mari_night_dialog", "world_day"]
+        AssertTrue(!at(f), f ": no fishing panel")
+}
+
 Test_Screens_MerchantOpenOnlyWithButtons() {
     L := MerchantTask.Layout
     for f in ["mari_night_buttons", "mari_day_buttons", "mari_black_buttons", "jester_buttons"]

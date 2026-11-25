@@ -1399,9 +1399,9 @@ Test_Craft_PortalSplitOfTheShippedRoute() {
     AssertEq(CraftTask.PortalSplit(short, 2), "", "portalAt at the end: no split")
 }
 
-CrPortalMake() {
+CrPortalMake(shot := false) {
     steps := [["w", "down", 100], ["w", "up", 50], ["a", "down", 100], ["a", "up", 0]]
-    m := CrMake(Map("cauldron", true, "cauldronRoute", steps, "gets", Map("Craft.enabled", 0)))   ; cauldron only: no Fisher walk
+    m := CrMake(Map("cauldron", true, "cauldronRoute", steps, "gets", Map("Craft.enabled", 0), "shot", shot))   ; cauldron only: no Fisher walk
     m.cfg.Data("routes")["cauldron"]["portalAt"] := 2
     return m
 }
@@ -1448,6 +1448,32 @@ Test_Craft_CauldronWalkAgainWhenThePortalMissed() {
     m2.t._sample := (x, y) => (io2.Count("down w") >= 2 && io2.Idx("up w", io2.Idx("down w", io2.Idx("down w") + 1)) && !io2.Idx("down a")) ? 0x050505 : 0x808080
     m2.t.Run(SchedCtx())
     AssertEq(io2.Count("down w"), 2, "through on the second walk")
+}
+
+; live 2026-11-23..24: six first walks "did not go through the portal", each
+; second walk did, and nothing on screen was kept to tell why (lag, the
+; black frame missed, a short walk). The first miss saves the screen and
+; the log says what was seen (a dark frame, the banner's read).
+Test_Craft_PortalMissSavesTheScreen() {
+    m := CrPortalMake(true)
+    io := m.io
+    m.t._sample := (x, y) => 0x808080
+    m.ocr.map["990,225,580,75"] := "Rolls"
+    lines := []
+    m.t._env._logFn := (txt) => lines.Push(txt)
+    m.t.Run(SchedCtx())
+    iW2 := io.Idx("down w", io.Idx("down w") + 1), iW3 := io.Idx("down w", iW2 + 1)
+    AssertTrue(io.Idx("shot") > io.Idx("down w") && io.Idx("shot") < iW2, "the screen saved after the first miss, before walking again")
+    AssertTrue(!io.Idx("shot", iW2) || io.Idx("shot", iW2) > iW3, "not again for the second miss")
+    said := ""
+    for l in lines
+        if InStr(l, "did not go through the portal")
+            said := l
+    AssertTrue(InStr(said, "no dark frame") && InStr(said, "'Rolls'"), "the log says what was seen: " said)
+    found := false
+    for l in lines
+        found := found || InStr(l, "screen where the walk missed the portal saved to")
+    AssertTrue(found, "the screen's path logged")
 }
 
 CrFisherMake(n) {
@@ -2059,9 +2085,11 @@ Test_Craft_IsCraftButton() {
 ; live 2026-11-10: 'Open Slpep' was not taken for his Open Shop button,
 ; nothing was bought and the craft walked a whole trip back to buy
 Test_Craft_OpenShopLiveMisreads() {
-    for t in ["Opq6 *hoo", "ghøp_ Op", "Open Shop", "open$hop"]
+    ; live 2026-11-23 05:35: 'Opw% *hop' twice (S read as *, e/n as w%):
+    ; nothing bought on two trips
+    for t in ["Opq6 *hoo", "ghøp_ Op", "Open Shop", "open$hop", "Opw% *hop", "Op3n #hop", "Open .hop"]
         AssertTrue(CraftTask.OpenShopUp(t), "'" t "' is his Open Shop button")
-    for t in ["Sell Fish", "Leave", "Captain Flarg", ""]
+    for t in ["Sell Fish", "Leave", "Captain Flarg", "", "hope", "Shot", "Opw% *hop Sell Fish"]
         AssertEq(CraftTask.OpenShopUp(t), false, "'" t "' is not")
 }
 

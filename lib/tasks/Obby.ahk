@@ -73,7 +73,10 @@
 ;   stale or unsettled read is read again). No tile reads as it ->
 ;   _LogPick equips the results whose names did not read, in turn, until
 ;   the Roblox log names it, and stops there (a result whose name read as
-;   another aura is never equipped) -> the button around
+;   another aura is never equipped). Not found: a stuck search only when no
+;   try listed anything (an aura listed before with its name in the box:
+;   the rejoin is due at once, _StuckTrip); listed but unconfirmed, a
+;   put-back is owed to the next run once, no rejoin -> the button around
 ;   aura_equip must read "Equip" (or "Unequip" to unequip) and nothing like
 ;   delete / lock / sell (NeverRe) -> click it -> it must flip to the other
 ;   word within AuraWaitMs (else the log must already show the change) ->
@@ -218,6 +221,8 @@ class ObbyTask {
         this._uiFailKind := ""       ; the stuck window behind the last failed swap (_UiFail)
         this._retryRestore := false  ; _Restore: failed on a stuck search, owed until after the rejoin
         this._retriedFor := ""       ; the aura that already had its rejoin retry (once per aura)
+        this._stuckFor := ""         ; the aura whose stuck search already tripped the rejoin (_StuckTrip)
+        this._pickMiss := false      ; the last swap: listed, but no result confirmed (_Restore owes it)
         this._missStreak := 0        ; obbies in a row where every run missed the blessing
         this._btn := ""              ; the button's last OCR read
         this._tab := 1               ; storage tab of the current search try (Tabs index)
@@ -280,6 +285,8 @@ class ObbyTask {
         plays := 0, seen := false, stopped := false, unchecked := false, why := ""
         try {
             Loop retries + 1 {
+                if (A_Index > 1 && !this._StillWorn(c, ctx))
+                    break
                 if !Input.ResetToSpawn(ctx, io)
                     break
                 ; the sell trip's zoom (wheel in, then out): a rejoin leaves
@@ -349,6 +356,24 @@ class ObbyTask {
             env.Report("errors", "Obby failed", msg, 0xE74C3C)
         }
         return 0
+    }
+
+    ; Before a retry: the Roblox log names another aura than Sailor -> Sailor
+    ; put on again (live 2026-11-23 11:49 / 14:11, 2026-11-24 07:49 / 17:51:
+    ; ~45 s after the swap the log said "Aura: :Flushed:_Pumpkinity equipped
+    ; before", not the macro's doing, and both retries walked without
+    ; Sailor: 12 misses). -> false: not on again (stopped, or the swap
+    ; failed: logged), no more runs.
+    _StillWorn(c, ctx) {
+        now := this._LogAura()
+        if (now = "?" || ObbyTask.SameAura(now, this.wear))
+            return true
+        env := this._env
+        env.Log("obby: the Roblox log says " (now = "" ? "no aura" : now) " is on, not " this.wear " (it changed during the run): " this.wear " put on again before the retry")
+        r := this._SetAura(c, this.wear, true, CleanupCtx(ctx))
+        if (r = 0)
+            env.Log("obby: could not put " this.wear " on again (" this._why "): no more runs")
+        return r > 0
     }
 
     ; Sailor on. -> {ok, had (already on), prev (the aura before), unknown
@@ -1321,6 +1346,32 @@ class ObbyTask {
 
     ; ---- package B (2026-11-20): the stuck-UI escape, search check, shots ----
 
+    ; No tab lists `aura` though the storage listed it before (a tile or log
+    ; hint) and the box holds its name: the game's search is stuck, and only
+    ; a rejoin clears it (live 2026-11-24 18:15-19:18: 'Soilor' in the box,
+    ; both tabs empty, 7 obbies skipped; the user's restarts kept resetting
+    ; the 4-in-a-row count; the 19:52 rejoin cured it). The rejoin is made
+    ; due at once, once per aura until it is listed again (an aura really
+    ; gone, sold or deleted, does not rejoin every run).
+    _StuckTrip(aura) {
+        if (this._stuckFor = StrLower(aura) || !this._ListedBefore(aura))
+            return
+        if !ObbyTask.SearchHolds(this.HasOwnProp("_searchRead") ? this._searchRead : "", ObbyTask.SearchText(aura))
+            return
+        this._stuckFor := StrLower(aura)
+        UiStuck.Fail("aura search", UiStuck.TripAt)
+        this._env.Log("obby: " aura " was in the aura storage before and the search box holds its name, but no tab lists it: the game's search is stuck (a rejoin clears it)")
+    }
+
+    _ListedBefore(aura) {
+        p := StrLower(aura) "|"
+        for m in [this._tileHint, this._logHint]
+            for k in m
+                if (SubStr(k, 1, StrLen(p)) = p)
+                    return true
+        return false
+    }
+
     ; The storage did not open / the search listed nothing: counted for the
     ; stuck-UI escape (lib\UiStuck.ahk), the raw read logged, a screenshot
     ; (at most once per ShotGapMs per kind: live, 235 title misses had none).
@@ -1364,6 +1415,7 @@ class ObbyTask {
             return -1
         if this._TileHere(ObbyTask.TileRect(c.aura_tile_rect, 1)) {
             UiStuck.Ok("aura search")           ; it lists something: the search works
+            this._listed := true
             return 1
         }
         b := ObbyTask.SearchBox
@@ -1383,6 +1435,7 @@ class ObbyTask {
             return -1
         if this._TileHere(ObbyTask.TileRect(c.aura_tile_rect, 1)) {
             UiStuck.Ok("aura search")
+            this._listed := true
             env.Log("obby: the search lists results after typing it again")
         }
         return 1
@@ -1476,6 +1529,8 @@ class ObbyTask {
             CalHealth.Ok("aura_open", c.aura_open)
         CalHealth.Ok("aura_search", c.aura_search)     ; its title reads over it
         found := 0, text := "", picked := 0
+        this._listed := false                   ; a try's search listed a result (_TypeSearch)
+        this._pickMiss := false                 ; listed, but no result confirmed as the aura
         Loop ObbyTask.SearchTries {
             if ctx.ShouldStop()
                 return -1
@@ -1520,13 +1575,26 @@ class ObbyTask {
             }
         }
         done := false, seen := false
+        if (found || picked)
+            this._stuckFor := ""                ; listed again: the next stuck search trips at once again
         if picked {
             done := true, seen := true, was := "off"
         } else if !found {
-            this._empty := Trim(text) = ""
-            this._why := "no '" aura "' in the aura storage search (first tile's name read: '" SubStr(Trim(RegExReplace(text, "\s+", " ")), 1, 40) "')"
-            if this._empty
+            ; a stuck search lists nothing on any try. Results listed but
+            ; none confirmed is not one (live 2026-11-24 03:42 / 08:48 /
+            ; 13:27: :Flushed:_Pumpkinity was result 1 on the Special tab,
+            ; the last try's empty Regular tab was taken for a stuck search
+            ; and the macro rejoined): no stuck-UI count, _Restore owes it
+            this._empty := !this._listed
+            this._pickMiss := this._listed && equip
+            first := SubStr(Trim(RegExReplace(text, "\s+", " ")), 1, 40)
+            this._why := this._listed
+                ? "the aura storage search lists results, but none read or went on as '" aura "' (first tile's name read: '" first "')"
+                : "no '" aura "' in the aura storage search (first tile's name read: '" first "')"
+            if this._empty {
                 this._UiFail("aura search", this.HasOwnProp("_searchRead") ? this._searchRead : "")
+                this._StuckTrip(aura)
+            }
         } else {
             st := this._Button(c)
             was := st
@@ -1762,8 +1830,12 @@ class ObbyTask {
                 return -1
             if !env.Wait(ObbyTask.PickMs, ctx)
                 return -1
-            if !this._Selected(c)
+            ; each way out says why (live 2026-11-24: four put-backs ended
+            ; here without a word, then blamed the game's search)
+            if !this._Selected(c) {
+                env.Log("obby: result " k " clicked, but no aura's [ Information ] lines read (read '" SubStr(Trim(RegExReplace(this._infoRead, "\s+", " ")), 1, 40) "'): no more results tried")
                 return 0                                ; past the last result
+            }
             st := this._Button(c)
             if (st = "on") {
                 if ObbyTask.SameAura(this._LogAura(), aura) {
@@ -1771,12 +1843,17 @@ class ObbyTask {
                     this._SaveHints()
                     return 1
                 }
+                env.Log("obby: result " k " is worn already (Unequip) but the log names " this._LogAura() ", not " aura)
                 continue
             }
-            if (st != "off")
+            if (st != "off") {
+                env.Log("obby: result " k ": the button reads '" SubStr(Trim(RegExReplace(this._btn, "\s+", " ")), 1, 30) "', not Equip: skipped")
                 continue
-            if (this._ReadName(c, aura).v = "other")
+            }
+            if ((rn := this._ReadName(c, aura)).v = "other") {
+                env.Log("obby: result " k " reads as another aura ('" SubStr(Trim(RegExReplace(rn.text, "\s+", " ")), 1, 30) "'): skipped")
                 continue                                ; its name reads now: another aura
+            }
             io.MoveTo(c.aura_equip.x, c.aura_equip.y)
             if !env.Wait(ObbyTask.HoverMs, ctx)
                 return -1
@@ -1797,7 +1874,10 @@ class ObbyTask {
                 this._tabHint[StrLower(aura)] := this._tab
                 this._logHint[StrLower(aura) "|" this._tab] := k
                 this._SaveHints()
-                env.Log("obby: " aura " found by the log (its name did not read" (hint ? ", tile " k " from last time" : "") ")")
+                ; with a hint the names are not read at all (speed): the
+                ; line says so (151 'Sailor ... did not read' lines in two
+                ; days were the hint, not a failed read)
+                env.Log("obby: " aura " found by the log (" (hint ? "tile " k " from last time, names not read" : "its name did not read") ")")
                 return 1
             }
             if (got = "?") {
@@ -1836,16 +1916,40 @@ class ObbyTask {
     }
 
     ; An aura is selected: its info lines read in InfoBox (from aura_equip).
+    ; The panel is see-through: by day the world behind it cost letters
+    ; ('Rolle a : ... With luc of', live 2026-11-24 03:42; 'Roll4Ft ... lck'
+    ; 08:48), the log pick took it for "nothing selected" and the put-back of
+    ; :Flushed:_Pumpkinity failed. "Time Discovered" read on every frame;
+    ; a 1x miss is read again at InfoScale (both frames read whole at 2x).
+    static InfoRe := "i)r[o0][lI1|]{2}ed|[lI1|]uck|disc[o0]ver"
+    static InfoScale := 2
+    static InfoShows(t) => RegExMatch(String(t), ObbyTask.InfoRe) > 0
     _Selected(c) {
         b := ObbyTask.InfoBox
-        t := String((this._env.ocrFn)(c.aura_equip.x + b.dx, c.aura_equip.y + b.dy, b.w, b.h))
-        return RegExMatch(t, "i)r[o0][lI1|]{2}ed|[lI1|]uck") > 0
+        this._infoRead := ""
+        for s in [1, ObbyTask.InfoScale] {
+            t := String((this._env.ocrFn)(c.aura_equip.x + b.dx, c.aura_equip.y + b.dy, b.w, b.h, s))
+            this._infoRead := t
+            if ObbyTask.InfoShows(t)
+                return true
+        }
+        return false
     }
 
+    ; A 1x read that is neither word is read again at ButtonScale (live
+    ; 2026-11-24 13:27: 'Equin' at 1x on a dark frame, Equip at 2x; the
+    ; log pick skipped the tile without a word).
+    static ButtonScale := 2
     _Button(c) {
         b := ObbyTask.ButtonBox
         this._btn := String((this._env.ocrFn)(c.aura_equip.x + b.dx, c.aura_equip.y + b.dy, b.w, b.h))
-        return ObbyTask.ButtonState(this._btn)
+        st := ObbyTask.ButtonState(this._btn)
+        if (st = "") {
+            t := String((this._env.ocrFn)(c.aura_equip.x + b.dx, c.aura_equip.y + b.dy, b.w, b.h, ObbyTask.ButtonScale))
+            if ((st2 := ObbyTask.ButtonState(t)) != "")
+                this._btn := t, st := st2
+        }
+        return st
     }
 
     ; The storage button's text -> "never" (Delete / Lock / Sell / Remove /
@@ -1859,7 +1963,8 @@ class ObbyTask {
             return "never"
         if (RegExMatch(t, "i)n\s*equ") || GameText.Has(t, "nequ"))
             return "on"
-        return GameText.Has(t, "equip") ? "off" : ""
+        ; 'Equin' (the p read as n, live 2026-11-24 13:27)
+        return (GameText.Has(t, "equip") || RegExMatch(t, "i)\bequi[pn]\b")) ? "off" : ""
     }
 
     ; After the run: the previous aura back (or Sailor off when there was none).
@@ -1873,6 +1978,7 @@ class ObbyTask {
         env := this._env
         this._uiFailKind := ""
         this._retryRestore := false
+        this._pickMiss := false
         r := (prev != "") ? this._SetAura(c, prev, true, ctx) : this._SetAura(c, this.wear, false, ctx)
         if (r > 0) {
             env.Log("obby: " (prev != "" ? prev " equipped again" : this.wear " unequipped"))
@@ -1887,6 +1993,15 @@ class ObbyTask {
             this._retriedFor := prev
             env.Log("obby: could not equip " prev " again (" this._why "): the game's " this._uiFailKind
                 . " is stuck, so the macro rejoins and puts " prev " back after the next obby run")
+            return false
+        }
+        ; the search listed it but no pick confirmed it (a logo name, a
+        ; misread panel): no rejoin (the search works), one more try after
+        ; the next obby run, once per aura
+        if (r = 0 && prev != "" && this._pickMiss && this._retriedFor != prev) {
+            this._retryRestore := true
+            this._retriedFor := prev
+            env.Log("obby: could not equip " prev " again (" this._why "): the macro tries again after the next obby run")
             return false
         }
         if (r = 0) {

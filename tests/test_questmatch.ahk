@@ -942,6 +942,7 @@ class QmShop {
         this.noMerchant := false ; Use shows "There's no merchant spawned"
         this.promptAfter := ""   ; a Roblox purchase prompt shows after this log entry (Esc closes it)
         this.maxBtn := true      ; the Set to Max button reads
+        this.atSpot := false     ; the fishing panel still reads (the teleport did not move the player)
     }
     _Pt(p) => "move " p.x "," p.y
     _LastMove() {
@@ -987,6 +988,9 @@ class QmShop {
             return inv ? "Teleports you to the current merchant" : ""
         if (x = 20 && y = 85)
             return inv ? "Gears   Items" : ""
+        fs := FishingTask.MapRect(FishingTask.StatusRect)
+        if (x = fs[1] && y = fs[2])
+            return this.atSpot ? "Location Sol's World - Moin Island" : ""
         nb := MerchantTask.NoMerchantBox
         if (x = nb.x && y = nb.y)
             return (this.noMerchant && this.io.Index("move 130,130")) ? "Warning`nThere' G no merchant gpowned_ (Event merchant iG not counted)" : ""
@@ -1266,6 +1270,36 @@ Test_Merchant_NoMerchantSpawnedStopsQuietly() {
     AssertEq(wh.Count("merchant"), 1, "one merchant webhook says why")
     AssertTrue(InStr(wh.sent[wh.sent.Length].desc, "no merchant has spawned"), "says the teleporter found none")
     AssertEq(t.Pending(), 0, "the visit is dropped, not retried")
+}
+
+; live 2026-11-24 10:57 / 15:36 (merchant_no_teleport_moon / _graveyard):
+; Jester was announced, the teleporter was used, no "no merchant spawned"
+; warning read, and the player stood at the fishing spot (its panel up, no
+; Jester): E three times, an errors webhook, then a respawn that took the
+; player off the fishing spot. With the fishing panel still up after E, the
+; teleport did not happen: no respawn, no error, the merchant webhook says why.
+Test_Merchant_TeleportThatDidNotMoveIsNoVisit() {
+    io := QmIO()
+    wh := QmWh()
+    shop := QmShop(io, ["Lucky Potion", "", "", "", ""])
+    shop.dialog := false, shop.atSpot := true
+    t := QmMerchTask(Map("Jester", [Map("name", "Lucky Potion", "qty", 1)], "Mari", []), shop, io, wh)
+    t.Notify("Jester")
+    AssertEq(t.Run(SchedCtx()), 0, "no visit")
+    AssertEq(QmCountMoves(io, "down e"), MerchantTask.DialogTries, "E pressed DialogTries times")
+    AssertEq(io.Index("down Esc"), 0, "no respawn: still at the fishing spot")
+    AssertEq(wh.Count("errors"), 0, "not an error")
+    AssertEq(wh.Count("merchant"), 1, "one merchant webhook says why")
+    AssertTrue(InStr(wh.sent[wh.sent.Length].desc, "fishing spot"), "says the player is still at the fishing spot")
+    ; the panel gone (the teleport moved the player) and still no dialog: as before
+    io2 := QmIO()
+    wh2 := QmWh()
+    shop2 := QmShop(io2, ["Lucky Potion", "", "", "", ""])
+    shop2.dialog := false
+    t2 := QmMerchTask(Map("Jester", [Map("name", "Lucky Potion", "qty", 1)], "Mari", []), shop2, io2, wh2)
+    t2.Notify("Jester")
+    t2.Run(SchedCtx())
+    AssertEq(wh2.Count("errors"), 1, "reported as before")
 }
 
 Test_Merchant_InventoryClosedAndChecked() {

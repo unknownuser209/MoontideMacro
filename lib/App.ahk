@@ -270,6 +270,10 @@ class App {
         this._early := []
         this._logFn := ObjBindMethod(this, "Log")
         this._tickFn := ObjBindMethod(this, "Tick")
+        this._kickFn := ObjBindMethod(this, "Tick")  ; its own one-shot timer (the tick's period stays)
+        this._inTick := false        ; a Tick is running (the kick and the period never overlap)
+        this._freshAt := Map()       ; _Fresh: what the last tidy found clean ("title", "dq") -> ms
+        this._lastTask := ""         ; the task that ran last (not skipped); "" at Start
 
         ; run state
         this._started := false
@@ -573,6 +577,8 @@ class App {
         this._holdUntil := 0
         this._lastPoll := ""
         this._lastChat := ""
+        this._lastTask := ""                    ; nothing ran in this session yet: every check before the first task
+        this._freshAt := Map()
         this.state.chatDue := false
         ; Quests first, then one trip: Sell (reset to spawn, walk to the
         ; fisher, sell, buy in the same visit, walk to the fishing spot), then
@@ -645,6 +651,8 @@ class App {
             return false
         this.ctx.Pause()
         this._pauseReason := ""          ; by hand: never resumed by the macro
+        this._freshAt := Map()           ; the player may change the screen while paused
+        this._lastTask := ""
         try this.input.ReleaseAll()
         try this.clip.CancelAll()
         this.Log("Paused")
@@ -709,6 +717,8 @@ class App {
                 . ((kind = "notfs" && Roblox.Problem != "") ? " (" Roblox.Problem ")" : ""))
         this._pauseReason := m[1]
         this.ctx.Pause()
+        this._freshAt := Map()           ; what the last tidy saw is not proof after a pause
+        this._lastTask := ""
         try this.input.ReleaseAll()
     }
 
@@ -827,11 +837,20 @@ class App {
 
     ; Timer callback. Nothing may escape it: an uncaught error would show an
     ; AHK dialog and freeze the tick while a task may still send input.
+    ; The end of a task kicks one at once (_RunTask: the next task started
+    ; within ms instead of up to TickMs later); a Tick that finds another
+    ; one running (the kick and the period: AHK threads interrupt each
+    ; other) returns, so two can never launch two tasks.
     Tick() {
+        if this._inTick
+            return
+        this._inTick := true
         try {
             this._TickBody()
         } catch Any as e {
             this._TickError(e)
+        } finally {
+            this._inTick := false
         }
     }
 
@@ -1107,20 +1126,28 @@ class App {
         this.state.busy := task.name
         skipped := false
         failed := false
+        ; fishing again right after its own clean return (FishingTask.
+        ; YieldedClean: its last click closed the catch card, no other task
+        ; ran since, only the chat was read): that click landed, so shift
+        ; lock is off; no probe (a mouse move and 150 ms on every catch)
+        again := (task.name = "fishing" && this._lastTask = "fishing" && HasMethod(task, "YieldedClean") && task.YieldedClean())
+        this._lastTask := ""
         this.Log("task: " task.name " start")
         try {
             ; a Daily Quests window left open (a Stop in the middle of it)
             ; covers the whole game: the sell after it clicked Open Shop under
             ; it and Captain Flarg's dialog stuck with the mouse locked (live
-            ; 2026-11-14). Closed before any other task starts.
-            if (task.name != "dailyquests" && this._taskMap.Has("dailyquests"))
+            ; 2026-11-14). Closed before any other task starts (the tidy
+            ; that just found it closed counts: no second read).
+            if (task.name != "dailyquests" && this._taskMap.Has("dailyquests") && !this._Fresh("dq"))
                 try this._taskMap["dailyquests"]._Close(this.ctx)
+            this._freshAt := Map()                  ; only for this one launch
             ; shift lock on makes every UI click miss (live 2026-11-02: a
             ; click at the screen centre opened the Donation prompt): not
             ; confirmed off after one more try -> the task is skipped
             ; the unlock rejoin itself never waits on the check that keeps failing
             unlocking := (task.name = "recovery" && HasMethod(task, "Unlocking") && task.Unlocking())
-            if (!unlocking && !this._ShiftOff(this.ctx) && !this._ShiftOff(this.ctx)) {
+            if (!again && !unlocking && !this._ShiftOff(this.ctx) && !this._ShiftOff(this.ctx)) {
                 skipped := true
                 ; skipped again and again: wait longer each time (5 s, 10 s
                 ; ... up to SkipHoldMaxMs), not a retry every 7 s all night
@@ -1157,6 +1184,7 @@ class App {
             this._Error(StrTitle(task.name) ": error: " App._ErrText(e) App._ErrWhere(e))
         } finally {
             how := this._EndHow(failed)
+            this._lastTask := (skipped || how != "") ? "" : task.name     ; returned on its own (a pause from here on clears it)
             pt := Prof.Text(), Prof.Stop()
             if (pt != "")
                 this.Log(pt)
@@ -1192,6 +1220,9 @@ class App {
                 try Scheduler.MarkRun(this.state, task, this.Now())
             this._running := ""
             this._MaybeRebuild()
+            ; the next task now, not on the next tick (0..TickMs later:
+            ; ~125 ms on every transition)
+            try this.timerFn.Call(this._kickFn, -1)
         }
     }
 
@@ -1211,6 +1242,12 @@ class App {
         c := this.ctx
         if (c.IsStopped() || c.IsPaused() || CleanupCtx.Halted(c) || !this._Active())
             return
+        ; fishing came back for the chat: the mouse goes over the chat now,
+        ; so its background is back by the time the chat is read (the tidy's
+        ; reads take that wait instead of ChatWatch's hover)
+        if (task.name = "fishing" && this.state.chatDue && HasMethod(task, "YieldedClean") && task.YieldedClean()
+            && IsObject(this.chat) && HasMethod(this.chat, "HoverAhead") && !ChatGuard.Hidden() && this._ChatWanted())
+            try this.chat.HoverAhead()
         items := this._TidyItems(task)
         if items.Length
             Tidy.Run(task.name, items, c, this._logFn)
@@ -1236,26 +1273,60 @@ class App {
         owners := [task]
         if (task.name = "craft" && this._taskMap.Has("sell"))
             owners.Push(this._taskMap["sell"])
+        ; fishing back for the chat with its catch card seen closing
+        ; (YieldedClean): the card was read over the middle of the screen
+        ; and closed by its X a moment ago, so no Daily Quests window (it
+        ; covers the whole game) is open: not read again
+        clean := (task.name = "fishing" && HasMethod(task, "YieldedClean") && task.YieldedClean())
         ; the catch card after EVERY task: a preempted cast fails only once
         ; the next task walks off, so "Fishing Failed" shows up after the
         ; fishing tidy (live 2026-11-10 02:29: it sat over the obby's Aura
-        ; Storage, the hunt and the sell walk for 2 minutes)
-        if (task.name != "fishing" && this._taskMap.Has("fishing"))
-            owners.Push(this._taskMap["fishing"])
+        ; Storage, the hunt and the sell walk for 2 minutes). After a task
+        ; that walked off (or the sell trip) a card that is not there now
+        ; never comes (FishingTask.Leftovers(true): no more reads of it
+        ; until fishing runs again).
+        walked := App.MovesAway.Has(task.name) || task.name = "sell"
+        if (!walked && HasMethod(task, "LeftSpot"))
+            try walked := task.LeftSpot() ? true : false
+        fish := (task.name != "fishing" && this._taskMap.Has("fishing")) ? this._taskMap["fishing"] : ""
+        if IsObject(fish)
+            owners.Push(fish)
         ; the Daily Quests window covers everything too (2026-11-14)
-        if (task.name != "dailyquests" && this._taskMap.Has("dailyquests"))
-            owners.Push(this._taskMap["dailyquests"])
+        dq := (task.name != "dailyquests" && this._taskMap.Has("dailyquests")) ? this._taskMap["dailyquests"] : ""
+        if (IsObject(dq) && clean)
+            this._freshAt["dq"] := this.Now()
+        else if IsObject(dq)
+            owners.Push(dq)
         for t in owners
             if HasMethod(t, "Leftovers")
                 try {
-                    for it in t.Leftovers()
-                        items.Push(it)
+                    list := (t == fish && walked && HasMethod(t, "Leftovers", 1)) ? t.Leftovers(true) : t.Leftovers()
+                    for it in list
+                        items.Push(t == dq ? this._FreshItem(it, "dq") : it)
                 }
         scr := this._TidyScreen()
         if IsObject(scr)
-            try items.Push(scr.TidyItem(task.name != "fishing"))
+            try items.Push(this._FreshItem(scr.TidyItem(task.name != "fishing"), "title"))   ; the title screen is read first
         return items
     }
+
+    ; A tidy item whose up() reading nothing marks `key` fresh (_Fresh): the
+    ; launch right after it does not read the same screen again.
+    _FreshItem(it, key) {
+        up := it.up
+        return {up: () => this._Mark(up.Call(), key), close: it.close}
+    }
+
+    _Mark(v, key) {
+        if (v = "" || v = 0)
+            this._freshAt[key] := this.Now()
+        return v
+    }
+
+    ; The last tidy found `key` clean within TidyFreshMs (and no task was
+    ; launched since): the launch skips its own read of it.
+    static TidyFreshMs := 2000
+    _Fresh(key) => this._freshAt.Has(key) && this.Now() - this._freshAt[key] <= App.TidyFreshMs
 
     ; A fishing catch card over the screen closed (the fishing task's
     ; leftovers, as in the tidy) -> true when one was. Quests: the board did
@@ -1277,6 +1348,8 @@ class App {
     _TitleGate() {
         scr := this._TidyScreen()
         if !(IsObject(scr) && HasMethod(scr, "TitleItem"))
+            return
+        if this._Fresh("title")                 ; the tidy just read it: not up (as a read finding nothing)
             return
         try {
             it := scr.TitleItem()

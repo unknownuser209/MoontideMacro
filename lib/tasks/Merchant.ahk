@@ -2,6 +2,7 @@
 #Include %A_LineFile%\..\TaskEnv.ahk
 #Include %A_LineFile%\..\..\GameLists.ahk
 #Include %A_LineFile%\..\..\ui\UiLogic.ahk
+#Include %A_LineFile%\..\Fishing.ahk
 ; ---------------------------------------------------------------------------
 ; MerchantTask: visit Mari / Jester and buy their want-list (spec 4.5).
 ;
@@ -47,7 +48,9 @@
 ;     X likewise only while its title reads.
 ;   teleport -> press E -> the dialog must show the merchant's name (OCR;
 ;     not within DialogMs -> E again, DialogTries presses in all: one E right
-;     after the teleport can land before her prompt is there)
+;     after the teleport can land before her prompt is there; no dialog
+;     and the fishing panel still up: the teleport did not move the player,
+;     no visit, no respawn)
 ;     -> her line types out slowly ("Click to skip"); her buttons (Open /
 ;     Who are you? / Leave) only appear when it is done (clip 2026-10-26: name
 ;     at 6 s, buttons at 11 s): click the dialog to skip, wait until "Open"
@@ -368,6 +371,20 @@ class MerchantTask {
                 shot := HasMethod(io, "Shot") ? io.Shot() : ""
                 if (shot != "")
                     env.Log("merchant: screen when her dialog did not open saved to " shot)
+                ; still at the fishing spot (its panel reads): the teleport did
+                ; not happen (live 2026-11-24 10:57 / 15:36: Jester announced
+                ; right as GRAVEYARD / PUMPKIN MOON began, no "no merchant
+                ; spawned" warning read, E three times at the fishing spot, an
+                ; error, then a respawn off the spot). Nothing moved: no
+                ; Leave, no respawn, not an error.
+                if this._AtFishingSpot() {
+                    this._noMerchant := true
+                    env.Log("merchant: " name "'s dialog did not open after E and the fishing panel still reads: the Merchant Teleporter did not move you (no "
+                        . name " to go to: an event merchant's arrival line, or " name " already left): nothing bought, staying at the fishing spot")
+                    env.Report("merchant", name " not reached", "The Merchant Teleporter did not move you (you are still at the fishing spot): no "
+                        . name " to go to (an event merchant, or " name " already left). Nothing bought.")
+                    return false
+                }
                 return this._ShopFail(name, name "'s dialog did not open after E (read: '" this._last "'): nothing bought")
             }
             ready := this._WaitOpen(ctx)
@@ -566,6 +583,15 @@ class MerchantTask {
                 env.Log("merchant: " name "'s dialog not open after E (try " A_Index "/" MerchantTask.DialogTries "): E again")
         }
         return 0
+    }
+
+    ; The fishing panel's status line ("Location - Sol's World - Main Island",
+    ; FishingTask's own box and check) reads: the player is at the fishing
+    ; spot. It fades out over a second or two after a real teleport, so it
+    ; only means "not moved" once E found no dialog.
+    _AtFishingSpot() {
+        s := FishingTask.MapRect(FishingTask.StatusRect)
+        return RegExMatch(this._Ocr({x: s[1], y: s[2], w: s[3], h: s[4]}), FishingTask.ReadyRe) > 0
     }
 
     _ShopFail(name, msg) {

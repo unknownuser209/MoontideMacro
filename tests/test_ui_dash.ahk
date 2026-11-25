@@ -1787,17 +1787,30 @@ Test_Wizard_StepsSaveAndSkip() {
         w.Ctrl("hook").Value := ""
         AssertTrue(w.Next(), "empty webhook skips")
         AssertEq(Config.Load(dir).Webhooks().Length, cfg.Webhooks().Length, "no webhook added")
+        AssertEq(w.Ctrl("vip").Value, 0, "VIP starts unticked on a first setup")
         w.Ctrl("run:MemoryMatch.enabled").Value := 1
         w.Ctrl("run:Quests.enabled").Value := 0
         w.Next()
         c2 := Config.Load(dir)
         AssertEq(c2.Get("MemoryMatch.enabled", 0), 1, "memory match on")
         AssertEq(c2.Get("Quests.enabled", 1), 0, "quests off")
+        AssertEq(c2.Get("General.vip", 1), 0, "VIP asked, unticked on a first setup: standard walks")
         AssertEq(w.Step, 7, "done page")
         w.Next()
         AssertEq(done.Length, 1, "done called once")
         AssertEq(done[1], 1, "finished")
         AssertTrue(!SetupWizard.ShouldShow(Config.Load(dir)), "not shown again")
+        w := ""
+        ; run again from Help: the saved choice shows, and ticking it saves VIP
+        w := SetupWizard(Config.Load(dir))
+        Loop 5
+            w.Next()
+        AssertEq(w.Step, 6, "what to run")
+        AssertEq(w.Ctrl("vip").Value, 0, "shows the saved standard walks")
+        w.Ctrl("vip").Value := 1
+        w.Next()
+        AssertEq(Config.Load(dir).Get("General.vip", 0), 1, "VIP saved")
+        w.Destroy()
         w := ""
         ; Skip setup on page 1: nothing else changes, never shown again
         dir2 := UiDashTmp()

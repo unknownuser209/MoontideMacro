@@ -1234,3 +1234,73 @@ Test_Reel_SlowPcWarnsAfterTheReel() {
         FsClean(t.dir)
     }
 }
+
+; Tester 2026-11-24 (1366x768, no VIP gamepass, "VIP gamepass routes" on by
+; default): the shipped walk back was recorded with VIP's faster walking, so
+; without VIP it stopped ~0.9 s short of the fishing spot. Every cast after
+; it saw no panel and re-walked until the stuck pause. After Sell's walk back
+; (state.backHops), a missing panel now gets short a+w hops first.
+class RlHopIO extends RlPanelIO {
+    __New(hopsNeeded) {
+        super.__New("", "")
+        this.need := hopsNeeded
+    }
+    Ocr(x, y, w, h, scale := 1) {
+        if (this.Count("down a") < this.need)
+            return ""
+        return (x = 1050) ? "Fish" : (x = 1130) ? "Fishing" : ""
+    }
+}
+
+Test_Reel_ShortWalkBackHopsForward() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    t.cfg.Set("General.vip", 1)
+    FsScreen.Install()
+    try {
+        st := SchedState()
+        st.backHops := SellTask.BackHops
+        st.repathStreak := 2
+        io := RlHopIO(2)                         ; the panel shows after the 2nd hop
+        logs := []
+        FsScreen.fn := (x, y) => 0x101010
+        r := FishingTask(t.cfg, st, FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertEq(r, "hopped", "found the spot by hopping, no re-path (r=" r ")")
+        AssertEq(io.Count("down a"), 2, "two hops")
+        AssertEq(io.Count("down w"), 2, "a+w (the walk back's last direction)")
+        AssertEq(st.needRepath, false, "no Sell made due")
+        AssertEq(st.backHops, 0, "hops used up once the spot is found")
+        AssertEq(FsHasLog(logs, "no fishing panel (not at the fishing spot) - re-pathing"), false, "no re-path log")
+        AssertTrue(FsHasLog(logs, "untick 'VIP gamepass routes'"), "VIP hint logged")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+Test_Reel_HopsGiveUpThenRepath() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        st := SchedState()
+        st.backHops := SellTask.BackHops
+        io := RlHopIO(99)                        ; never there
+        logs := []
+        FsScreen.fn := (x, y) => 0x101010
+        r := FishingTask(t.cfg, st, FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertEq(r, "repath", "re-path after the hops")
+        AssertEq(io.Count("down a"), SellTask.BackHops, "only BackHops hops")
+        AssertEq(st.backHops, 0, "hops used up")
+        AssertEq(st.needRepath, true, "Sell due")
+        ; no hops without a walk back just before (a panel lost mid-session)
+        st2 := SchedState()
+        io2 := RlHopIO(99)
+        r2 := FishingTask(t.cfg, st2, FsDeps(io2)).CatchOnce(SchedCtx())
+        AssertEq(r2, "repath", "plain re-path")
+        AssertEq(io2.Count("down a"), 0, "no hops")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}

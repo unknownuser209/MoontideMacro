@@ -19,14 +19,14 @@
 ;   w.Step                1..7, the page shown
 ;   w.Next() / w.Back() / w.Skip() / w.Finish()   (buttons; tests call them)
 ;   w.PickLanguage(lang)  page 1: a code or a name from I18n.Names -> the code
-;   w.Ctrl(id)            tests: "ps", "hook", "run:<key>", "checkOut", "title",
+;   w.Ctrl(id)            tests: "ps", "hook", "run:<key>", "vip", "checkOut", "title",
 ;                         "lang:<code>"
 ;   w.Destroy()           not closed yet: drops a language pick (the app's
 ;                         language back) -> its code, "" when none
 ;   SetupWizard.ShouldShow(cfg)  -> true while UI.setupDone is not 1
 ;
 ; Pages: 1 Language, 2 Welcome, 3 Roblox check, 4 Private server, 5 Discord
-; alerts, 6 What to run, 7 Done. Picking a language saves UI.lang at once and
+; alerts, 6 What to run (and the VIP gamepass: General.vip), 7 Done. Picking a language saves UI.lang at once and
 ; builds the window again in that language (I18n.Use), still on page 1; when
 ; the wizard closes the app's own language is put back and "lang" tells the
 ; app (it restarts to show the new language everywhere). Other values reach
@@ -38,7 +38,7 @@
 
 class SetupWizard {
     static W := 600
-    static H := 440
+    static H := 470
     static Pages := ["Lang", "Welcome", "Check", "Server", "Discord", "Run", "Done"]
     static Steps => SetupWizard.Pages.Length
     static RunKeys := [["General.fishing", "Fish when nothing else is due", 1], ["Quests.enabled", "Quest board", 1]
@@ -137,7 +137,11 @@ class SetupWizard {
         Theme.Label(g, "x24 y80 w552 h20", "What should the macro do? Rare-biome alerts always run.", "body", Theme.Bg)
         for i, k in SetupWizard.RunKeys
             this._ids["run:" k[1]] := Theme.Check(g, 24, 116 + (i - 1) * 36, k[2], 0, "", "pill", 400)
-        Theme.Label(g, "x24 y310 w552 h40", "Hunting (Limited tab) and the obby stay off here: turn them on in the dashboard when you want them.", "muted", Theme.Bg)
+        ; the shipped walks were recorded with VIP's faster walking; without it
+        ; they stop short of the fishing spot (tester 2026-11-24). Asked here
+        ; because General.vip defaults to 1 and nobody finds it in Settings.
+        this._ids["vip"] := Theme.Check(g, 24, 116 + SetupWizard.RunKeys.Length * 36 + 6, "I own the VIP gamepass in Sol's RNG (faster walking)", 0, "", "pill", 520)
+        Theme.Label(g, "x24 y342 w552 h44", "Hunting (Limited tab) and the obby stay off here: turn them on in the dashboard when you want them.", "muted", Theme.Bg)
     }
 
     _PageDone(g) {
@@ -180,6 +184,9 @@ class SetupWizard {
             case "Run":
                 for k in SetupWizard.RunKeys
                     this._ids["run:" k[1]].Value := this.cfg.Get(k[1], k[3]) ? 1 : 0
+                ; first setup: unticked, so it is a question; run again from
+                ; Help it shows the saved choice
+                this._ids["vip"].Value := (this.cfg.Get("UI.setupDone", 0) && this.cfg.Get("General.vip", 1)) ? 1 : 0
         }
     }
 
@@ -216,6 +223,7 @@ class SetupWizard {
             case "Run":
                 for k in SetupWizard.RunKeys
                     this.cfg.Set(k[1], this._ids["run:" k[1]].Value ? 1 : 0)
+                this.cfg.Set("General.vip", this._ids["vip"].Value ? 1 : 0)
                 this._Save()
         }
         return ""

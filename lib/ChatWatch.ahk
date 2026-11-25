@@ -54,6 +54,8 @@ class ChatWatch {
         this._orbAbsent := Map()     ; orb name -> reads in a row without it since
         this._bossPrimed := false    ; the first read only notes lines already in the chat
         this._lastPoll := ""
+        this._hoverAt := ""          ; HoverAhead: ms the mouse went over the chat ("" = not hovered ahead)
+        this._hoverPt := ""
         this._seen := Map()          ; name -> ms of last sighting
         this._absent := Map()        ; name -> reads in a row without it since
         ; startOld (the App): at Start every merchant counts as seen just
@@ -157,15 +159,52 @@ class ChatWatch {
         return found
     }
 
-    Check() {
+    _PollMs() {
         env := this._env
-        now := env.Now()
         pollSec := ChatWatch.DefaultPollSec
         if IsObject(env.cfg)
             pollSec := env.cfg.Get("merchant.chatPollSec", ChatWatch.DefaultPollSec)
         if (!IsNumber(pollSec) || pollSec < 1)
             pollSec := ChatWatch.DefaultPollSec
-        if (this._lastPoll !== "" && now - this._lastPoll < pollSec * 1000)
+        return pollSec * 1000
+    }
+
+    _Due(now) => (this._lastPoll == "" || now - this._lastPoll >= this._PollMs())
+
+    ; HoverAhead(): the App, a moment before Check (fishing came back for
+    ; the chat): the mouse goes over the chat now, so Check waits only what
+    ; is left of merchant.chatHoverMs (the App's tidy reads fill the rest).
+    ; Only when a read is due; never in idle mode (NoHover).
+    HoverAhead() {
+        env := this._env
+        if (ChatWatch.NoHover || !this._Due(env.Now()))
+            return false
+        rect := env.cal.Rect("chat_rect")
+        if !IsObject(rect)
+            return false
+        c := TaskEnv.Center(rect)
+        env.io.MoveTo(c[1], c[2])                   ; hover only: no click, no typing
+        this._hoverAt := env.Now(), this._hoverPt := c
+        return true
+    }
+
+    ; The mouse still on the chat since HoverAhead (io.MousePos; an io
+    ; without it: not known, so no)
+    _StillHovered(c) {
+        io := this._env.io
+        if (this._hoverAt == "" || !HasMethod(io, "MousePos") || !IsObject(this._hoverPt))
+            return false
+        if (this._hoverPt[1] != c[1] || this._hoverPt[2] != c[2])
+            return false
+        p := ""
+        try p := io.MousePos()
+        return IsObject(p) && Abs(p.x - c[1]) <= 3 && Abs(p.y - c[2]) <= 3
+    }
+
+    Check() {
+        env := this._env
+        now := env.Now()
+        if !this._Due(now)
             return []
         this._lastPoll := now
 
@@ -176,7 +215,6 @@ class ChatWatch {
         ; read as it is (its text stays, only its dark background fades)
         if !ChatWatch.NoHover {
             c := TaskEnv.Center(rect)
-            env.io.MoveTo(c[1], c[2])               ; hover only: no click, no typing
             ; Faded chat gets its dark background back < 150 ms after a hover
             ; (recon 2026-10-25); OCR over the bright sky degrades without it.
             hoverMs := ChatWatch.DefaultHoverMs
@@ -184,7 +222,14 @@ class ChatWatch {
                 hoverMs := env.cfg.Get("merchant.chatHoverMs", ChatWatch.DefaultHoverMs)
             if (!IsInteger(hoverMs) || hoverMs < 0)
                 hoverMs := ChatWatch.DefaultHoverMs
-            env.io.Wait(Integer(hoverMs))
+            left := Integer(hoverMs)
+            if this._StillHovered(c)                 ; HoverAhead: only the rest of the wait
+                left := Max(0, left - (now - this._hoverAt))
+            else
+                env.io.MoveTo(c[1], c[2])           ; hover only: no click, no typing
+            this._hoverAt := ""
+            if (left > 0)
+                env.io.Wait(left)
         }
         text := (env.ocrFn)(rect.x, rect.y, rect.w, rect.h)
         if (text == "")

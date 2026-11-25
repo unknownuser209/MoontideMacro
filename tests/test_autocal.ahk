@@ -808,6 +808,25 @@ Test_AutoCal_SelectorPromptReadInItsOwnColour() {
         try FileDelete(p)
 }
 
+; live 2026-11-24 00:26 (selector_list_unstable_fishing: the macro's own
+; screenshot, the rest blacked out): Abyss Curse Drive's row was clicked
+; (its brackets show) but the prompt never came up, the bar read CONNECTION
+; UNSTABLE. The list's rows were taken for the prompt and the log said it
+; named Unknown Void Drive. The rows are no prompt: nothing named, not up,
+; nothing confirmed or cancelled.
+Test_AutoCal_SelectorListIsNoPrompt() {
+    logs := []
+    t := AcSelTask(AcPath("selector_list_unstable_fishing"), logs)
+    AssertEq(t._SelectorUp(), true, "the list is up")
+    v := t._ReadPrompt("Abyss Curse Drive", SchedCtx())
+    AssertEq(v.state, "unread", "no Drive named by a prompt (read: '" BiomeItemsTask._Brief(v.pt) "')")
+    AssertEq(v.up, false, "the prompt is not up")
+    v2 := AcSelTask(AcPath("selector_list_unstable_fishing"), logs)._ReadPrompt("Unknown Void Drive", SchedCtx())
+    AssertTrue(v2.state != "ours", "its rows never confirm another Drive either (" v2.state ")")
+    for p in [A_Temp "\vesper_bi_prompt_test.json", A_Temp "\vesper_bi_prompt_test.json.tmp"]
+        try FileDelete(p)
+}
+
 AcFileOcr(path) =>(x, y, w, h, scale := 1) => Ocr.ReadFile(path, x, y, w, h, scale)
 AcFileLines(path) => (x, y, w, h, scale := 1) => Ocr.LinesFile(path, x, y, w, h, scale)
 

@@ -56,6 +56,7 @@
 #Include test_memorymatch.ahk
 #Include test_ghost.ahk
 #Include test_screens.ahk
+#Include test_obby_frames.ahk
 #Include test_orbbeacon.ahk
 #Include test_sinister.ahk
 #Include test_chatguard.ahk
@@ -125,3 +126,4 @@ Out(line) {
 #Include test_stuckui.ahk
 #Include test_autocal.ahk
 #Include test_caltest.ahk
+#Include test_transitions.ahk

@@ -46,6 +46,8 @@ class FishingTask {
     name := "fishing"
     priority := 99
     _cardGone := false          ; the last catch card was seen closing (no leftover check before the next cast)
+    _yieldClean := false        ; YieldedClean: the last run returned before a cast, its last card seen closing
+    _cardSettled := false       ; Leftovers(true): no catch card after a task that walked off; none can come
 
     __New(cfg, state, deps := "") {
         this.cfg := cfg
@@ -64,6 +66,21 @@ class FishingTask {
     Reset() {
         this._pause.Reset()
         this._lastReel := ""
+        this._yieldClean := false           ; the player had the game between sessions
+        this._cardSettled := false
+    }
+
+    ; The last run returned between catches (chat check, sell due, a
+    ; preempt at the top of the loop) before casting again, with its last
+    ; catch card seen closing: no line is out and no catch card can come up.
+    ; The App reads no catch card in the tidy then, and fishing started
+    ; again right after it needs no shift lock probe (the card's X click
+    ; landed) and no leftover card read before its first cast.
+    YieldedClean() => this._yieldClean
+
+    ; The loop's top (no line out): clean when the last card was seen closing
+    _Yield() {
+        this._yieldClean := this._cardGone
     }
 
     ; ---- off 2560x1440 ---------------------------------------------------
@@ -201,6 +218,17 @@ class FishingTask {
         return v
     }
 
+    ; Short hops toward the fishing spot when its panel is missing right after
+    ; Sell's walk back (state.backHops, SellTask.BackHops). The shipped walks
+    ; were recorded with the VIP gamepass's faster walking; a tester without
+    ; VIP (and "VIP gamepass routes" on, the default) stopped ~0.9 s short of
+    ; the spot every walk back and re-walked until the stuck pause
+    ; (2026-11-24). The walk back ends holding a + w; non-VIP needs ~25% more
+    ; of each (a 926 ms, w 648 ms): 3 hops of a 320 / w 220 ms cover it.
+    static HopSteps := [["a", "down", 100], ["w", "down", 220], ["a", "up", 0], ["w", "up", 150]]
+    static VipHint := "the walk back stopped short of the fishing spot. If you don't own the VIP gamepass in Sol's RNG,"
+        . " untick 'VIP gamepass routes' (Settings page) so the walks fit your walking speed"
+
     ; Extra wait before deciding "no fishing panel" (it can come back late
     ; after a catch).
     static PanelRecheckMs := 1500
@@ -263,20 +291,31 @@ class FishingTask {
         d := this.deps
         if (ctx.ShouldStop() || this._SellDue())
             return
-        if !FishLogic.FocusOrWait(d, ctx, "fishing")
+        if !FishLogic.FocusOrWait(d, ctx, "fishing") {
+            this._yieldClean := false           ; Roblox was not in front: the next run checks it all again
             return
-        this._cardGone := false             ; a new run: look for a leftover card once
+        }
+        ; a new run: look for a leftover card once, unless the last run
+        ; returned clean (its card seen closing, nothing cast since) or a tidy
+        ; after a walk found none (Leftovers(true))
+        this._cardGone := this._yieldClean || this._cardSettled
+        this._yieldClean := false
+        this._cardSettled := false
         caught := 0
         Loop {
-            if (ctx.ShouldStop() || this._SellDue())
+            if (ctx.ShouldStop() || this._SellDue()) {
+                this._Yield()
                 return
-            if (caught > 0 && this._ChatDue())
+            }
+            if (caught > 0 && this._ChatDue()) {
+                this._Yield()
                 return                                      ; app reads the chat, then fishing restarts
+            }
             r := this.CatchOnce(ctx)
             if (r = "error")
                 d.io.Wait(FishLogic.FocusRetryMs, ctx)     ; no hot respin
-            if (r = "nobite")
-                continue                                    ; recast (2nd in a row is "repath")
+            if (r = "nobite" || r = "hopped")
+                continue                                    ; recast (2nd nobite in a row is "repath")
             if (r != "ok")
                 return
             caught++
@@ -287,7 +326,8 @@ class FishingTask {
     _ChatDue() => this.state.HasProp("chatDue") && this.state.chatDue
 
     ; -> "ok" | "stopped" | "repath" | "nobite" (no reel bar, nothing clicked)
-    ;    | "error" (bad strip capture)
+    ;    | "error" (bad strip capture) | "hopped" (no panel after the walk
+    ;    back, hopped forward onto the spot: cast again)
     CatchOnce(ctx) {
         fc := this._Fc()
         io := this.deps.io
@@ -343,6 +383,13 @@ class FishingTask {
                         return "stopped"
                     panel := fb ? "panel" : this._PanelState()
                 }
+            }
+            if (panel = "") {                       ; stopped short after the walk back
+                hp := this._HopToSpot(ctx)
+                if (hp < 0)
+                    return "stopped"
+                if (hp > 0)
+                    return "hopped"
             }
             if (panel = "") {
                 shot := HasMethod(io, "Shot") ? io.Shot() : ""
@@ -444,6 +491,7 @@ class FishingTask {
         }
         this._PauseCheck(res = "failed")
         this.state.repathStreak := 0       ; fishing works: re-walks are not stuck
+        this.state.backHops := 0           ; at the spot: no hops for a later lost panel
         this.state.repathRejoin := false   ; and a later stuck streak may rejoin again (SellTask)
         tEnd := now.Call()
         this.deps.log.Call(Format("fishing: catch {:.1f} s (cast {:.1f}, bite wait {:.1f}, reel {:.1f}, card {:.1f})"
@@ -537,16 +585,28 @@ class FishingTask {
     ; The App's between-tasks check (Tidy): the catch card, read and closed
     ; by its X the way a catch closes it. Without io.Ocr: nothing (no blind
     ; click on a card that may not be there).
-    Leftovers() {
+    ; settle (App: the task before this tidy walked off, or was the sell
+    ; trip): a preempted cast's "Fishing Failed" card shows once the player
+    ; walks off (live 2026-11-10), so a card not up now never comes; no more
+    ; reads of it until fishing runs again. After a clean return
+    ; (YieldedClean) there is no card to read at all.
+    Leftovers(settle := false) {
         if !HasMethod(this.deps.io, "Ocr")
             return []
-        up := () => FishingTask.CardLabel(this._CardKind(this._CardText()))
+        up := () => (this._yieldClean || this._cardSettled) ? "" : this._CardUpLabel(settle)
         close := (label, ctx) => (r := this._CloseCard(ctx)) < 0 ? -1 : r ? 1 : 2
         ; the frozen card over a raised panel blocks every task (live 06:11:
         ; the Merchant Teleporter search found nothing with it up)
         rUp := () => this._RaisedUp() ? "frozen Fish Caught card" : ""
         rClose := (label, ctx) => (r := this._CloseRaisedCard(ctx)) < 0 ? -1 : r ? 1 : 2
         return [{up: up, close: close}, {up: rUp, close: rClose}]
+    }
+
+    _CardUpLabel(settle) {
+        label := FishingTask.CardLabel(this._CardKind(this._CardText()))
+        if (settle && label = "")
+            this._cardSettled := true
+        return label
     }
 
     static CardLabel(kind) => kind = "failed" ? "Fishing Failed card" : kind = "caught" ? "Fish Caught card" : ""
@@ -1210,6 +1270,41 @@ class FishingTask {
         this.deps.log.Call("fishing: " this._nonBites " false bites in a row - re-pathing")
         this._ForceSell()
         return "repath"
+    }
+
+    ; No panel right after Sell's walk back: hop forward (HopSteps) up to
+    ; state.backHops times, looking for the panel after each.
+    ; -> 1 at the spot | 0 no hops left / still no panel | -1 stopped
+    _HopToSpot(ctx) {
+        st := this.state
+        left := st.HasProp("backHops") ? st.backHops : 0
+        if (left <= 0)
+            return 0
+        io := this.deps.io
+        Loop left {
+            st.backHops := left - A_Index
+            this.deps.log.Call("fishing: no fishing panel after the walk back - stepping forward (" A_Index "/" left ")")
+            if !Input.PlayRoute(FishingTask.HopSteps, ctx, io)
+                return -1
+            fb := this._WaitFishButton(ctx)
+            if (fb < 0)
+                return -1
+            if (fb > 0 || this._PanelState() != "") {
+                st.backHops := 0
+                this._HintVip()
+                return 1
+            }
+        }
+        return 0
+    }
+
+    ; Once per session: the walk fell short, likely VIP routes without VIP.
+    _HintVip() {
+        if this.HasOwnProp("_vipHinted")
+            return
+        this._vipHinted := true
+        vip := IsObject(this.cfg) && HasMethod(this.cfg, "Get") ? this.cfg.Get("General.vip", 1) : 1
+        this.deps.log.Call("fishing: " (vip ? FishingTask.VipHint : "the walk back stopped short of the fishing spot (hopped forward onto it)"))
     }
 
     ; Make Sell due now: its reset + walk + return re-paths the character.
