@@ -31,3 +31,8 @@ video/
 data/update_skip.txt
 data/aura_hints.json
 data/cal_health.json
+
+# dev-only PC lights helper: built locally (csc), SDK dll copied in
+dev/lights/*.exe
+dev/lights/*.dll
+dev/lights/*.flag

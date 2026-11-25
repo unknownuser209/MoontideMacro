@@ -102,7 +102,30 @@ class Auras {
 
     static Key(name) {
         s := Trim(String(name), " `t`r`n`"'")
-        return StrLower(RegExReplace(s, "[\s!-/:-@\[-``{-~]+", ""))
+        s := StrLower(RegExReplace(s, "[\s!-/:-@\[-``{-~]+", ""))
+        return RegExMatch(s, "[^\x00-\x7F]") ? Auras._Fold(s) : s
+    }
+
+    ; Accents dropped and Greek letters spelled in Latin (lower case in):
+    ; the game's roll event writes "BOUNDED : AICHMÁLΩTOS", its Equipped
+    ; line "BOUNDED_AICHMALOTOS" (live 2026-11-24: an unknown aura, no clip).
+    ; Other characters (★, Japanese) stay as they are.
+    static _Fold(s) {
+        static greek := Map("α", "a", "β", "b", "γ", "g", "δ", "d", "ε", "e", "ζ", "z", "η", "e", "θ", "th"
+            , "ι", "i", "κ", "k", "λ", "l", "μ", "m", "ν", "n", "ξ", "x", "ο", "o", "π", "p", "ρ", "r"
+            , "σ", "s", "ς", "s", "τ", "t", "υ", "y", "φ", "ph", "χ", "ch", "ψ", "ps", "ω", "o")
+        n := DllCall("NormalizeString", "Int", 2, "Str", s, "Int", -1, "Ptr", 0, "Int", 0, "Int")
+        if (n > 0) {
+            buf := Buffer(n * 2 + 2, 0)
+            got := DllCall("NormalizeString", "Int", 2, "Str", s, "Int", -1, "Ptr", buf, "Int", n, "Int")
+            if (got > 0)
+                s := StrGet(buf, got)
+        }
+        s := RegExReplace(s, "[\x{0300}-\x{036F}]", "")
+        out := ""
+        Loop Parse, s
+            out .= greek.Has(A_LoopField) ? greek[A_LoopField] : A_LoopField
+        return out
     }
 
     static List(cfg) {

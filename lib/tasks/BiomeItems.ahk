@@ -196,6 +196,7 @@ class BiomeItemsTask {
     _selRow1 := ""
     _selByName := false              ; _PickDrive clicked a row that read as the Drive (not by its place)
     _selAuto := ""                   ; the Drive list's rect found on screen (_FindSelector)
+    _scanPrompt := ""                ; the prompt's words the last _ScanRows read over the list ("" = none)
     _closeTry := ""
     _confirmAt := ""                 ; env.Now() of the last Selector Confirm click (_TidySelector)
 
@@ -846,17 +847,25 @@ class BiomeItemsTask {
 
     ; Reads selector_list_rect in horizontal strips (the window bobs, so
     ; places are read, not remembered). -> Map(Drive index -> row middle y)
-    ; for every Drive whose row read, or "" when stopped.
+    ; for every Drive whose row read, or "" when stopped. A strip showing the
+    ; prompt's words is no row (the prompt hides the rows; its "[ Drive ]"
+    ; would pass for one): its text is kept in this._scanPrompt.
     _ScanRows(r, ctx) {
         env := this._env
         sh := Max(24, r.h // 9)                 ; about one row
         step := Max(8, sh // 3)
         hits := Map()
+        this._scanPrompt := ""
         y := r.y
         while (y + sh <= r.y + r.h) {
             if ctx.ShouldStop()
                 return ""
             t := (env.ocrFn)(r.x, y, r.w, sh)
+            if RegExMatch(t, BiomeItemsTask.PromptRe) {
+                this._scanPrompt .= (this._scanPrompt = "" ? "" : " ") Trim(RegExReplace(t, "\s+", " "))
+                y += step
+                continue
+            }
             for d in BiomeItemsTask.Drives
                 if BiomeItemsTask.RowIs(t, A_Index) {
                     if !hits.Has(A_Index)
@@ -877,14 +886,53 @@ class BiomeItemsTask {
     }
 
     ; The first row's middle y from the rows read (each row put back by its
-    ; place in the fixed order). "" when no row read.
+    ; place in the fixed order; rows off the list's spacing left out, see
+    ; FitRows). "" when no row read or the rows disagree.
     static Row1(rows, r) {
-        if (!IsObject(rows) || rows.Count = 0)
-            return ""
+        f := BiomeItemsTask.FitRows(rows, r)
+        return f.ok ? f.row1 : ""
+    }
+
+    ; The rows read checked against each other: each row gives the first
+    ; row's y (its y less its place times the pitch); the y most rows give
+    ; (within RowFitTol of a pitch) wins, the rows off it are left out. Usable
+    ; (ok) with one row, or with two or more that agree and outnumber the
+    ; rows left out. A row read where another Drive's is (a strip over two
+    ; rows, a stray word) or a mix of reads from before and after the list
+    ; moved do not agree. -> {ok, row1, keep: Map, drop: Map}
+    static RowFitTol := 0.35
+    static FitRows(rows, r) {
+        keep := Map(), drop := Map()
+        if (!IsObject(rows) || rows.Count = 0 || !IsObject(r))
+            return {ok: false, row1: "", keep: keep, drop: drop}
+        p := r.h * BiomeItemsTask.Geo.pitch, tol := BiomeItemsTask.RowFitTol * p
+        best := "", bn := 0
+        for i, y in rows {
+            c := y - (i - 1) * p, n := 0
+            for j, y2 in rows
+                n += (Abs(y2 - (j - 1) * p - c) <= tol) ? 1 : 0
+            if (n > bn)
+                bn := n, best := c
+        }
         sum := 0
-        for i, y in rows
-            sum += y - (i - 1) * r.h * BiomeItemsTask.Geo.pitch
-        return Round(sum / rows.Count)
+        for i, y in rows {
+            if (Abs(y - (i - 1) * p - best) <= tol)
+                keep[i] := y, sum += y - (i - 1) * p
+            else
+                drop[i] := y
+        }
+        ok := rows.Count = 1 || (keep.Count >= 2 && keep.Count > drop.Count)
+        return {ok: ok, row1: Round(sum / keep.Count), keep: keep, drop: drop}
+    }
+
+    ; "1@538 3@635" (Drive index @ row middle y), top to bottom
+    static RowsBrief(rows) {
+        if (!IsObject(rows) || rows.Count = 0)
+            return "none"
+        s := ""
+        for i, y in rows                       ; a Map lists its keys in order
+            s .= (s = "" ? "" : " ") i "@" y
+        return s
     }
 
     ; The Drive list's rect: found on screen this run (_FindSelector), else
@@ -949,7 +997,18 @@ class BiomeItemsTask {
     ; order from the rows that did. Not in view: scroll the list down, try
     ; again. The prompt it opens is checked before Confirm. Sets
     ; this._selRow1 (the first row's y at the click).
-    ; -> 1 clicked, 0 not found, -1 stopped.
+    ;
+    ; A click by place is only made on rows that agree (FitRows: a stray
+    ; Drive word or a strip over two rows is left out; rows that do not fit
+    ; the list's spacing at all: read again), never while the prompt is up
+    ; over the list (its "[ Drive ]" is no row), never on a place that reads
+    ; as another Drive, and only when a second read of the rows puts the list
+    ; at the same place (live 2026-11-25 09:27: the click by place opened
+    ; Angelic Hymn Drive's prompt, two rows below Abyss Curse: the rows it
+    ; was worked out from were not where the list was at the click). The log
+    ; line carries the rows read ("rows read: 1@538 3@635").
+    ; -> 1 clicked, 0 not found / refused, -1 stopped.
+    static PickScans := 4
     _PickDrive(drive, ctx) {
         env := this._env
         ti := BiomeItemsTask.DriveIndex(drive)
@@ -957,28 +1016,89 @@ class BiomeItemsTask {
         this._selRow1 := "", this._selByName := false
         if (!ti || !IsObject(r))
             return 0
-        Loop 2 {
+        p := r.h * BiomeItemsTask.Geo.pitch
+        sh := Max(24, r.h // 9)
+        scrolled := false, prev := "", why := "", rows := ""
+        Loop BiomeItemsTask.PickScans {
             rows := this._ScanRows(r, ctx)
             if !IsObject(rows)
                 return -1
-            row1 := BiomeItemsTask.Row1(rows, r)
-            cy := rows.Has(ti) ? rows[ti] : (row1 = "" ? "" : Round(row1 + (ti - 1) * r.h * BiomeItemsTask.Geo.pitch))
-            if (cy != "" && cy >= r.y && cy <= r.y + r.h) {
-                if env.BuyPrompt("biome items")
-                    return 0
-                if !rows.Has(ti)
-                    env.Log("biome items: " drive "'s row did not read; clicked by its place in the list")
-                this._selRow1 := row1, this._selByName := rows.Has(ti)
-                env.Click({x: r.x + r.w // 2, y: cy})
-                return 1
+            if (this._scanPrompt != "") {
+                env.Log("biome items: the Selector's prompt is up over the list (read: '" BiomeItemsTask._Brief(this._scanPrompt)
+                    . "'; rows read: " BiomeItemsTask.RowsBrief(rows) "): no row clicked")
+                return 0
             }
-            if (A_Index = 1) {                  ; below the fold: scroll the list
+            f := BiomeItemsTask.FitRows(rows, r)
+            if (rows.Count && !f.ok) {
+                why := "the rows read do not fit the list's spacing (rows read: " BiomeItemsTask.RowsBrief(rows) ")"
+                prev := ""
+                if !env.Wait(BiomeItemsTask.SelfPollMs, ctx)
+                    return -1
+                continue
+            }
+            cy := f.keep.Has(ti) ? rows[ti] : (f.ok ? Round(f.row1 + (ti - 1) * p) : "")
+            if (cy = "" || cy < r.y || cy > r.y + r.h) {
+                if scrolled
+                    break
+                scrolled := true, prev := ""        ; below the fold: scroll the list
                 env.io.MoveTo(r.x + r.w // 2, r.y + r.h // 2)
                 Input.Wheel("down", 5, env.io)
                 if !env.Wait(BiomeItemsTask.PickMs, ctx)
                     return -1
+                continue
             }
+            if f.drop.Count
+                env.Log("biome items: Selector rows off the list's spacing left out: " BiomeItemsTask.RowsBrief(f.drop)
+                    . " (rows read: " BiomeItemsTask.RowsBrief(rows) ")")
+            byName := f.keep.Has(ti)
+            if !byName {
+                ; not read in the scan: the strip centred on its place, 1x
+                ; then 2x (live 2026-11-23..25: the scan's strips sat off the
+                ; row, 'Ab ss Curs-'; centred it read 'Ab ss Curse')
+                other := 0
+                for sc in [1, 2] {
+                    t := (env.ocrFn)(r.x, cy - sh // 2, r.w, sh, sc)
+                    if (byName := BiomeItemsTask.RowIs(t, ti))
+                        break
+                    other := other || BiomeItemsTask.OtherDrive(t, ti)
+                }
+                if byName {
+                    env.Log("biome items: " drive "'s row read at its place in the list")
+                } else if other {
+                    why := drive "'s place (y " cy ") reads as " BiomeItemsTask.Drives[other] " (rows read: " BiomeItemsTask.RowsBrief(rows) ")"
+                    prev := ""
+                    continue
+                } else if (!IsObject(prev) || Abs(prev.row1 - f.row1) > p / 2) {
+                    ; by place only: the rows read once more must put the
+                    ; list at the same place (it scrolled or slid since)
+                    if IsObject(prev)
+                        why := "the list moved between two reads of its rows (first row at y " prev.row1 ", then " f.row1
+                            . "; rows read: " prev.rows ", then " BiomeItemsTask.RowsBrief(rows) ")"
+                    prev := {row1: f.row1, rows: BiomeItemsTask.RowsBrief(rows)}
+                    continue
+                }
+            }
+            if env.BuyPrompt("biome items")
+                return 0
+            if !byName
+                env.Log("biome items: " drive "'s row did not read; clicked by its place in the list at y " cy
+                    . " (rows read: " BiomeItemsTask.RowsBrief(rows) (IsObject(prev) ? "; before: " prev.rows : "") ")")
+            this._selRow1 := f.row1, this._selByName := byName
+            env.Click({x: r.x + r.w // 2, y: cy})
+            return 1
         }
+        if (why != "")
+            env.Log("biome items: " drive " not clicked: " why)
+        else
+            env.Log("biome items: " drive "'s row not placed (rows read: " BiomeItemsTask.RowsBrief(rows) ")")
+        return 0
+    }
+
+    ; Another Drive than i (the first one) whose word reads in text, 0 = none
+    static OtherDrive(text, i) {
+        for d in BiomeItemsTask.Drives
+            if (A_Index != i && BiomeItemsTask.RowIs(text, A_Index))
+                return A_Index
         return 0
     }
 

@@ -96,6 +96,29 @@ Test_Screens_JesterShop() {
     AssertTrue(RegExMatch(ScrRead("jester_purchased", L.notice), "i)purch[ao]sed"), "purchased notice")
 }
 
+; 2026-11-22 .. 11-24 live: 14 Purchase clicks with no "You purchased"
+; notice, 7 of them Jester's Oblivion Potion (never once bought: it costs
+; 5 Void Coins, not Points) and Mari's 500,000-coin Void Coin / big Mixed
+; Potion buys. The game sold nothing; the log could not say why. The
+; Purchase button's own text ("Purchase for (300 Points)") reads on the real
+; frames, so the log names the price; the real notice names the item, so a
+; notice left over from the item before is never taken for this one.
+Test_Screens_MerchantPriceAndNoticeName() {
+    L := MerchantTask.Layout
+    for f, want in Map("jester_shop", "15 Points", "jester_purchased", "300 Points") {
+        p := ScrRead(f, L.price)
+        AssertEq(MerchantTask.Price(p), want, f ": the Purchase button's price ('" p "')")
+        AssertEq(MerchantTask.Currency(MerchantTask.Price(p)), "Points", f ": paid in Points")
+    }
+    n := ScrRead("jester_purchased", L.notice)
+    AssertTrue(MerchantTask.Purchased(n), "the real notice is a purchase ('" n "')")
+    AssertTrue(MerchantTask.NoticeNames(n, "Strange Potion I"), "the real notice names Strange Potion I")
+    for other in ["Speed Potion", "Lucky Potion", "Heavenly Potion", "Oblivion Potion", "Rune of Everything"]
+        AssertTrue(!MerchantTask.NoticeNames(n, other), "the real notice does not name " other)
+    for f in ["jester_shop", "world_day", "mari_day_buttons"]
+        AssertTrue(!MerchantTask.Purchased(ScrRead(f, L.notice)), f ": no purchase notice")
+}
+
 Test_Screens_FishingShopTitle() {
     ; the craft buy step must see the shop the sell left open (else E brings
     ; Captain Flarg's dialog over it), in Hell's red light too
@@ -520,6 +543,22 @@ Test_Screens_FishingRaisedFrozenCard() {
         AssertTrue(RegExMatch(ScrRead(f, r, 2), FishingTask.RaisedRe) > 0, f ": the raised panel's Fish button reads")
     for f in ["fish_status_ready_eden", "fish_status_waiting_eden", "fish_status_anyminute_eden", "world_day", "fishshop_hell_sell", "inventory_day"]
         AssertEq(RegExMatch(ScrRead(f, r, 2), FishingTask.RaisedRe), 0, f ": no raised panel")
+}
+
+; live 2026-11-24 09:40 (SNOWY): a preempted cast's "Fishing Failed" card
+; sat over the fishing spot; on the snow its red title does not read at all
+; and the body reads only "The fis" (scale 1, 2 and 3 alike), so neither
+; failWords, FailRe nor CardRe matched: the card counted as not there, the
+; next cast found no panel and re-pathed (a whole sell trip). The macro's
+; own screenshot, cropped (fish_failed_card_snowy_x960_y400.png = the
+; crop's top left on the 2560x1440 screen).
+Test_Screens_FishingFailedCardOnSnowReads() {
+    p := A_ScriptDir "\screens\fish_failed_card_snowy_x960_y400.png"
+    AssertTrue(FileExist(p), "frame exists")
+    c := Json.Parse(FileRead(A_ScriptDir "\..\data\coords.json", "UTF-8"))["fishing"]["result"]
+    r := c["rect"]
+    t := Ocr.ReadFile(p, r[1] - 960, r[2] - 400, r[3], r[4], FishingTask.CardScale)
+    AssertEq(FishingTask.CardKindOf(t, c["failWords"]), "failed", "the snowy Fishing Failed card reads as a miss ('" t "')")
 }
 
 ; ---- fishing at 1920x1080 (live 2026-11-10) ------------------------------

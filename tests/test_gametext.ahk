@@ -171,7 +171,9 @@ Test_GameText_MerchantTitleAgainAt2xAndBuyLogged() {
         , cal: QmMerchCal(), log: (m) => logs3.Push(m), ocr: (x, y, w, h, scale := 1) => shop3.Ocr(x, y, w, h, scale)})
     t3.Notify("Mari")
     t3.Run(SchedCtx())
-    AssertTrue(GtLogHas(logs3, "merchant: Purchase clicked for 1 Lucky Potion at Mari (no 'You purchased' notice seen)"), "unconfirmed click logged")
+    AssertTrue(GtLogHas(logs3, "merchant: Purchase clicked for 1 Lucky Potion at Mari (no 'You purchased' notice seen"), "unconfirmed click logged")
+    AssertTrue(GtLogHas(logs3, "the button reads 'Purchase for (5 Void Coins)'"), "the price is in the log")
+    AssertTrue(GtLogHas(logs3, "most likely not bought: not enough Void Coins?"), "the likely cause is in the log")
     ; an item not found: the tab reads are logged
     io4 := QmIO(), logs4 := []
     shop4 := QmShop(io4, ["Mixed Potion", "Lucky Potion", "", "", ""])
@@ -180,6 +182,69 @@ Test_GameText_MerchantTitleAgainAt2xAndBuyLogged() {
     t4.Notify("Mari")
     t4.Run(SchedCtx())
     AssertTrue(GtLogHas(logs4, "Void Coin is not in Mari's shop this visit (tabs read: Mixed Potion | Lucky Potion | "), "tab reads logged")
+}
+
+; The "You purchased" notice names the item (the game font's misreads
+; folded); never another item, another tier or a bigger size
+Test_GameText_MerchantNoticeNames() {
+    for p in [["You purchosed 20 Gtronge Votion Is", "Strange Potion I"], ["You purchased 1 Gear B", "gear b"]
+        , ["You purchased 10 LucI<y Potions", "Lucky Potion"], ["You purchased 1 Oblivion Potion", "oblivion potion"]
+        , ["You purchased 25 Mixed Potions", "mixed potion"], ["You purchased 1 Rune of Everythino", "Rune of Everything"]
+        , ["You purchased 15 Speed Potion Ls", "Speed Potion L"], ["You purchased 1 Void Coin", "Void Coin"]]
+        AssertTrue(MerchantTask.NoticeNames(p[1], p[2]), "'" p[1] "' names " p[2])
+    for p in [["You purchased 1 Gear B", "gear a"], ["You purchased 10 Lucky Potions", "Lucky Potion L"]
+        , ["You purchased 10 Lucky Potions", "Lucky Potion XL"], ["You purchased 15 Speed Potion Ls", "Speed Potion"]
+        , ["You purchased 20 Strange Potion Is", "Strange Potion II"], ["You purchased 20 Strange Potion IIs", "Strange Potion I"]
+        , ["You purchased 1 Lucky Potion XL", "Void Coin"], ["", "Void Coin"], ["Lucky Potion", "Lucky Potion"]]
+        AssertTrue(!MerchantTask.NoticeNames(p[1], p[2]), "'" p[1] "' does not name " p[2])
+    AssertEq(MerchantTask.Price("Purchose for (5 Void Coins)"), "5 Void Coins", "price")
+    AssertEq(MerchantTask.Price("Purchase for (500,000 Coins)"), "500,000 Coins", "price with a comma")
+    AssertEq(MerchantTask.Price(""), "", "no price")
+    AssertEq(MerchantTask.Currency("5 Void Coins"), "Void Coins", "currency")
+    AssertEq(MerchantTask.Currency("300 Points"), "Points", "currency")
+}
+
+; A notice still up from the item before is not this item's purchase: the
+; next Purchase that sold nothing is logged as such (03:14:02 Lucky Potion
+; XL "bought", 03:14:03 Void Coin "bought" one second later)
+Test_GameText_MerchantLeftOverNoticeIsNotABuy() {
+    wants := Map("Mari", [Map("name", "Lucky Potion", "qty", 10), Map("name", "Void Coin", "qty", 1)], "Jester", [])
+    io := QmIO(), logs := [], wh := QmWh()
+    shop := GtStickyShop(io, ["Lucky Potion", "Void Coin", "", "", ""], Map("Lucky Potion", true))
+    t := MerchantTask({cfg: QmCfg("", Map("merchants", wants)), io: io, webhook: wh, cal: QmMerchCal(), log: (m) => logs.Push(m)
+        , ocr: (x, y, w, h, scale := 1) => shop.Ocr(x, y, w, h, scale)})
+    t.Notify("Mari")
+    t.Run(SchedCtx())
+    AssertTrue(GtLogHas(logs, "merchant: bought 10 Lucky Potion from Mari"), "Lucky Potion bought")
+    AssertTrue(!GtLogHas(logs, "merchant: bought 1 Void Coin"), "the left-over notice is not the Void Coin's")
+    AssertTrue(GtLogHas(logs, "merchant: Purchase clicked for 1 Void Coin at Mari (no 'You purchased' notice seen"), "Void Coin unconfirmed")
+    ; the Void Coin's own notice replaces it: bought
+    io2 := QmIO(), logs2 := []
+    shop2 := GtStickyShop(io2, ["Lucky Potion", "Void Coin", "", "", ""], Map("Lucky Potion", true, "Void Coin", true))
+    t2 := MerchantTask({cfg: QmCfg("", Map("merchants", wants)), io: io2, webhook: QmWh(), cal: QmMerchCal(), log: (m) => logs2.Push(m)
+        , ocr: (x, y, w, h, scale := 1) => shop2.Ocr(x, y, w, h, scale)})
+    t2.Notify("Mari")
+    t2.Run(SchedCtx())
+    AssertTrue(GtLogHas(logs2, "merchant: bought 10 Lucky Potion from Mari"), "Lucky Potion bought")
+    AssertTrue(GtLogHas(logs2, "merchant: bought 1 Void Coin from Mari"), "Void Coin bought on its own notice")
+}
+
+; QmShop whose "You purchased" notice stays up after the click (until the
+; next purchase replaces it); `sells` = the items the game really sells
+class GtStickyShop extends QmShop {
+    __New(io, tabs, sells) {
+        super.__New(io, tabs)
+        this.sells := sells, this.shown := ""
+    }
+    Ocr(x, y, w, h, scale := 1) {
+        L := MerchantTask.Layout
+        if (x = L.notice.x && y = L.notice.y) {
+            if (this._LastMove() = this._Pt(L.buy) && this.sells.Has(this.Sel()))
+                this.shown := "You purchased " (this.Sel() = "Void Coin" ? "1 Void Coin" : "10 " this.Sel() "s")
+            return this.shown
+        }
+        return super.Ocr(x, y, w, h, scale)
+    }
 }
 
 GtLogHas(logs, s) {

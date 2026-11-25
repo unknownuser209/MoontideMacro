@@ -34,11 +34,18 @@
 ;                  2026-11-10: the chat is not read during long tasks, so
 ;                  one old "Mari has arrived" line that never left the chat
 ;                  was re-reported after every hunt: 3 empty visits in 8 min.)
+;                  And one report per merchant per ReportGapSec (15 min):
+;                  an old line that misses a few OCR reads came back as an
+;                  arrival every ~5 min (live 2026-11-24 15:06, 15:11 after a
+;                  real Jester at 15:00: the teleporter said no merchant).
 ; The time source (deps.now) and OCR function (deps.ocr) are injectable.
 ; ---------------------------------------------------------------------------
 
 class ChatWatch {
     static DedupeSec := 120
+    ; a merchant came back no sooner than 19.6 min in 3 days of live logs
+    ; (2026-11-22..24); stale lines came back 3.5..11.7 min after a report
+    static ReportGapSec := 900
     static AbsentReads := 2
     static DefaultPollSec := 5
     static DefaultHoverMs := 150
@@ -50,6 +57,9 @@ class ChatWatch {
         this._onBoss := TaskEnv.Dep(deps, "onBoss", "")      ; onBoss("s" | "p")
         this._onOrb := TaskEnv.Dep(deps, "onOrb", "")        ; onOrb("Typhoon")
         this._bossAt := Map()        ; "s" / "p" -> ms of the last report (or of the start)
+        this._bossLines := Map()     ; "s" / "p" -> boss lines the chat has shown (_CheckBoss)
+        this._bossLinesAt := Map()   ; ... ms they were last read
+        this._bossLow := Map()       ; ... reads in a row with fewer
         this._orbSeen := Map()       ; orb name -> ms of its last sighting
         this._orbAbsent := Map()     ; orb name -> reads in a row without it since
         this._bossPrimed := false    ; the first read only notes lines already in the chat
@@ -57,6 +67,7 @@ class ChatWatch {
         this._hoverAt := ""          ; HoverAhead: ms the mouse went over the chat ("" = not hovered ahead)
         this._hoverPt := ""
         this._seen := Map()          ; name -> ms of last sighting
+        this._reportAt := Map()      ; name -> ms of its last report (ReportGapSec)
         this._absent := Map()        ; name -> reads in a row without it since
         ; startOld (the App): at Start every merchant counts as seen just
         ; now, so an arrival line already in the chat is not visited until it
@@ -79,6 +90,22 @@ class ChatWatch {
     ; has no S / P right after it: no match.
     static BossRe := "i)\bs[i1l!|]n[i1l!|]st[e3]r\s*[.,:]?\s*([sp]|5(?=\s*\.))(?![a-z0-9])"
     static BossGapSec := 900          ; one report per boss per 15 min
+
+    ; -> Map "s" / "p" -> how many lines of the OCR text name that boss
+    static CountBoss(text) {
+        n := Map()
+        for line in StrSplit(String(text), "`n", "`r") {
+            seen := Map()
+            pos := 1
+            while (pos := RegExMatch(line, ChatWatch.BossRe, &m, pos)) {
+                b := (StrLower(m[1]) = "p") ? "p" : "s"
+                if !seen.Has(b)
+                    seen[b] := true, n[b] := n.Get(b, 0) + 1
+                pos += m.Len
+            }
+        }
+        return n
+    }
 
     ; -> Array of "s" / "p", one per boss named in the OCR text
     static DetectBoss(text) {
@@ -264,6 +291,11 @@ class ChatWatch {
                 }
                 continue
             }
+            if (this._reportAt.Has(name) && now - this._reportAt[name] < ChatWatch.ReportGapSec * 1000) {
+                env.Log("chat: " name "'s arrival line again " Round((now - this._reportAt[name]) / 60000, 1) " min after it was reported: not visited (one visit per " Round(ChatWatch.ReportGapSec / 60) " min)")
+                continue
+            }
+            this._reportAt[name] := now
             hits.Push(name)
             env.Log("chat: " name " detected")
             if IsObject(this._onFound)
@@ -275,9 +307,30 @@ class ChatWatch {
     ; A boss named in the chat -> onBoss, once per boss per BossGapSec. With
     ; startOld, a line already there at the first read is only noted (an old
     ; spawn is not announced at every start).
+    ; A spawn is a NEW line: more lines naming the boss than the chat has
+    ; shown. The line of an old spawn stays in a quiet chat for hours, and
+    ; with only the 15 min gap it was announced again, the boss dead and its
+    ; biome over (live 2026-11-23 00:33:39 Sinister S. in HELL, 11-24
+    ; 07:57:39 and 10:37:21 Sinister P. in SNOWY / RAINY). The lines shown
+    ; drop to fewer only after AbsentReads reads and BossGapSec without them
+    ; (an OCR miss now and then is no absence).
     _CheckBoss(text, now, first) {
         env := this._env
-        bosses := ChatWatch.DetectBoss(text)
+        counts := ChatWatch.CountBoss(text)
+        bosses := []
+        for b in ["s", "p"] {
+            c := counts.Get(b, 0), had := this._bossLines.Get(b, 0)
+            if (c > had) {
+                this._bossLines[b] := c, this._bossLinesAt[b] := now, this._bossLow[b] := 0
+                bosses.Push(b)
+            } else if (c = had) {
+                this._bossLinesAt[b] := now, this._bossLow[b] := 0
+            } else {
+                this._bossLow[b] := this._bossLow.Get(b, 0) + 1
+                if (this._bossLow[b] >= ChatWatch.AbsentReads && now - this._bossLinesAt.Get(b, 0) >= ChatWatch.BossGapSec * 1000)
+                    this._bossLines[b] := c, this._bossLinesAt[b] := now, this._bossLow[b] := 0
+            }
+        }
         for b in bosses {
             if (this._bossAt.Has(b) && now - this._bossAt[b] < ChatWatch.BossGapSec * 1000)
                 continue

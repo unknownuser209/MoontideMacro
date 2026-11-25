@@ -28,6 +28,7 @@
 #Include %A_LineFile%\..\tasks\Recovery.ahk
 #Include %A_LineFile%\..\tasks\Potions.ahk
 #Include %A_LineFile%\..\Updater.ahk
+#Include %A_LineFile%\..\ScreenDim.ahk
 #Include %A_LineFile%\..\Stats.ahk
 #Include %A_LineFile%\..\Schedule.ahk
 #Include %A_LineFile%\..\DailySummary.ahk
@@ -1837,8 +1838,63 @@ class App {
         return ""
     }
 
+    ; Dev copy only (Help > Dev tools, [Dev] dim / dimPct): every monitor
+    ; dimmed while the macro runs, undimmed when it pauses or stops. The dim
+    ; is invisible to the screen reads and recordings (ScreenDim); where
+    ; Windows cannot hide it from them nothing is dimmed. -> ScreenDim.Last
+    ; ("" when the dim does not apply here: tests, not the dev copy)
+    _dimDev := ""
+    _dimNoted := false
+    _DimSync(running) {
+        if !this._fixOn                         ; the real app only (never in tests)
+            return ""
+        if (this._dimDev = "")
+            this._dimDev := Updater.IsDevCopy(this.root) ? 1 : 0
+        if !this._dimDev
+            return ""
+        on := running && this.cfg.Get("Dev.dim", 0)
+        r := ""
+        try r := ScreenDim.Apply(on, this.cfg.Get("Dev.dimPct", 95))
+        if (r != "unsupported")
+            this._LightsSync(on && this.cfg.Get("Dev.lights", 1))
+        if (r = "unsupported" && !this._dimNoted) {
+            this._dimNoted := true
+            this.Log("Dim screens: this Windows cannot hide the dim from screen captures, so the screens stay bright (the reads would see it)")
+        }
+        return r
+    }
+
+    ; Dev copy: the PC's own lights follow the dim (dev\lights\MoontideLights.exe,
+    ; built from its .cs; not shipped). On: the flag file goes, the MSI part
+    ; runs through the scheduled task "MoontideLights" (admin: MSI's SDK
+    ; needs it, made once by hand) and the Corsair part as the macro itself
+    ; (an admin client times out on iCUE). Off: the flag file "lights_up.flag"
+    ; tells both to fade back up and hand the lights back. A closed / crashed
+    ; macro makes them fade up by themselves.
+    _lightsOn := false
+    _LightsSync(on) {
+        if (on = this._lightsOn)
+            return
+        dir := this.root "\dev\lights"
+        exe := dir "\MoontideLights.exe"
+        if !FileExist(exe)
+            return
+        this._lightsOn := on
+        flag := dir "\lights_up.flag"
+        if on {
+            try FileDelete(flag)
+            try Run('schtasks.exe /run /tn MoontideLights', , "Hide")
+            try Run('"' exe '" cue 10', dir, "Hide")
+            this.Log("PC lights: fading out")
+        } else {
+            try FileAppend("", flag)
+            this.Log("PC lights: fading back in")
+        }
+    }
+
     _Status() {
         st := !this._started ? "Stopped" : this.ctx.IsPaused() ? "Paused" : "Running"
+        this._DimSync(st = "Running")
         if (this._pauseReason != "")
             task := this._pauseReason
         else if IsObject(this._running)
@@ -3096,7 +3152,7 @@ class App {
                 if IsObject(this.dash)
                     this.dash.SetUpdate(res["version"])
             } else if (manual && IsObject(this.dash)) {
-                this.dash.SetUpdate("", st = "uptodate" ? "Up to date (v" Brand.Version ")" : "Update check failed, see Log")
+                this.dash.SetUpdate("", st = "uptodate" ? I18n.F("Up to date (v{1})", Brand.Version) : I18n.T("Update check failed, see Log"))
             }
         } catch Any as e {
             this.Log("Update check failed: " App._ErrText(e))

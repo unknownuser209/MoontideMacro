@@ -2020,7 +2020,9 @@ class Dashboard {
             ctrl.OnEvent("Change", ObjBindMethod(this, "_RefreshDot", page))
     }
 
-    _IntField(x, y, label, key, def, unit := "", lw := 170, min := "") {
+    ; min / max: a typed number outside is saved (and shown) as the nearest
+    ; end, where the code that reads the key would otherwise drop it
+    _IntField(x, y, label, key, def, unit := "", lw := 170, min := "", max := "") {
         g := this._gui
         late := this._FieldLabel(x, y, label, key, lw)
         e := Theme.Edit(g, x + lw, y, 72, 28, "", "Number")
@@ -2029,6 +2031,8 @@ class Dashboard {
         this._Bind("int", key, def, e)
         if (min != "")
             this._binds[this._binds.Length].min := min
+        if (max != "")
+            this._binds[this._binds.Length].max := max
         return e
     }
 
@@ -2126,6 +2130,8 @@ class Dashboard {
                     v := UiLogic.UInt(b.ctrl.Value, b.def)
                     if (b.HasProp("min") && v < b.min)
                         v := b.min
+                    if (b.HasProp("max") && v > b.max)
+                        v := b.max
                     b.ctrl.Value := String(v)
                     this.cfg.Set(b.key, v)
                 case "str":
@@ -2389,7 +2395,7 @@ class Dashboard {
     _AskRollback() {
         if (this._rbVer = "")
             return
-        if (MsgBox("Go back to v" this._rbVer "? The macro restarts. Your settings and data stay.", Brand.Name, "YesNo Icon? Owner" this._gui.Hwnd) != "Yes")
+        if (MsgBox(I18n.F("Go back to v{1}? The macro restarts. Your settings and data stay.", this._rbVer), Brand.Name, "YesNo Icon? Owner" this._gui.Hwnd) != "Yes")
             return
         this._Fire("rollback")
     }
@@ -2527,7 +2533,7 @@ class Dashboard {
         Theme.Label(g, "x692 y324 w304 h20", "Abandons the quest and its progress.", "muted")
         this._Panel(676, 376, 336, 232, "Daily quests")
         this._BoolField(692, 410, "Do daily quests", "DailyQuests.enabled", 0)
-        this._IntField(692, 446, "Check every", "DailyQuests.intervalMin", 30, "min", 140, 5)
+        this._IntField(692, 446, "Check every", "DailyQuests.intervalMin", 30, "min", 140, 5, 720)   ; DailyQuestsTask.IntervalMs: 5..720
         this._StrField(692, 482, "Reroll quests with", "DailyQuests.reroll", "", 148, 156)
         Theme.Label(g, "x692 y516 w304 h40", "Words, comma between (e.g. craft, fish). Free rerolls only, never Buy Reroll.", "muted")
         this._BoolField(692, 566, "Use potions for Use quests", "DailyQuests.usePotions", 0)
@@ -3249,6 +3255,16 @@ class Dashboard {
 
     ; "" or why the Webhooks page cannot be saved (the rare aura alert fields).
     _HooksCheck() {
+        ; each row's MENTION as the sender reads it (Webhook.NormalizeMention):
+        ; a name or @everyone was saved and then never pinged anyone
+        for i, r in this._rows {
+            if (i > this._hooks.Length)
+                break
+            men := Trim(r.men.Value)
+            if (men != "" && Webhook.NormalizeMention(men) = "")
+                return "webhook row " i ": the mention is a Discord user ID like 123456789012345678 or a role ID like &123456789012345678 "
+                    . "(names and @everyone do not ping; @everyone is the switch on Settings > General)"
+        }
         id := Trim(this.Ctrl("AuraAlert.userId").Value)
         if (id != "" && Webhook.NormalizeMention(id) = "")
             return "aura alert: the user ID is a number like 123456789012345678 (Discord: right-click yourself > Copy User ID)"
@@ -6422,6 +6438,11 @@ class Dashboard {
                 . "so the newest release's number is about how many people installed or updated it. One person downloading twice counts twice.")
             this._ids["dlText"] := Theme.Label(g, "x632 y184 w364 h60", "Press Refresh.", "body")
             this._ids["dlRefresh"] := Theme.Button(g, "x632 y248 w110 h28", "Refresh", (*) => this.RefreshDownloads(), "quiet")
+            ; dim screens (2026-11-25): the App dims while running (App._DimSync, ScreenDim)
+            this._Panel(616, 304, 396, 140, "Dim screens (dev)", "Dims every monitor while the macro runs, so your room stays dark. "
+                . "The macro's screen reads and recordings never see the dim.")
+            this._ids["devDim"] := this._BoolField(632, 338, "Dim my screens while it runs", "Dev.dim", 0)
+            this._ids["devDimPct"] := this._IntField(632, 376, "How dark", "Dev.dimPct", 95, "%", 170, 5)
         }
         p.onShow := ObjBindMethod(this, "_DevToolsShow")
     }
@@ -6610,7 +6631,7 @@ class Dashboard {
             try {
                 this.cfg.Save()
             } catch Any as e {
-                r := {ok: 0, n: 0, skipped: r.skipped, msg: "Not imported: " UiLogic.Scrub(e.Message, this._Secrets())}
+                r := {ok: 0, n: 0, skipped: r.skipped, msg: I18n.F("Not imported: {1}", UiLogic.Scrub(e.Message, this._Secrets()))}
             }
         }
         if r.ok {

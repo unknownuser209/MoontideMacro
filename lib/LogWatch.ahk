@@ -7,6 +7,9 @@
 ;   LogWatch.ParseMerchant(line) -> "Mari" | "Jester" | ""
 ;   LogWatch.PickLog(dir)     -> full path of newest Player log (not
 ;                                CrashHandler, not Studio), or ""
+;   LogWatch.Refresh(dir, n, skip) opens + closes the n newest-made Player
+;                                logs so a folder listing shows their real
+;                                time (Poll does it every REFRESH_MS)
 ;   lw := LogWatch(dir)       dir defaults to %LOCALAPPDATA%\Roblox\logs
 ;   lw.Poll()                 -> Array of events, each a LogWatchEvent (a Map
 ;                                with keys type/name/ts/live; ev.type etc. also work):
@@ -42,8 +45,11 @@
 ;   - Only bytes after the stored offset are read; only complete lines
 ;     (up to the last LF) are consumed. First open starts ~64 KB from the
 ;     end so the current biome is known. Offset resets when the picked file
-;     changes or shrinks. Current biome/aura persist across files, so a
-;     re-read or a new log with the same biome emits nothing.
+;     changes or shrinks; a log read before goes on from its own offset
+;     when it is the newest again (the old client's last lines after a
+;     rejoin: its old biomes are no news). Current biome/aura persist
+;     across files, so a re-read or a new log with the same biome emits
+;     nothing.
 ;   - biome/aura events fire only when the value differs from the previous
 ;     one. The very first aura "none" is not an event (start state is none).
 ;   - "In Main Menu" and "Equipped _None_" mean no aura. "In Main Menu"
@@ -102,6 +108,7 @@ class LogWatch {
     _backfilling := true             ; true until the first read completes
     _backfillTs := ""                ; ts of the last biome change seen during backfill
     _merchantSeen := Map()           ; name -> YYYYMMDDHH24MISS of last emitted event
+    _seen := Map()                   ; path -> {offset, skip, join, joinTs} of logs read before (Poll)
 
     __New(dir := "") {
         this.Dir := (dir != "") ? RTrim(dir, "\/") : EnvGet("LOCALAPPDATA") "\Roblox\logs"
@@ -242,15 +249,65 @@ class LogWatch {
 
     ; ---- tail --------------------------------------------------------------
 
+    ; Windows updates the time a folder listing (PickLog) shows for a file
+    ; only when a handle on it closes, not on each write. Roblox keeps its
+    ; log open, so only the macro's own reads refresh it: a dead log closed
+    ; a moment after the new client's log was made (a rejoin) looked newest
+    ; for good, and the running client's log was never opened again (live
+    ; 2026-11-23 15:38 .. 11-24 03:06: no biome or aura read in 11.5 h).
+    ; So every REFRESH_MS the few newest Player logs (by when they were made;
+    ; skip: the one read anyway) are opened and closed, which brings their
+    ; listing time up to date.
+    static REFRESH_MS := 5000
+    static REFRESH_LOGS := 3
+    _refreshAt := ""
+
+    static Refresh(dir, n := 3, skip := "") {
+        made := []
+        Loop Files RTrim(dir, "\/") "\*.log", "F" {
+            if (!InStr(A_LoopFileName, "_Player_") || InStr(A_LoopFileName, "CrashHandler") || A_LoopFileFullPath = skip)
+                continue
+            made.Push(A_LoopFileTimeCreated "|" A_LoopFileFullPath)
+        }
+        if (made.Length = 0)
+            return
+        s := ""
+        for m in made
+            s .= (s = "" ? "" : "`n") m
+        s := Sort(s, "R")
+        for line in StrSplit(s, "`n") {
+            if (A_Index > n)
+                break
+            try FileOpen(SubStr(line, InStr(line, "|") + 1), 0x700).Close()   ; read, all shared
+        }
+    }
+
     Poll() {
         events := []
+        now := (LogWatch.TickFn)()
+        if (this._refreshAt = "" || now - this._refreshAt >= LogWatch.REFRESH_MS) {
+            this._refreshAt := now
+            LogWatch.Refresh(this.Dir, LogWatch.REFRESH_LOGS, this.Path)
+        }
         path := LogWatch.PickLog(this.Dir)
         if (path = "")
             return events
         if (path !== this.Path) {
+            ; a log read before (the old client's, newest again for a moment
+            ; when it writes its last lines after the new client's log was
+            ; made): on from where it was left, its old lines are no news
+            ; (live 2026-11-24 13:27:47: three old biomes came again, cards too)
+            if (this.Path != "" && this.Offset >= 0)
+                this._seen[this.Path] := {offset: this.Offset, skip: this._skipFirst, join: this.CurrentJoin, joinTs: this._joinTs}
             this.Path := path
             this.Offset := -1
             this.CurrentJoin := "", this._lastReq := "", this._joinTs := "", this._tele := ""
+            if this._seen.Has(path) {
+                s := this._seen.Delete(path)
+                this.Offset := s.offset, this._skipFirst := s.skip, this.CurrentJoin := s.join, this._joinTs := s.joinTs
+            }
+            if (this._seen.Count > 16)
+                this._seen.Clear()
         }
         try {
             f := FileOpen(path, "r")

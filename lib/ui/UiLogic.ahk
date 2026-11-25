@@ -204,8 +204,10 @@ class UiLogic {
         return (s = "") ? "Stopped" : StrUpper(SubStr(s, 1, 1)) StrLower(SubStr(s, 2))
     }
 
+    ; the same rule as the sender (Webhook._UrlRe, tested): a link it would
+    ; skip (cut short, no token, a /slack or /github form) is never taken
     static IsWebhookUrl(s) {
-        return RegExMatch(Trim(String(s)), "i)^https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\S+$") ? true : false
+        return RegExMatch(Trim(String(s)), "i)^https://(?:(?:ptb|canary)\.)?(?:discord|discordapp)\.com/api/(?:v\d+/)?webhooks/\d+/[\w-]+(?:\?\S*)?$") ? true : false
     }
 
     ; ---- data helpers ------------------------------------------------------------

@@ -9,6 +9,45 @@
 
 I18nRoot() => RegExReplace(A_LineFile, "\\tests\\[^\\]+$", "")
 
+; Bug hunt 2026-11-25: the Profiles page's export / import status, Home's
+; "Up to date" / "Update check failed" note and the Go back question were
+; English in every language (built outside lib\ui or from variables, so the
+; coverage tests never saw them).
+Test_I18n_ShareAndUpdateStatusTranslated() {
+    keys := ["Exported {1} settings to exports\{2}", "Not exported: {1}", "Not imported: {1}"
+        , "Not imported: the file could not be read", "Nothing imported: no settings found in that file"
+        , "Imported {1} setting", "Imported {1} settings", "({1} skipped)", "Turned on: {1}"
+        , "Up to date (v{1})", "Update check failed, see Log"
+        , "Go back to v{1}? The macro restarts. Your settings and data stay."]
+    for code in I18n.Codes {
+        if (code = "en")
+            continue
+        m := I18n.LoadFile(code)
+        for k in keys
+            AssertTrue(m.Has(k), code ".json has '" k "'")
+    }
+    src := FileRead(I18nRoot() "\lib\App.ahk", "UTF-8")
+    AssertTrue(InStr(src, 'I18n.F("Up to date (v{1})"') && InStr(src, 'I18n.T("Update check failed, see Log")'), "App translates the update notes")
+    dir := A_Temp "\vesper_i18n_share_" A_TickCount "_" Random(1000, 9999)
+    DirCreate(dir)
+    try {
+        I18n.Use("es")
+        cfg := Config.Load(dir)
+        FileAppend("[General]`r`nsellEvery=20`r`n[Bogus]`r`nx=1`r`n", dir "\in.ini", "UTF-8")
+        r := Profiles.Import(cfg, dir "\in.ini")
+        AssertEq(r.msg, I18n.F("Imported {1} setting", 1) " " I18n.F("({1} skipped)", 1), "import status in Spanish")
+        AssertTrue(r.msg != "Imported 1 setting (1 skipped)", "not English: " r.msg)
+        AssertEq(Profiles.Import(cfg, dir "\none.ini").msg, I18n.T("Not imported: the file could not be read"), "unreadable, in Spanish")
+        e := Profiles.Export(cfg, "20261125000000")
+        AssertEq(e.ok, 1, "exported")
+        AssertTrue(!InStr(e.msg, "Exported "), "export status in Spanish: " e.msg)
+        AssertTrue(InStr(e.msg, "moontide_settings_20261125.ini"), "names the file")
+    } finally {
+        I18n.Use("en")
+        try DirDelete(dir, true)
+    }
+}
+
 Test_I18n_FallbackAndUnknownLanguage() {
     try {
         AssertEq(I18n.Use("en"), "en", "English")

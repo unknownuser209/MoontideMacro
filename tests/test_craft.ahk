@@ -1434,20 +1434,21 @@ Test_Craft_CauldronWalkAgainWhenThePortalMissed() {
     lines := []
     m.t._env._logFn := (txt) => lines.Push(txt)
     m.t.Run(SchedCtx())
-    AssertEq(io.Count("down w"), CraftTask.WalkTries, "walked " CraftTask.WalkTries " times")
-    iW2 := io.Idx("down w", io.Idx("down w") + 1)
+    ; each walk: the route's W, then the nudge's W (CraftTask.LastMoveKey)
+    AssertEq(io.Count("down w"), 2 * CraftTask.WalkTries, "walked " CraftTask.WalkTries " times, each nudged once")
+    iW2 := io.Idx("down w", io.Idx("down w", io.Idx("down w") + 1) + 1)
     AssertTrue(io.Idx("down Enter", io.Idx("down w")) < iW2, "respawned between the walks")
     AssertEq(io.Count("down a"), 1, "the inside part once, after the last walk")
     said := 0
     for l in lines
         said += InStr(l, "did not go through the portal") ? 1 : 0
     AssertEq(said, CraftTask.WalkTries, "each miss logged")
-    ; missed once, then through: two walks
+    ; missed once (nudge too), then through: two walks
     m2 := CrPortalMake()
     io2 := m2.io
-    m2.t._sample := (x, y) => (io2.Count("down w") >= 2 && io2.Idx("up w", io2.Idx("down w", io2.Idx("down w") + 1)) && !io2.Idx("down a")) ? 0x050505 : 0x808080
+    m2.t._sample := (x, y) => (CrRespawnsBefore(io2, "") >= 1 && io2.Count("up w", io2.Idx("down Enter", io2.Idx("down w"))) >= 1 && !io2.Idx("down a")) ? 0x050505 : 0x808080
     m2.t.Run(SchedCtx())
-    AssertEq(io2.Count("down w"), 2, "through on the second walk")
+    AssertEq(CrRespawnsBefore(io2, "down a"), 1, "one respawn: through on the second walk")
 }
 
 ; live 2026-11-23..24: six first walks "did not go through the portal", each
@@ -1462,7 +1463,8 @@ Test_Craft_PortalMissSavesTheScreen() {
     lines := []
     m.t._env._logFn := (txt) => lines.Push(txt)
     m.t.Run(SchedCtx())
-    iW2 := io.Idx("down w", io.Idx("down w") + 1), iW3 := io.Idx("down w", iW2 + 1)
+    ; the walks start after each respawn (a nudge between presses W too)
+    iW2 := io.Idx("down w", io.Idx("down Enter", io.Idx("down w"))), iW3 := io.Idx("down w", io.Idx("down Enter", iW2))
     AssertTrue(io.Idx("shot") > io.Idx("down w") && io.Idx("shot") < iW2, "the screen saved after the first miss, before walking again")
     AssertTrue(!io.Idx("shot", iW2) || io.Idx("shot", iW2) > iW3, "not again for the second miss")
     said := ""
@@ -1474,6 +1476,79 @@ Test_Craft_PortalMissSavesTheScreen() {
     for l in lines
         found := found || InStr(l, "screen where the walk missed the portal saved to")
     AssertTrue(found, "the screen's path logged")
+}
+
+; live 2026-11-25 03:24 (vesper_shot_20261125_032413_460): "did not go
+; through the portal (no dark frame)" while the screen saved at the miss
+; shows the player INSIDE Stella's Sanctuary (its golden beams and the
+; landing glow, as in the user's clip at the teleport). The recorded walk
+; enters the portal at 35.3 s and the screen is black at ~36.2 s, only
+; 0.25 s after the walk to the portal ends (35.95 s): a walk a little ahead
+; went black while its last steps were still playing, and nothing looked.
+; The route's tail (from the last moment no key is held) is watched too.
+Test_Craft_PortalDarkFrameDuringTheWalkCounts() {
+    m := CrPortalMake()
+    io := m.io
+    ; black only while the walk to the portal is still holding W
+    m.t._sample := (x, y) => (io.Idx("down w") && !io.Idx("up w")) ? 0x050505 : 0x808080
+    lines := []
+    m.t._env._logFn := (txt) => lines.Push(txt)
+    m.t.Run(SchedCtx())
+    AssertEq(CrRespawnsBefore(io, "down a"), 0, "no respawn between the walk and the inside part: it went through")
+    AssertTrue(io.Idx("down a") > io.Idx("up w"), "the inside part after the walk")
+    for l in lines
+        AssertTrue(!InStr(l, "did not go through the portal"), "no miss logged: " l)
+}
+
+Test_Craft_PortalTailStartsWhereNoKeyIsHeld() {
+    ; the shipped route: nothing is held after step 82 (S released), the last
+    ; four steps (A + S into the portal, 3.95 s) are the tail
+    sp := CraftTask.PortalSplit(Input.ParseRoute(CrRead("default_routes")["cauldron"]))
+    tl := CraftTask.PortalTail(sp.to)
+    AssertEq(tl.head.Length, 82, "82 steps before the tail")
+    AssertEq(tl.tail.Length, 4, "4 steps in the tail")
+    AssertEq(tl.tail[1].key "," tl.tail[1].action, "a,down", "the tail starts with A pressed")
+    AssertEq(CraftTask.LastMoveKey(sp.to), "s", "S is the last key walked into the portal")
+    ; no moment without a key held: the whole walk is watched
+    held := Input.ParseRoute([["w", "down", 100], ["w", "up", 0]])
+    AssertEq(CraftTask.PortalTail(held).head.Length, 0, "a route held throughout: no head")
+    AssertEq(CraftTask.PortalTail(held).tail.Length, 2, "... all of it watched")
+}
+
+; live 2026-11-25 03:45 (vesper_shot_20261125_034506_539) and 04:37: the
+; walk stopped just in front of the portal (its corridor, its glow beside
+; the player) and the task respawned and walked the whole 40 s route again.
+; First the last key walked into the portal is held a moment longer.
+; Respawns (Enter) after the first walk's W and before `stopAt` (its first
+; entry; "" or not there = up to now).
+CrRespawnsBefore(io, stopAt) {
+    w := io.Idx("down w")
+    if !w
+        return 0
+    u := (stopAt = "") ? 0 : io.Idx(stopAt, w)
+    n := 0, i := w
+    while (i <= io.log.Length && (!u || i < u)) {
+        n += (io.log[i] = "down Enter") ? 1 : 0
+        i++
+    }
+    return n
+}
+
+Test_Craft_PortalShortWalkNudgedIn() {
+    m := CrPortalMake()
+    io := m.io
+    ; through only on the second W press with no respawn in between
+    m.t._sample := (x, y) => (io.Count("down w") >= 2 && CrRespawnsBefore(io, "") = 0 && !io.Idx("down a")) ? 0x050505 : 0x808080
+    lines := []
+    m.t._env._logFn := (txt) => lines.Push(txt)
+    m.t.Run(SchedCtx())
+    AssertEq(io.Count("down w"), 2, "the walk and one nudge")
+    AssertEq(CrRespawnsBefore(io, "down a"), 0, "no respawn: the nudge went through")
+    AssertTrue(io.Idx("down a") > io.Idx("down w", io.Idx("down w") + 1), "the inside part after the nudge")
+    said := false
+    for l in lines
+        said := said || InStr(l, "nudged into the portal")
+    AssertTrue(said, "the nudge logged")
 }
 
 CrFisherMake(n) {

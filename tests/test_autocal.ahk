@@ -754,9 +754,152 @@ Test_AutoCal_SelectorOnTheRealFrames() {
         try FileDelete(p)
 }
 
+; live 2026-11-23..25: "Abyss Curse Drive's row did not read; clicked by its
+; place in the list" on 10 Selector uses (02:20:23 the newest). The scan's
+; strips step a third of a row, so none sat on the row: on the bobbed frame
+; the one over it read 'Ab ss Curs-' (its last letter cut), while the strip
+; centred on its place reads 'Ab ss Curse'. Read there, it is clicked as
+; read, not by its place.
+Test_AutoCal_SelectorRowReadAtItsPlace() {
+    logs := []
+    t := AcSelTask(AcPath("selector_list_bobbed"), logs)
+    rows := t._ScanRows(t._SelRect(), SchedCtx())
+    AssertTrue(!rows.Has(7), "the scan alone does not read Abyss Curse's row (as live)")
+    AssertEq(t._PickDrive("Abyss Curse Drive", SchedCtx()), 1, "clicked")
+    AssertEq(t._selByName, true, "its row read (at its place)")
+    for l in logs
+        AssertTrue(!InStr(l, "clicked by its place"), "not by its place: " l)
+    cy := 0
+    for e in t._env.io.log
+        if RegExMatch(e, "^move \d+,(\d+)$", &mm)
+            cy := Integer(mm[1])
+    AssertTrue(Abs(cy - 851) <= 16, "the click (y " cy ") is on Abyss Curse's row (y 851)")
+    for p in [A_Temp "\vesper_bi_prompt_test.json", A_Temp "\vesper_bi_prompt_test.json.tmp"]
+        try FileDelete(p)
+}
+
+; live 2026-11-25 09:27: "Abyss Curse Drive's row did not read; clicked by
+; its place in the list", then the prompt named Angelic Hymn Drive (row 9,
+; below the fold of an unscrolled list): the click by place landed two rows
+; low, so the rows it was worked out from were not where the list was at the
+; click. Here the list's rows are read on the bobbed frame, then the list
+; scrolls two rows (reads after the first scan see the frame 104 px lower,
+; the real pixels): the place the first scan gave is now Angelic Hymn's.
+; The old code clicked there (y ~851); the place is read again first now,
+; and the click lands on Abyss Curse where it is after the scroll (y ~747).
+Test_AutoCal_SelectorListScrolledAfterItsRowsRead() {
+    path := AcPath("selector_list_bobbed")
+    st := {n: 0}
+    strips := AcSelStrips()
+    rd := (x, y, w, h, scale := 1) => Ocr.ReadFile(path, x, (++st.n > strips ? y + 104 : y), w, h, scale)
+    logs := []
+    t := AcSelTaskWith(path, logs, rd)
+    p := t._PickDrive("Abyss Curse Drive", SchedCtx())
+    cy := AcSelClickY(t)
+    AssertTrue(cy != 851 && Abs(cy - 851) > 30, "no click on the place the first read gave (y " cy "; Angelic Hymn's after the scroll)")
+    AssertTrue(p = 0 || Abs(cy - 747) <= 16, "clicked on Abyss Curse where it is after the scroll (y 747) or not at all (p " p ", y " cy ")")
+    AcSelClean()
+}
+
+; The scan's rows checked against each other (bobbed frame): a stray
+; "Angelic Hymn Drive" read in one strip (where the prompt's "[ Drive ]" or a
+; word of the scene behind would be) put the old average two rows off and
+; the click by place on Chilling Frost's row. It does not fit the spacing of
+; the five real rows: left out, the click is on Abyss Curse's row.
+Test_AutoCal_SelectorStrayRowLeftOut() {
+    path := AcPath("selector_list_bobbed")
+    rd := (x, y, w, h, scale := 1) => (y = 590 && h = 46 && scale = 1) ? "Angelic Hymn Drive" : Ocr.ReadFile(path, x, y, w, h, scale)
+    logs := []
+    t := AcSelTaskWith(path, logs, rd)
+    AssertEq(t._PickDrive("Abyss Curse Drive", SchedCtx()), 1, "clicked")
+    cy := AcSelClickY(t)
+    AssertTrue(Abs(cy - 851) <= 16, "the click (y " cy ") is on Abyss Curse's row (y 851), not Chilling Frost's (797)")
+    AssertTrue(AcSaidIn(logs, "left out: 9@"), "the stray row is logged as left out")
+    AcSelClean()
+}
+
+; A click by place (the row read nowhere: the centred reads made blank) is
+; made only after a second read of the rows agrees, and its log line names
+; the rows read and the y clicked (the evidence for the next live miss).
+Test_AutoCal_SelectorClickByPlaceLogsItsRows() {
+    path := AcPath("selector_list_bobbed")
+    rd := (x, y, w, h, scale := 1) => (Mod(y - 515, 15) != 0 || scale != 1) ? "" : Ocr.ReadFile(path, x, y, w, h, scale)
+    logs := []
+    t := AcSelTaskWith(path, logs, rd)
+    AssertEq(t._PickDrive("Abyss Curse Drive", SchedCtx()), 1, "clicked by place")
+    AssertEq(t._selByName, false, "not by name")
+    cy := AcSelClickY(t)
+    AssertTrue(Abs(cy - 851) <= 16, "the click (y " cy ") is on Abyss Curse's row (y 851)")
+    said := ""
+    for l in logs
+        if InStr(l, "clicked by its place")
+            said := l
+    AssertTrue(RegExMatch(said, "at y \d+ \(rows read: 1@\d+ 2@\d+ 3@\d+"), "the log names the rows read: " said)
+    AcSelClean()
+}
+
+; The prompt already up over the list (selector_prompt_abyss_dark: Abyss
+; Curse's prompt): its "[ Abyss Curse Drive ]" line passed for row 7, and
+; with Raging Gale Drive wanted the old code clicked by place one row below
+; it, into the prompt. The prompt's words are seen: no row is clicked.
+Test_AutoCal_SelectorNoRowClickedUnderThePrompt() {
+    logs := []
+    t := AcSelTask(AcPath("selector_prompt_abyss_dark"), logs)
+    AssertEq(t._PickDrive("Raging Gale Drive", SchedCtx()), 0, "not clicked")
+    AssertEq(AcSelClickY(t), 0, "no click")
+    AssertTrue(AcSaidIn(logs, "prompt is up over the list"), "logged why")
+    AcSelClean()
+}
+
+Test_BiomeItems_FitRows() {
+    r := {x: 822, y: 515, w: 672, h: 416}          ; pitch 52
+    f := BiomeItemsTask.FitRows(Map(1, 538, 2, 598, 3, 635, 4, 703, 5, 733), r)
+    AssertTrue(f.ok && f.drop.Count = 0 && Abs(f.row1 - 538) <= 4, "the bobbed frame's rows agree (row1 " f.row1 ")")
+    f := BiomeItemsTask.FitRows(Map(1, 538, 2, 598, 3, 635, 4, 703, 5, 733, 9, 613), r)
+    AssertTrue(f.ok && f.drop.Has(9) && f.keep.Count = 5 && Abs(f.row1 - 538) <= 4, "a stray row is left out")
+    f := BiomeItemsTask.FitRows(Map(3, 540, 7, 640), r)
+    AssertEq(f.ok, false, "two rows that do not fit the spacing: not usable")
+    AssertEq(BiomeItemsTask.Row1(Map(3, 540, 7, 640), r), "", "no first row from them")
+    f := BiomeItemsTask.FitRows(Map(5, 750), r)
+    AssertTrue(f.ok && f.row1 = 542, "one row: its place")
+    AssertEq(BiomeItemsTask.FitRows(Map(), r).ok, false, "no row")
+    AssertEq(BiomeItemsTask.RowsBrief(Map(1, 538, 7, 851)), "1@538 7@851", "the log's form")
+    AssertEq(BiomeItemsTask.RowsBrief(Map()), "none", "none read")
+}
+
+AcSelStrips() {
+    n := 0, y := 515
+    while (y + 46 <= 515 + 416)
+        n++, y += 15
+    return n
+}
+
+AcSelClickY(t) {
+    cy := 0
+    for e in t._env.io.log
+        if RegExMatch(e, "^move \d+,(\d+)$", &mm)
+            cy := Integer(mm[1])
+    return cy
+}
+
+AcSaidIn(logs, s) {
+    for l in logs
+        if InStr(l, s)
+            return true
+    return false
+}
+
+AcSelClean() {
+    for p in [A_Temp "\vesper_bi_prompt_test.json", A_Temp "\vesper_bi_prompt_test.json.tmp"]
+        try FileDelete(p)
+}
+
 ; The biome items task on a saved frame: the real OCR, pixels and ink reads
 ; of that frame, the user's selector_list_rect / selector_confirm recorded.
-AcSelTask(path, logs) {
+AcSelTask(path, logs) => AcSelTaskWith(path, logs, AcFileOcr(path))
+
+; ... with its own OCR read (a frame read differently over time)
+AcSelTaskWith(path, logs, readFn) {
     state := A_Temp "\vesper_bi_prompt_test.json"
     for p in [state, state ".tmp"]
         try FileDelete(p)
@@ -764,7 +907,7 @@ AcSelTask(path, logs) {
     cal.r["selector_list_rect"] := {x: 822, y: 515, w: 672, h: 416}
     cal.p["selector_confirm"] := {x: 1034, y: 820, color: 0}
     return BiomeItemsTask({cfg: BiCfg(Map("BiomeItems.biomeSelector", 1)), io: BiIO(BiOcr([], [])), webhook: BiWh()
-        , cal: cal, log: (s) => logs.Push(s), ocr: AcFileOcr(path), lines: AcFileLines(path), rect: AcFileRect(path)
+        , cal: cal, log: (s) => logs.Push(s), ocr: readFn, lines: AcFileLines(path), rect: AcFileRect(path)
         , ink: (x, y, w, h, scale := 1, ink := 0) => Ocr.ReadFile(path, x, y, w, h, scale, ink), now: () => 1000, statePath: state})
 }
 

@@ -479,6 +479,99 @@ Test_Reel_CoveredButtonUsesTheStatusLine() {
     }
 }
 
+; live 2026-11-23/24 (7 times in 2 days): the next task came up just as the
+; fish bit. The panel's button read 'This fe' / 'This tee' (the bite) or
+; 'Clink / Tru•r' (the reel prompt), not Exit; the macro clicked it once and
+; walked off, the fish was lost and its "Fishing Failed" card covered the
+; next task (09:40: the next cast found no panel and re-pathed). A fish on
+; the line now gets landed first, as after a bite already seen.
+; Button: Fish before the cast, Exit with the line out, `biteText` for
+; 600 ms from biteAt, then the reel prompt while the reel runs (reelMs).
+class RlBiteAtPreemptIO extends FsIO {
+    __New(biteAt, biteText, reelMs := 5000) {
+        super.__New()
+        this.biteAt := biteAt, this.biteText := biteText, this.reelMs := reelMs
+        this.castAt := -1, this.closed := false, this.buttonClicks := 0
+    }
+    Phase() {
+        if (this.castAt < 0)
+            return "fish"
+        t := this.clock - this.castAt
+        return t < this.biteAt ? "exit" : t < this.biteAt + 600 ? "bite" : t < this.biteAt + 600 + this.reelMs ? "reel" : "over"
+    }
+    Ocr(x, y, w, h, scale := 1) {
+        ph := this.Phase()
+        if (x = 1050)
+            return ph = "fish" ? "Fish" : ph = "exit" ? "Exit" : ph = "bite" ? this.biteText : ph = "reel" ? "Click / Touch Screen to Reel" : ""
+        if (x = 1130)
+            return (ph = "over") ? "" : "Fishing"
+        if (x = 1000 && y = 440)
+            return (ph = "over" && !this.closed) ? "Fish Caught! You've got Stonefish!" : ""
+        return ""
+    }
+    ClickHere() {
+        if (this.x = 1161 && this.y = 1124 && this.castAt < 0)
+            this.castAt := this.clock
+        if (this.x >= 1050 && this.x < 1250 && this.y >= 1095 && this.y < 1140 && this.castAt >= 0 && !(this.x = 1161 && this.y = 1124))
+            this.buttonClicks++
+        if (this.x = 1457 && this.y = 491 && this.Phase() = "over")
+            this.closed := true
+        super.ClickHere()
+    }
+}
+
+RlBiteAtPreempt(biteText, preAfterBite, &io, &logs) {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        st := SchedState()
+        ctx := SchedCtx()
+        io := RlBiteAtPreemptIO(5000, biteText)
+        logs := []
+        sim := RlSim(io)
+        b := io
+        ; the reel bar is drawn only while the reel runs; the next task is
+        ; due preAfterBite ms after the bite starts
+        FsScreen.fn := (x, y) => ((b.castAt >= 0 && b.clock >= b.castAt + b.biteAt + preAfterBite) ? ctx.RequestPreempt() : 0
+            , b.Phase() = "reel" ? sim.Pixel(x, y) : 0x101010)
+        r := FishingTask(t.cfg, st, FsDeps(io, "", true, logs)).CatchOnce(ctx)
+        return {r: r, st: st, ctx: ctx, sim: sim}
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+Test_Reel_PreemptAsTheFishBitesLandsItFirst() {
+    io := "", logs := ""
+    for txt in ["This fe", "This tee"] {
+        o := RlBiteAtPreempt(txt, 100, &io, &logs)
+        AssertEq(o.r, "ok", txt ": the fish was landed")
+        AssertEq(io.buttonClicks, 0, txt ": the panel's button was not clicked")
+        AssertTrue(o.sim.clicks > 10, txt ": reeled (clicks " o.sim.clicks ")")
+        AssertEq(o.st.fishLoops, 1, txt ": counted")
+        AssertTrue(io.closed, txt ": its card closed before the next task")
+        AssertTrue(o.ctx.ShouldStop(), txt ": the next task still runs after")
+        AssertTrue(FsHasLog(logs, "landing it first"), txt ": logged")
+    }
+    ; the reel already running ("Clink / Tru•r" read live, not the reel prompt's words)
+    o := RlBiteAtPreempt("This fe", 600, &io, &logs)
+    AssertEq(o.r, "ok", "reel running: landed")
+    AssertEq(io.buttonClicks, 0, "reel running: no button click")
+}
+
+; Still reeled in as before: the line out with nothing biting (Exit) or a
+; quiet button with no reel coming (covered by the bite-wait preempt tests
+; in test_fishing.ahk); a halt never waits for a bite.
+Test_Reel_PreemptBeforeTheBiteStillReelsIn() {
+    io := "", logs := ""
+    o := RlBiteAtPreempt("This fe", -3000, &io, &logs)
+    AssertEq(o.r, "stopped", "the next task runs now")
+    AssertEq(io.buttonClicks, 1, "the line reeled in (Exit)")
+    AssertEq(o.sim.clicks, 0, "no reel")
+}
+
 class RlPanelIO extends FsIO {
     __New(button, title) {
         super.__New()
@@ -583,6 +676,9 @@ Test_Reel_CardReadInTheGameFont() {
         AssertEq(task._CardKind("Fish Caught!`nYou've got Stonefish!"), "caught", "scale-2 read")
         AssertEq(task._CardKind("Fishing Failed`nThe fish is gone..."), "failed", "a miss")
         AssertEq(task._CardKind("Fishing`nFish"), "", "the fishing panel is not a card")
+        ; live 2026-11-24 09:40, snow: the title did not read, the body only this
+        AssertEq(task._CardKind("The fis"), "failed", "a miss on the snow (body cut short)")
+        AssertEq(task._CardKind("Fish Cought!`nYou've got The Fisherman's Boot"), "caught", "a catch named 'The Fis...' stays a catch")
         AssertEq(task._CardKind(""), "", "nothing")
         AssertEq(FishingTask.CardScale, 2, "read at scale 2")
     } finally {
@@ -784,6 +880,37 @@ Test_Reel_EndsWhenTheReelCloses() {
         FishingTask(t.cfg, SchedState(), FsDeps(io)).CatchOnce(SchedCtx())
         AssertTrue(io.firstClick.Has("click@1457,491"), "closed the card")
         AssertTrue(io.firstClick["click@1457,491"] - sim.firstGrab < 6000, "ended early (" io.firstClick["click@1457,491"] - sim.firstGrab " ms)")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; live 2026-11-25 09:29:02 (NULL biome): one all-black pass gave the catch
+; up. The arrow reel waits a dark moment out; a strip black for good is
+; given up, the NULL biome named in the log (not exclusive fullscreen).
+Test_Reel_DarkMomentIsWaitedOut() {
+    t := FsMakeCfg()
+    t.cfg.Set("General.legacyReel", 0)
+    FsScreen.Install()
+    try {
+        io := FsIO()
+        sim := RlSim(io)
+        logs := []
+        FsScreen.fn := (x, y) => (sim.firstGrab >= 0 && io.clock > sim.firstGrab + 1000 && io.clock < sim.firstGrab + 1600) ? 0x000000 : sim.Pixel(x, y)
+        r := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        AssertEq(r, "ok", "the catch goes on")
+        AssertTrue(!FsHasLog(logs, "all black"), "no black-strip line")
+        AssertTrue(io.firstClick.Has("click@1457,491"), "the card closed")
+        io2 := FsIO()
+        sim2 := RlSim(io2)
+        logs2 := []
+        st := SchedState()
+        st.biome := "NULL"
+        FsScreen.fn := (x, y) => (sim2.firstGrab >= 0 && io2.clock > sim2.firstGrab + 1000) ? 0x000000 : sim2.Pixel(x, y)
+        r2 := FishingTask(t.cfg, st, FsDeps(io2, "", true, logs2)).CatchOnce(SchedCtx())
+        AssertEq(r2, "error", "black for good: given up")
+        AssertTrue(FsHasLog(logs2, "in the NULL biome") && !FsHasLog(logs2, "exclusive fullscreen"), "the NULL biome named")
     } finally {
         FsScreen.Restore()
         FsClean(t.dir)

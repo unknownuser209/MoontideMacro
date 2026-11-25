@@ -990,18 +990,35 @@ Test_StripGrab_MatchesPixelGetColor() {
     AssertEq(rows.Length, 3, "one row per requested y")
     AssertEq(rows[1].Length, 64, "64 px per row at stride 1")
     AssertEq(StripGrab.Rows(100, 163, [200], 4)[1].Length, 16, "stride 4 -> 16 samples")
-    ; Compare against PixelGetColor at scattered points (screen may animate,
-    ; so allow a few mismatches).
-    same := 0
-    total := 0
-    for yi, y in [200, 205, 210] {
-        for x in [100, 117, 133, 150, 163] {
-            total++
-            if Pixel.Match(rows[yi][x - 100 + 1], Pixel.Get(x, y), 24)
+    ; Compare against PixelGetColor at scattered points. The live screen moves
+    ; (Roblox's chat sits here; 11/15 with the macro farming, 2026-11-25), so
+    ; only points that read the same just before AND just after the grab are
+    ; judged: there the grab must agree. Up to 5 tries for enough still points.
+    pts := []
+    for y in [200, 205, 210]
+        for x in [100, 117, 133, 150, 163]
+            pts.Push([x, y])
+    best := ""
+    Loop 5 {
+        pre := []
+        for p in pts
+            pre.Push(Pixel.Get(p[1], p[2]))
+        g := StripGrab.Rows(100, 163, [200, 205, 210], 1)
+        still := 0, same := 0
+        for i, p in pts {
+            if !Pixel.Match(pre[i], Pixel.Get(p[1], p[2]), 8)
+                continue                            ; moved during the grab: no verdict
+            still++
+            yi := (p[2] - 200) // 5 + 1
+            if Pixel.Match(g[yi][p[1] - 100 + 1], pre[i], 24)
                 same++
         }
+        best := same "/" still " still points"
+        if (still >= 6)
+            break
     }
-    AssertTrue(same >= total - 3, "grab agrees with PixelGetColor (" same "/" total ")")
+    AssertTrue(still >= 6, "enough still points to judge (" best ")")
+    AssertTrue(same >= still - 1, "grab agrees with PixelGetColor where the screen held still (" best ")")
     ; a color is a plain 0xRRGGBB integer
     AssertTrue(rows[1][1] >= 0 && rows[1][1] <= 0xFFFFFF, "color in range")
 }
@@ -1152,6 +1169,44 @@ Test_Fishing_AllBlackCaptureNeverClicks() {
         task2 := FishingTask(t.cfg, SchedState(), FsDeps(io2))
         AssertEq(task2.CatchOnce(SchedCtx()), "error", "advanced: black capture -> error")
         AssertEq(io2.Count("click@1263,1177"), 0, "advanced: no clicks")
+    } finally {
+        FsScreen.Restore()
+        FsClean(t.dir)
+    }
+}
+
+; live 2026-11-25 09:29:02, NULL biome: "strip capture is all black
+; (exclusive fullscreen?); not clicking" gave a catch up, while the two
+; reels before it in NULL read the bar and clicked normally. A moment of an
+; all-black strip is waited out (no click on it); only a strip that stays
+; black gives the catch up, and in NULL the log names the biome.
+Test_Fishing_ShortBlackStripIsWaitedOut() {
+    t := FsMakeCfg()
+    FsScreen.Install()
+    try {
+        io := FsIO()
+        logs := []
+        ; bar up from the bite, the strip all black 2000..2600, then the bar gone
+        FsBiteScreen(io, 1500, 0x3366CC, (x, y) => io.clock < 2000 ? 0x3366CC : io.clock < 2600 ? 0x000000 : 0x202020)
+        task := FishingTask(t.cfg, SchedState(), FsDeps(io, "", true, logs))
+        AssertEq(task.CatchOnce(SchedCtx()), "ok", "the catch goes on after the dark moment")
+        AssertTrue(io.Count("click@1263,1177") > 20, "the reel clicks once the strip shows again")
+        for l in logs
+            AssertTrue(!InStr(l, "all black"), "no black-strip line: " l)
+        ; black for good in NULL: given up, no click on it, the biome named
+        io2 := FsIO()
+        logs2 := []
+        st := SchedState()
+        st.biome := "NULL"
+        FsBiteScreen(io2, 1500, 0x3366CC, (x, y) => io2.clock < 2000 ? 0x3366CC : 0x000000)
+        task2 := FishingTask(t.cfg, st, FsDeps(io2, "", true, logs2))
+        AssertEq(task2.CatchOnce(SchedCtx()), "error", "a strip that stays black: given up")
+        said := ""
+        for l in logs2
+            if InStr(l, "all black")
+                said := l
+        AssertTrue(InStr(said, "NULL biome") && !InStr(said, "exclusive fullscreen"), "the NULL biome named, not the capture: " said)
+        AssertEq(FishLogic.BlackMsg({biome: "NORMAL"}, 1500), "fishing: strip capture is all black for 1500 ms (exclusive fullscreen?); not clicking", "other biomes: as before")
     } finally {
         FsScreen.Restore()
         FsClean(t.dir)

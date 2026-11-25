@@ -351,8 +351,67 @@ class QuestsTask {
     ; twice on one board (live 2026-11-20). Both are folded.
     static Key(text) => StrReplace(RegExReplace(StrLower(GameText.FixK(QuestsTask.Title(text))), "[^a-z]+"), "a", "o")
 
+    ; Two keys (Key) of one quest: equal, or one letter apart in a title of
+    ; 8+ letters. The same quest read one letter short or with one letter
+    ; lost ('Null Breakthroug', 'Sto foll Breoi?through', 'Unique Hunt' with
+    ; an accented U, live 2026-11-23) was pressed again as another quest and reported
+    ; claimed. A roman numeral at the end keeps Delivery I / II / IV / V
+    ; apart; a half-typed title is no match (_StableText waits it out).
+    static SameQuest(a, b) {
+        a := String(a), b := String(b)
+        if (a == b)
+            return true
+        if (Min(StrLen(a), StrLen(b)) < 8 || Abs(StrLen(a) - StrLen(b)) > 1)
+            return false
+        RegExMatch(a, "[iv]*$", &ra), RegExMatch(b, "[iv]*$", &rb)
+        if (ra[0] != rb[0])
+            return false
+        return QuestsTask.Dist(a, b) <= 1
+    }
+
+    ; Pure: edit distance (insert / delete / change one letter)
+    static Dist(a, b) {
+        la := StrLen(a), lb := StrLen(b)
+        prev := []
+        Loop lb + 1
+            prev.Push(A_Index - 1)
+        Loop la {
+            i := A_Index, ca := SubStr(a, i, 1)
+            cur := [i]
+            Loop lb {
+                j := A_Index
+                cur.Push(Min(prev[j + 1] + 1, cur[j] + 1, prev[j] + ((ca == SubStr(b, j, 1)) ? 0 : 1)))
+            }
+            prev := cur
+        }
+        return prev[lb + 1]
+    }
+
+    ; The key in m (a Map keyed by quest keys) that is this quest (SameQuest), else ""
+    static Known(m, key) {
+        if m.Has(key)
+            return key
+        for k in m
+            if QuestsTask.SameQuest(k, key)
+                return k
+        return ""
+    }
+
+    ; The quest's hold key: the one already held under a near read, else key
+    _HeldKey(key) {
+        k := QuestsTask.Known(this._held, key)
+        return (k != "") ? k : key
+    }
+
+    _Unhold(key) {
+        k := QuestsTask.Known(this._held, key)
+        if (k != "")
+            this._held.Delete(k)
+    }
+
     ; Minutes left before the quest's Claim Rewards is tried again (0 = now)
     _HeldMin(key) {
+        key := this._HeldKey(key)
         if !this._held.Has(key)
             return 0
         left := this._held[key].until - this._env.Now()
@@ -362,6 +421,7 @@ class QuestsTask {
     ; Claim Rewards (or an unread button) changed nothing: wait longer each
     ; time -> the minutes
     _Hold(key) {
+        key := this._HeldKey(key)
         n := this._held.Has(key) ? this._held[key].n + 1 : 1
         steps := QuestsTask.ClaimBackoffMin
         mins := steps[Min(n, steps.Length)]
@@ -582,16 +642,21 @@ class QuestsTask {
         seen := Map()
         lastKey := ""
         pushed := false                     ; > already pressed while lastKey was shown
+        steady := false                     ; the title just read twice the same (_WaitNext / _StableText)
         Loop QuestsTask.MaxSteps {
             if ctx.ShouldStop()
                 break
-            text := (env.ocrFn)(area.x, area.y, area.w, area.h)
+            ; a title still typing in is no quest yet (_StableText)
+            text := steady ? (env.ocrFn)(area.x, area.y, area.w, area.h) : this._StableText(area, ctx)
+            steady := false
+            if ctx.ShouldStop()
+                break
             key := QuestsTask.Key(text)
             if (key = "")
                 break
-            if seen.Has(key) {
+            if (QuestsTask.Known(seen, key) != "") {
                 ; still on the quest just handled (a re-read glitched before >): press > once
-                if (key = lastKey && !pushed && IsObject(nextPt)) {
+                if (QuestsTask.SameQuest(key, lastKey) && !pushed && IsObject(nextPt)) {
                     env.Click(nextPt)
                     pushed := true
                     if !env.Wait(QuestsTask.SettleMs, ctx)
@@ -621,7 +686,7 @@ class QuestsTask {
             action := ""
             name := (m != "") ? m.name : title
             if (word = "accept")
-                try this._held.Delete(key)      ; a new quest under that title
+                this._Unhold(key)               ; a new quest under that title
             held := this._HeldMin(key)
             claimable := (word = "claim" || (word = "" && m != "" && QuestMatch.IsComplete(text)))
             if (held && (claimable || (word = "" && m != "" && m.enabled)))
@@ -663,12 +728,18 @@ class QuestsTask {
                     break
                 if (action = "dismiss" && pt != "")
                     continue                    ; the board shows the next quest by itself
-                ; a claim may remove the quest: move on only if it is still shown
-                if (QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h)) != key) {
+                ; a claim may remove the quest: move on only if it is still
+                ; shown (its title types in again after the click: read
+                ; once it is still, _StableText)
+                after := this._StableText(area, ctx)
+                if ctx.ShouldStop()
+                    break
+                steady := true
+                if !QuestsTask.SameQuest(QuestsTask.Key(after), key) {
                     if (pt != "" && (action = "turnin" || word = "")) {
                         ; gone: claimed (Accept keeps the quest on screen, so
                         ; an unread button that removed it was Claim Rewards)
-                        try this._held.Delete(key)
+                        this._Unhold(key)
                         done[done.Length] := "claimed rewards for " name
                         env.Log("quests: claimed rewards for " name)
                     }
@@ -690,10 +761,34 @@ class QuestsTask {
                 break
             env.Click(nextPt)                   ; Accept / leave alone keep the quest on screen
             pushed := true
-            if (this._WaitNext(area, key, ctx) < 0)
+            r := this._WaitNext(area, key, ctx)
+            if (r < 0)
                 break
+            steady := (r = 1)
         }
         return done
+    }
+
+    ; The panel's text once its title stopped changing: the same key on two
+    ; reads PollMs apart, at most NextMaxMs (then the last read). The title
+    ; types in when the board opens and again after a click on Claim
+    ; Rewards: live 2026-11-23 09:48 read 'S', 'Storfoll Breokth', 'Storfoll
+    ; Breokth"ugh' of one quest, pressed it as three quests and reported
+    ; two claims for a quest not finished. "" when stopped.
+    _StableText(area, ctx) {
+        env := this._env
+        text := (env.ocrFn)(area.x, area.y, area.w, area.h)
+        waited := 0
+        while (waited < QuestsTask.NextMaxMs) {
+            if !env.Wait(QuestsTask.PollMs, ctx)
+                return ""
+            waited += QuestsTask.PollMs
+            t := (env.ocrFn)(area.x, area.y, area.w, area.h)
+            if (QuestsTask.Key(t) == QuestsTask.Key(text))
+                return t
+            text := t
+        }
+        return text
     }
 
     ; After >: the board shows another quest, the same key on two reads in a
@@ -708,7 +803,7 @@ class QuestsTask {
             waited += QuestsTask.PollMs
             k := QuestsTask.Key((env.ocrFn)(area.x, area.y, area.w, area.h))
             ; 500 ms at least: the button can be drawn a frame after the title
-            if (k != "" && k != oldKey && k = prev && waited >= 500)
+            if (k != "" && !QuestsTask.SameQuest(k, oldKey) && k = prev && waited >= 500)
                 return 1
             prev := k
             if (waited >= QuestsTask.NextMaxMs)

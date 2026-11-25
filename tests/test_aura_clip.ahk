@@ -724,6 +724,34 @@ Test_AuraClip_RollClipsEvenWhenHadOrDuringASwap() {
     }
 }
 
+; Live 2026-11-24 23:17: the game's roll event named the aura with an accent
+; and a Greek omega, "BOUNDED : AICHMÁLΩTOS", its Equipped line and
+; auras.json "BOUNDED_AICHMALOTOS" / "Bounded : Aichmalotos": logged as an
+; unknown aura, so a 1 in 170,000,000 roll got no clip and no rare alert.
+Test_AuraClip_RollNameWithAccentsIsKnown() {
+    roll := "BOUNDED : AICHM" Chr(0xC1) "L" Chr(0x3A9) "TOS"
+    AssertEq(Auras.Key(roll), Auras.Key("BOUNDED_AICHMALOTOS"), "accent and omega fold to the Equipped line's name")
+    AssertEq(Auras.Key("Bounded : Aichm" Chr(0xE1) "l" Chr(0x3C9) "tos"), "boundedaichmalotos", "lower case too")
+    AssertEq(Auras.Key(Chr(0x2605) Chr(0x2605)), Chr(0x2605) Chr(0x2605), "other symbols kept")
+    v := Json.Parse(FileRead(AcRepoData() "\auras.json", "UTF-8"))
+    cfg := { Data: (self, n) => v }
+    e := Auras.Find(cfg, roll)
+    AssertEq(IsObject(e) ? e["name"] : "", "Bounded : Aichmalotos", "found in auras.json")
+    r := AcRollRig()
+    try {
+        r.cfg.SetData("auras", v)
+        r.cfg.Set("Medal.auraMinRarity", "100000000")
+        r.Roll(roll)
+        AssertEq(r.clips.Length, 1, "the roll clips")
+        AssertEq(AcCount(r.logs, "unknown aura"), 0, "not unknown")
+        r.Aura("BOUNDED_AICHMALOTOS")
+        AssertEq(r.clips.Length, 1, "its Equipped line is the same aura: no second clip")
+        AssertEq(AcCount(r.logs, "equipped after its roll"), 1, "matched to its roll")
+    } finally {
+        r.Done()
+    }
+}
+
 Test_AuraClip_RollOffAndNotLive() {
     r := AcRollRig()
     try {

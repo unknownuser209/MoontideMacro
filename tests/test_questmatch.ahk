@@ -234,12 +234,13 @@ Test_ChatWatch_DetectsMariAndJester() {
     ; a second read without Mari (absent from 2 reads in a row now)
     clock.t := 20000
     AssertEq(cw.Check().Length, 0, "chat without a merchant")
-    ; Mari again, last sighting was at 7000 -> must be absent >= 120 s
-    clock.t := 128000
+    ; Mari again, last sighting was at 7000 -> must be absent >= 120 s, and
+    ; her last report (1000) 15 min ago (ReportGapSec)
+    clock.t := 901000
     h := cw.Check()
     AssertEq(h.Length, 1, "mari re-reported after dedupe window")
     ; OCR failure ("") = unknown
-    clock.t := 140000
+    clock.t := 913000
     AssertEq(cw.Check().Length, 0, "empty OCR is unknown")
     AssertEq(found.Length, 3, "onFound called per hit")
     AssertEq(io.Clicks(), 0, "still no clicks")
@@ -264,10 +265,11 @@ Test_ChatWatch_SlidingDedupe() {
         triggers += cw.Check().Length
     }
     AssertEq(triggers, 1, "visible > 120 s: still one trigger")
-    ; line gone for 121 s (last sighting at 300000)
+    ; line gone for 601 s (last sighting at 300000; the report at 0 is
+    ; 15 min old by then: ReportGapSec)
     text := "just chatting"
     t := 300000
-    while (t < 300000 + 121000) {
+    while (t < 300000 + 601000) {
         t += 5000
         clock.t := t
         triggers += cw.Check().Length
@@ -285,6 +287,46 @@ Test_ChatWatch_SlidingDedupe() {
     clock.t += 5000
     AssertEq(cw.Check().Length, 0, "short absence: suppressed")
     AssertEq(io.Clicks(), 0, "never clicks")
+}
+
+; Live 2026-11-24: after a real Jester visit (15:00:17) the same old chat
+; line came back after each OCR gap: 15:06:02 and 15:11:10 "Jester
+; detected", the Merchant Teleporter used and "no merchant has spawned"
+; each time, with a Discord message (12:14 / 12:20 / 12:25 and 11-23 22:05 /
+; 22:11 / 22:16 the same). A merchant stays a few minutes and came back no
+; sooner than 19.6 min in 3 days of logs: one report per merchant per
+; ReportGapSec (15 min), as the bosses.
+Test_ChatWatch_OneReportPerMerchantPer15Min() {
+    clock := QmClock(0)
+    text := "Jester has arrived"
+    logs := []
+    cw := ChatWatch({io: QmIO(), cal: QmCal(, Map("chat_rect", {x: 10, y: 20, w: 400, h: 200})), ocr: (*) => text, now: () => clock.Now(), log: (t) => logs.Push(t)})
+    AssertEq(cw.Check().Length, 1, "the arrival is reported")
+    ; the old line misses two reads (OCR), then reads again 6 min later
+    text := "chat", clock.t := 120000, cw.Check()
+    clock.t := 125000, cw.Check()
+    text := "Jester has arrived", clock.t := 360000
+    AssertEq(cw.Check().Length, 0, "the same line 6 min after the report: not again")
+    AssertTrue(QmLogHas(logs, "15 min"), "logged why")
+    text := "chat", clock.t := 600000, cw.Check()
+    clock.t := 605000, cw.Check()
+    text := "Jester has arrived", clock.t := 840000
+    AssertEq(cw.Check().Length, 0, "14 min after the report: still not")
+    ; Mari is another merchant
+    text := "Mari has arrived", clock.t := 845000
+    AssertEq(cw.Check().Length, 1, "another merchant is reported")
+    ; gone, then back 15+ min after the report: a new arrival
+    text := "chat", clock.t := 850000, cw.Check()
+    clock.t := 855000, cw.Check()
+    text := "Jester has arrived", clock.t := 1000000
+    AssertEq(cw.Check().Length, 1, "15 min later: reported")
+}
+
+QmLogHas(logs, needle) {
+    for l in logs
+        if InStr(l, needle)
+            return true
+    return false
 }
 
 ; IO that logs waits too (shared log with the OCR fake).
@@ -1019,7 +1061,9 @@ class QmShop {
         if (x = L.stock.x && y = L.stock.y)
             return "Stock Left: " StrReplace(StrReplace(String(this.stock.Has(sel) ? this.stock[sel] : 10), "1", "I"), "0", "O")
         if (x = L.notice.x && y = L.notice.y)
-            return (this.confirm && this._LastMove() = this._Pt(L.buy)) ? "You purchosed some " sel "s" : ""
+            return (this.confirm && this._LastMove() = this._Pt(L.buy)) ? "You purchosed 10 " sel "s" : ""
+        if (x = L.price.x && y = L.price.y)
+            return "Purchase for (5 Void Coins)"
         if (x = L.maxBtn.x && y = L.maxBtn.y)
             return this.maxBtn ? "Set to Mox" : ""
         return ""
@@ -2014,6 +2058,103 @@ Test_Quests_SameQuestReadTwoWaysIsOneQuest() {
     c := QmSpotClicks(board)
     t.Run(SchedCtx())
     AssertEq(c.n, 1, "one press, not one per way the title reads")
+}
+
+; A board whose quest title types in: the first TypeReads panel reads after
+; the board opens (set .typing before a visit), after a press on the Accept
+; spot and after > show only the start of the title
+class QmBoardTyping extends QmBoardBounce {
+    TypeReads := 3
+    typing := 3
+    Click(x, y) {
+        super.Click(x, y)
+        if ((x = 100 && y = 200) || (x = 900 && y = 950))
+            this.typing := this.TypeReads
+    }
+    Read(x, y, w, h) {
+        c := this.Cur()
+        if (x "," y "," w "," h = this.panel && !this.closed && IsObject(c) && this.typing > 0) {
+            n := this.TypeReads - this.typing + 1
+            this.typing--
+            title := StrSplit(c.text, "`n")[1]
+            return SubStr(title, 1, Ceil(StrLen(title) * n / (this.TypeReads + 1))) "`nObjects"
+        }
+        return super.Read(x, y, w, h)
+    }
+}
+
+Test_Quests_HalfTypedTitleIsNotAnotherQuest() {
+    ; live 2026-11-23 09:48: the title was still typing in when it was read
+    ; ('S', 'Storfoll Breokth', 'Storfoll Breokth"ugh'): each part was taken
+    ; for another quest, Claim Rewards pressed on a quest held for 120 min
+    ; and "claimed rewards" reported twice for a quest that was not finished
+    ; (still on the board, held, at 10:21)
+    board := QmBoardTyping([["Finding a Person`nObjects`n- Find the person", "Claim Rewards"]])
+    cfgQ := QmQuestsCfg()
+    cfgQ["types"].Push(Map("name", "Other", "enabled", 1, "quests", [Map("name", "Finding a Person", "enabled", 1)]))
+    lg := []
+    wh := QmWh()
+    t := QuestsTask({
+        cfg: QmCfg("", Map("quests", cfgQ, "routes", QmRoutesData())),
+        io: QmBoardIO(board), webhook: wh, cal: QmBoardCal(), log: (s) => lg.Push(s),
+        ocr: (x, y, w, h, scale := 1) => board.Read(x, y, w, h)
+    })
+    c := QmSpotClicks(board)
+    AssertEq(t.Run(SchedCtx()), 0, "visit 1: nothing claimed")
+    AssertEq(c.n, 1, "visit 1: Claim Rewards pressed once, not once per part of the title")
+    AssertTrue(!QmLogged(lg, "claimed rewards for"), "never reported as claimed")
+    AssertTrue(QmLogged(lg, "Finding a Person is not finished yet"), "the whole title is the quest held")
+    board.closed := false, board.typing := board.TypeReads
+    t.Run(SchedCtx())
+    AssertEq(c.n, 1, "visit 2: the held quest is left alone while its title types in")
+    AssertTrue(!QmLogged(lg, "claimed rewards for"), "still never reported as claimed")
+    AssertEq(wh.Count("quests"), 0, "no webhook for claims that did nothing")
+}
+
+; A board whose first quest's title reads one letter short once the board
+; went round past a Dismiss (live 2026-11-23 04:12)
+class QmBoardShort extends QmBoardBounce {
+    short := false
+    Click(x, y) {
+        super.Click(x, y)
+        if (x = 300 && y = 400)
+            this.short := true
+    }
+    Read(x, y, w, h) {
+        t := super.Read(x, y, w, h)
+        if (this.short && x "," y "," w "," h = this.panel)
+            t := RegExReplace(t, "^Null Breakthrough", "Null Breakthroug")
+        return t
+    }
+}
+
+Test_Quests_TitleReadShortAfterGoingRoundIsTheSameQuest() {
+    ; live 2026-11-23 04:12: [2] 'Null Breakthrough' held, [3] Resonance
+    ; dismissed, [4] 'Null Breakthroug' (the same quest, one letter short)
+    ; pressed and reported claimed; at 04:42 it was still on the board,
+    ; unfinished
+    lg := []
+    board := QmBoardShort([["Null Breakthrough`nObjects`n- Roll in Null", "Claim Rewards"], ["Mythic Aura Hunt`nObjects`n- Roll a Mythic", "Accept"]])
+    m := QmBoardTask(board, Map("quests.dismissDisabled", 1), , lg)
+    c := QmSpotClicks(board)
+    m.t.Run(SchedCtx())
+    AssertTrue(QmLogged(lg, "dismissed Mythic Aura Hunt"), "the unticked quest was dismissed")
+    AssertEq(c.n, 1, "Claim Rewards pressed once: the short read is the quest already handled")
+    AssertTrue(!QmLogged(lg, "claimed rewards for"), "never reported as claimed")
+}
+
+Test_Quests_SameQuestFoldsOcrVariants() {
+    same := (a, b) => QuestsTask.SameQuest(QuestsTask.Key(a), QuestsTask.Key(b))
+    ; the live reads of one quest (2026-11-23)
+    AssertTrue(same("Null Breakthroug", "Null Breakthrough"), "a title one letter short")
+    AssertTrue(same("Sto foll Breoi" Chr(0xAB) "through", "Storfoll Breakthrough"), "a letter lost, k read i<<")
+    AssertTrue(same(Chr(0xDC) "nique Hunt", "Unique Hunt"), "an accented first letter")
+    AssertTrue(same("Null Breol<through", "Null Breakthrough"), "the exact fold still holds")
+    ; other quests stay apart
+    for p in [["Delivery I", "Delivery II"], ["Delivery IV", "Delivery V"], ["Meditation I", "Meditation II"]
+        , ["Null Breakthrough", "Hell Breakthrough"], ["Nul", "Null"], ["Basic Aura Hunt", "Mythic Aura Hunt"]
+        , ["Windy Breakthrough", "Rainy Breakthrough"], ["S", "Storfoll Breakthrough"], ["Storfoll Breokth", "Storfoll Breakthrough"]]
+        AssertTrue(!same(p[1], p[2]), "'" p[1] "' and '" p[2] "' are other quests")
 }
 
 Test_Quests_BlindPressIsNotRepeatedEveryVisit() {

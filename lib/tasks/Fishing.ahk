@@ -255,6 +255,11 @@ class FishingTask {
     ; a title-only read counted a lost fish as caught (2026-10-27 review).
     ; Checked besides failWords, so data\coords.json stays as shipped.
     static FailRe := "i)f[ao][il1|]{2}ed|g[o0]ne\b"     ; also "FoiIed" (l read as I)
+    ; On snow (live 2026-11-24 09:40, tests\screens\fish_failed_card_snowy_*)
+    ; the red title does not read at all and the body reads only "The fis":
+    ; the card counted as gone, the next cast found no panel and re-pathed.
+    ; Checked after CardRe, so a caught fish named "The Fis..." stays caught.
+    static GoneRe := "i)\bthe\s*f[il1|]s(?:h\b|\b)"
     static CardScale := 2
     ; the card's X takes a click only after the mouse has rested on it ~1 s
     ; (live 2026-11-13: closePreMs 450 -> card 3.9 s, 700 + quick retries ->
@@ -445,8 +450,10 @@ class FishingTask {
         ; ---- wait for the bite ----------------------------------------------
         if !quick {
             r := this._WaitBite(ctx, opt)
-            if (r = "stopped")
-                this._LineInForNext(ctx, opt, FishingTask.LineInReadMs, false, true)
+            if (r = "stopped" && this._LineInForNext(ctx, opt, FishingTask.LineInReadMs, false, true) = "bite") {
+                this.deps.log.Call("fishing: the fish bit as the next task came up - landing it first")
+                r := "bite"
+            }
             if (r != "bite")
                 return r
         }
@@ -530,14 +537,19 @@ class FishingTask {
     }
 
     ; -> "failed" | "caught" | "" (no catch card in this text)
-    _CardKind(txt) {
+    _CardKind(txt) => FishingTask.CardKindOf(txt, this._Fc()["result"]["failWords"])
+
+    ; failWords: data\coords.json fishing.result.failWords
+    static CardKindOf(txt, failWords) {
         txt := StrLower(txt)
-        for w in this._Fc()["result"]["failWords"]
+        for w in failWords
             if InStr(txt, w)
                 return "failed"
         if RegExMatch(txt, FishingTask.FailRe)
             return "failed"
-        return RegExMatch(txt, FishingTask.CardRe) ? "caught" : ""
+        if RegExMatch(txt, FishingTask.CardRe)
+            return "caught"
+        return RegExMatch(txt, FishingTask.GoneRe) ? "failed" : ""
     }
 
     ; A catch card still open before a cast covers the panel: close it.
@@ -1003,31 +1015,66 @@ class FishingTask {
     ; the waiting panel shows no readable button ("It's quiet... too quiet."),
     ; the line stayed out and its card covered the next obby (live
     ; 2026-11-11 12:12). A button that reads Fish = the line is in: no click.
+    ; blind -> "bite" when the fish is on the line instead (_FishOn): the
+    ; reel bar is up, or the button reads something else than Exit / Fish
+    ; and the bar follows within BiteOnMs. Live 2026-11-23/24, 7 times in 2
+    ; days: the next task came up as the fish bit, the button read 'This fe'
+    ; / 'This tee' (the bite) or 'Clink / Tru•r' (the reel); its one click
+    ; lost the fish, whose "Fishing Failed" card then covered the next task
+    ; (09:40: the next cast found no panel and re-pathed). The caller lands
+    ; it first, as after a bite already seen. -> "bite" | ""
+    static BiteOnMs := 2000
     _LineInForNext(ctx, opt, waitMs := 0, quiet := false, blind := false) {
         io := this.deps.io
         if (opt.legacyReel || !HasMethod(io, "Ocr"))
-            return
+            return ""
         cctx := CleanupCtx(ctx)
         if cctx.ShouldStop()
-            return
+            return ""
         b := this._Fc()["fishButton"]["rect"]
         waited := 0
         while ((st := this._PanelState()) != "exit") {
+            if (blind && this._ReelUp() && !FishingTask.IsFish(io.Ocr(b*)))
+                return "bite"                   ; (a button that reads Fish: the line is in)
             if (waited >= waitMs || !io.Wait(250, cctx)) {
                 t := Trim(RegExReplace(String(io.Ocr(b*)), "\s+", " "))
                 if FishingTask.IsFish(t)
-                    return                      ; the line is in
+                    return ""                   ; the line is in
+                if (blind && this._FishOn(cctx, t))
+                    return "bite"
                 if blind {
                     this.deps.log.Call("fishing: next task: the button reads '" SubStr(t, 1, 30) "', not Exit - clicked once to reel the line in")
                     FishLogic.ClickAt(io, cctx, [b[1] + b[3] // 2, b[2] + b[4] // 2], 80, 300)
                 } else if !quiet
                     this.deps.log.Call("fishing: next task: the button did not read Exit ('" SubStr(t, 1, 30) "'): line left as it is")
-                return
+                return ""
             }
             waited += 250
         }
         this.deps.log.Call("fishing: line in before the next task")
         FishLogic.ClickAt(io, cctx, [b[1] + b[3] // 2, b[2] + b[4] // 2], 80, 300)
+        return ""
+    }
+
+    ; The fish is on the line (t: the button's text, neither Exit nor Fish):
+    ; the reel prompt, or any other text (the bite) followed by the reel bar
+    ; within BiteOnMs. A button that reads nothing (the 1440p waiting panel
+    ; with a long tip) is a line out with nothing biting.
+    _FishOn(ctx, t) {
+        if (RegExMatch(t, FishingTask.ReelRe) || this._ReelUp())
+            return true
+        if (t = "")
+            return false
+        io := this.deps.io
+        waited := 0
+        while (waited < FishingTask.BiteOnMs) {
+            if !io.Wait(50, ctx)
+                return false
+            waited += 50
+            if this._ReelUp()
+                return true
+        }
+        return false
     }
 
     ; The Fish / Exit button reads Exit. Live 2026-11-20 it read 'EX it' (a
@@ -1088,6 +1135,7 @@ class FishingTask {
         seen := false
         lastUp := 0
         lastClick := -100000
+        blackAt := ""                           ; first all-black pass of the run in a row
         ; empty level learnt from the bar (FishLogic.ReelScan), its source
         em := 0, emOwn := false
         ; the bar's frame: rows to read (narrowed to the one that shows it),
@@ -1108,9 +1156,19 @@ class FishingTask {
                 return "error"
             }
             if FishLogic.AllBlack(rows) {
-                this._LogOnce("fishing: strip capture is all black (exclusive fullscreen?); not clicking")
-                return "error"
+                ; no click on it; given up only when it stays black (a failed
+                ; capture), not on a dark moment of the scene (FishLogic.BlackGraceMs)
+                if (blackAt = "")
+                    blackAt := tGrab
+                if (now.Call() - blackAt >= FishLogic.BlackGraceMs) {
+                    this._LogOnce(FishLogic.BlackMsg(this.state, now.Call() - blackAt))
+                    return "error"
+                }
+                if !io.Wait(rc["pollMs"], ctx)
+                    return "stopped"
+                continue
             }
+            blackAt := ""
             t := now.Call()
             maxGrab := Max(maxGrab, t - tGrab)
             if (polls++)
@@ -1214,9 +1272,11 @@ class FishingTask {
         ys := adv ? [a["y"]] : s["rows"]
         start := now.Call()
         seen := false
+        blackAt := ""
         while (now.Call() - start <= fc["minigameCapMs"]) {
             if ctx.ShouldStop()
                 return "stopped"
+            tGrab := now.Call()
             try {
                 rows := this.deps.grab.Call(z["x1"], z["x2"], ys, z["stride"])
             } catch as e {
@@ -1224,9 +1284,17 @@ class FishingTask {
                 return "error"
             }
             if FishLogic.AllBlack(rows) {
-                this._LogOnce("fishing: strip capture is all black (exclusive fullscreen?); not clicking")
-                return "error"
+                if (blackAt = "")
+                    blackAt := tGrab
+                if (now.Call() - blackAt >= FishLogic.BlackGraceMs) {
+                    this._LogOnce(FishLogic.BlackMsg(this.state, now.Call() - blackAt))
+                    return "error"
+                }
+                if !io.Wait(fc["minigamePollMs"], ctx)
+                    return "stopped"
+                continue
             }
+            blackAt := ""
             if !seen {
                 for row in rows
                     if FishLogic.RowHasColor(row, bar, z["tol"]) {

@@ -202,6 +202,84 @@ Test_LogWatch_FileSwitchAndTruncate() {
     }
 }
 
+; A rejoin: the old client's log gets its last lines AFTER the new client's
+; log (or Roblox's warm-start "RobloxStarter" log) was made, so the newest
+; log flips back to the old one for a moment. Its old lines must not come
+; again as live events (live 2026-11-24 13:27:47: NORMAL, STARFALL and
+; GRAVEYARD, all minutes old, came again with their Discord cards; 11-23
+; 15:37:25: 16 old biomes in one second).
+Test_LogWatch_BackToAnOlderLog_NoReplay() {
+    d := LwTmpDir()
+    try {
+        old := d "\old_Player_A_last.log"
+        FileAppend("", old)
+        lw := LogWatch(d)
+        lw.Poll()
+        s := ""
+        for b in ["NORMAL", "STARFALL", "NORMAL", "GRAVEYARD"]
+            s .= LwRpc("2026-11-24T19:2" A_Index ":00.000Z", 'Equipped \"Sailor\"', b) "`n"
+        FileAppend(s, old, "UTF-8-RAW")
+        FileSetTime("20261124192500", old, "M")
+        AssertEq(LwEvStr(lw.Poll()), "biome:NORMAL|aura:Sailor|biome:STARFALL|biome:NORMAL|biome:GRAVEYARD", "BackToOlder: the old client's biomes, once")
+        ; the new client's log (the starter log of a warm start: no presence)
+        starter := d "\new_Player_B_last.log"
+        FileAppend("2026-11-24T19:27:49.085Z,0.08,1,6,Warning [FLog::RobloxStarter] Starting module: Logging`n", starter, "UTF-8-RAW")
+        FileSetTime("20261124192749", starter, "M")
+        AssertEq(lw.Poll().Length, 0, "BackToOlder: the starter log has nothing")
+        ; the old client writes its last lines: its log is the newest again
+        FileAppend("2026-11-24T19:27:50.000Z,1.0,1,6,Info [FLog::Output] shutting down`n", old, "UTF-8-RAW")
+        FileSetTime("20261124192750", old, "M")
+        AssertEq(LwEvStr(lw.Poll()), "", "BackToOlder: no old biome or aura again")
+        ; a real change written to it later still comes, once
+        FileAppend(LwRpc("2026-11-24T19:28:00.000Z", 'Equipped \"Sailor\"', "RAINY") "`n", old, "UTF-8-RAW")
+        FileSetTime("20261124192800", old, "M")
+        AssertEq(LwEvStr(lw.Poll()), "biome:RAINY", "BackToOlder: new lines of the old log still read")
+        ; and back to the new log: only what it got since
+        FileAppend(LwRpc("2026-11-24T19:28:10.000Z", 'Equipped \"Sailor\"', "WINDY") "`n", starter, "UTF-8-RAW")
+        FileSetTime("20261124192810", starter, "M")
+        AssertEq(LwEvStr(lw.Poll()), "biome:WINDY", "BackToOlder: the new log from where it was left")
+    } finally {
+        LwTmpClean(d)
+    }
+}
+
+; Windows updates the time a folder listing shows for a file only when a
+; handle on it closes, not on each write: Roblox keeps its log open, so the
+; running client's log looked older than a dead one closed a moment after
+; it was made (a rejoin), and the macro read the dead log for 11.5 hours
+; (live 2026-11-23 15:38 .. 11-24 03:06: no biome or aura read at all, then
+; the old client's biome and join came at once when it closed).
+Test_LogWatch_ActiveLogWithAStaleListingTime() {
+    d := LwTmpDir()
+    w := ""
+    try {
+        live := d "\0.748_20261123T213758Z_Player_G_last.log"
+        FileAppend(LwRpc("2026-11-23T21:38:02.000Z", 'Equipped \"Sailor\"', "RAINY") "`n", live, "UTF-8-RAW")
+        FileSetTime("20261123153802", live, "M")
+        dead := d "\0.748_20261123T120000Z_Player_D_last.log"
+        FileAppend(LwRpc("2026-11-23T21:37:50.000Z", 'Equipped \"Sailor\"', "WINDY") "`n", dead, "UTF-8-RAW")
+        FileSetTime("20261123153805", dead, "M")      ; closed after the new log was made
+        FileSetTime("20261123120000", dead, "C")
+        ; the running client keeps writing its log (handle open: the listing stays old)
+        w := FileOpen(live, 0x3 | 0x700, "UTF-8-RAW")
+        w.Seek(0, 2)
+        lw := LogWatch(d)
+        lw.Poll()
+        w.Write(LwRpc("2026-11-23T21:40:00.000Z", 'Equipped \"Sailor\"', "PUMPKIN MOON") "`n")
+        w.Read(0)
+        t := A_TickCount + LogWatch.REFRESH_MS
+        LogWatch.TickFn := () => t
+        evs := lw.Poll()
+        AssertEq(lw.Path, live, "the running client's log is read")
+        AssertTrue(InStr(LwEvStr(evs), "biome:PUMPKIN MOON"), "its new biome comes: " LwEvStr(evs))
+    } finally {
+        LogWatch.TickFn := () => A_TickCount
+        if IsObject(w)
+            w.Close()
+        LwTmpClean(d)
+    }
+}
+
 Test_LogWatch_NoLogYet() {
     d := LwTmpDir()
     try {

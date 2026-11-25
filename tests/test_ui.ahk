@@ -216,6 +216,28 @@ Test_Ui_NormStateAndWebhookUrl() {
     AssertTrue(!UiLogic.IsWebhookUrl("https://evil.example/api/webhooks/1/abc"), "other host refused")
 }
 
+; Bug hunt 2026-11-25: the setup wizard, the Discord page and the PC check
+; took any https://discord.com/api/webhooks/<anything> link, but the sender
+; (Webhook._Dispatch) only sends to .../webhooks/<id>/<token>: a link cut
+; short when pasted (no token) or a /slack or /github form was accepted and
+; "OK" in the check, then every alert was skipped. One rule for both.
+Test_Ui_WebhookUrlSameRuleAsTheSender() {
+    good := ["https://discord.com/api/webhooks/123456789012345678/AbC-d_e"
+        , "https://canary.discord.com/api/webhooks/1/abc", "https://discordapp.com/api/v10/webhooks/1/abc?wait=true"
+        , " https://discord.com/api/webhooks/1/abc "]
+    bad := ["https://discord.com/api/webhooks/123456789012345678", "https://discord.com/api/webhooks/123456789012345678/"
+        , "https://discord.com/api/webhooks/1/abc/slack", "https://discord.com/api/webhooks/1/abc/github"
+        , "https://discord.com/api/webhooks/notanid/abc", "https://discord.com/api/webhooks/1/abc def"]
+    for u in good {
+        AssertTrue(UiLogic.IsWebhookUrl(u), "accepted: " u)
+        AssertTrue(RegExMatch(Trim(u), Webhook._UrlRe), "the sender sends to " u)
+    }
+    for u in bad {
+        AssertTrue(!RegExMatch(u, Webhook._UrlRe), "the sender skips " u)
+        AssertTrue(!UiLogic.IsWebhookUrl(u), "refused like the sender: " u)
+    }
+}
+
 Test_Ui_TitleCase() {
     AssertEq(UiLogic.TitleCase("gear b"), "Gear B", "gear b")
     AssertEq(UiLogic.TitleCase("mixed potion"), "Mixed Potion", "mixed potion")

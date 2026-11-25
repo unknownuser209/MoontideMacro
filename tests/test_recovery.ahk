@@ -702,6 +702,58 @@ Test_Recovery_DisconnectRejoinClearsAPendingUnlock() {
     AssertEq(rig.task.Unlocking(), false, "the unlock is done with it")
 }
 
+; live 2026-11-23 15:37: Start with Roblox closed; the last session's log
+; ended in a public join (state.ghost set). The no-window rejoin opened the
+; private server, state.ghost stayed set and the next tick closed the fresh
+; private client and rejoined a second time.
+Test_Recovery_DisconnectRejoinClearsAGhost() {
+    rig := RcRig()
+    rig.state.ghost := true
+    rig.win := false                            ; Roblox is not open
+    AssertEq(rig.task.CanRun(rig.state), true, "no window: runs")
+    AssertEq(rig.task.Run(rig.Ctx()), 1, "rejoined the private server")
+    AssertEq(rig.runs.Length, 1, "one rejoin")
+    AssertEq(rig.state.ghost, false, "a private server join is no ghost server")
+    AssertEq(rig.task.CanRun(rig.state), false, "nothing left to do")
+    AssertEq(rig.task.Rejoining(rig.state), false, "no rejoin waiting")
+    AssertEq(rig.closes, 0, "the fresh client is not closed")
+}
+
+; live 2026-11-24 23:23: WinClose shut the locked client's window at once and
+; the link was opened the same second; the old RobloxPlayerBeta.exe still
+; ran until 23:23:10 (its log), the new client started at 23:23:05 and
+; crashed at 23:25:04 (Roblox's crash handler log): "Roblox window gone", a
+; second rejoin. 5 of 8 such close-and-relaunch rejoins in the logs crashed
+; within 2 min, none of the 6 that launched with no old client left.
+RcCloseApi(f) {
+    return {
+        hwnd: (_) => f.win ? 77 : 0,
+        pid: (_, h) => 4242,
+        winClose: (_, h) => (f.log.Push("winclose " h), f.win := false),
+        winWaitClose: (_, h, sec) => !f.win,
+        procWait: (_, pid, sec) => (f.log.Push("wait " pid), f.alive ? pid : 0),
+        procClose: (_, x) => (f.log.Push("kill " x), f.alive := false)
+    }
+}
+RcLogHas(arr, s) {
+    for l in arr
+        if (l = s)
+            return true
+    return false
+}
+Test_Recovery_CloseWaitsForTheOldProcess() {
+    f := {win: true, alive: true, log: []}
+    AssertEq(RecoveryTask._CloseRoblox(RcCloseApi(f)), true, "closed")
+    AssertTrue(RcLogHas(f.log, "wait 4242"), "waited for the window's process to end, not only its window")
+    AssertTrue(RcLogHas(f.log, "kill 4242"), "a process still there after the wait is ended before the relaunch")
+    g := {win: true, alive: false, log: []}
+    AssertEq(RecoveryTask._CloseRoblox(RcCloseApi(g)), true, "closed")
+    AssertTrue(RcLogHas(g.log, "wait 4242") && !RcLogHas(g.log, "kill 4242"), "a process that ended by itself is left alone")
+    h := {win: false, alive: true, log: []}
+    AssertEq(RecoveryTask._CloseRoblox(RcCloseApi(h)), true, "no window: nothing to close")
+    AssertEq(h.log.Length, 0, "nothing done")
+}
+
 ; App asks this (no screen read) to let a waiting rejoin win over a focus
 ; pause (live 2026-11-16: a crash paused the macro for 2.5 h)
 Test_Recovery_RejoiningTellsAWaitingRejoin() {

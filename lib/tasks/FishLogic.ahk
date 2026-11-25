@@ -785,12 +785,30 @@ class FishLogic {
             state.Bump(key, n)
     }
 
+    ; Every pixel of the strip exactly 0x000000: a failed capture (exclusive
+    ; fullscreen) stays so; the NULL biome's dark screen can be so for a
+    ; moment (live 2026-11-25 09:29:02: one catch given up in NULL, while the
+    ; two reels before it in NULL read the bar and clicked normally).
     static AllBlack(rows) {
         for row in rows
             for c in row
                 if (c != 0)
                     return false
         return true
+    }
+
+    ; An all-black strip is not clicked on; the catch is given up only once
+    ; it has stayed all black this long.
+    static BlackGraceMs := 1500
+
+    ; The log line for a strip that stayed all black: the NULL biome is
+    ; named instead of blaming the capture.
+    static BlackMsg(state, ms) {
+        biome := ""
+        try biome := (IsObject(state) && state.HasProp("biome")) ? String(state.biome) : ""
+        if (StrUpper(Trim(biome)) = "NULL")
+            return "fishing: strip all black for " Round(ms) " ms in the NULL biome (its dark screen); not clicking"
+        return "fishing: strip capture is all black for " Round(ms) " ms (exclusive fullscreen?); not clicking"
     }
 
     static FocusRetryMs := 2000

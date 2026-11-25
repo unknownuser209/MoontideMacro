@@ -170,6 +170,7 @@ class MerchantTask {
         ; press the game's own button, never read the stock and type it)
         maxBtn: {x: 1660, y: 798, w: 252, h: 40},
         buy: {x: 1572, y: 881},                           ; Purchase for (N Coins)
+        price: {x: 1190, y: 857, w: 770, h: 48},          ; that button's text: "Purchase for (300 Points)"
         notice: {x: 896, y: 1203, w: 768, h: 45}          ; "You purchased 10 Lucky Potions"
     }
     static NameRe := Map("Mari", "i)m[ao]r[il1]", "Jester", "i)j[ae]st[ae]r")
@@ -303,6 +304,57 @@ class MerchantTask {
             return want.tier = 0 && GameLists.Distance(SubStr(n.name, 1, StrLen(want.name)), want.name) <= MerchantTask.Slack(want.name)
         return n.tier = want.tier && GameLists.Distance(n.name, want.name) <= MerchantTask.Slack(want.name)
     }
+
+    ; OCR of Layout.notice is a "You purchased ..." notice (misreads folded:
+    ; 'purchosed').
+    static Purchased(text) => InStr(MerchantTask.Norm(text), MerchantTask.Norm("purchased")) > 0
+
+    ; The notice ("You purchased 20 Strange Potion Is", tests\screens\
+    ; jester_purchased) names `item`: the words after "purchased" end with
+    ; its name, only the count before it. The last word must be the item's
+    ; own (or its plural "s"; a misread letter only in a word of 4+ letters),
+    ; so another tier or size never passes ("Potion Is" is not II, "Lucky
+    ; Potions" is not Lucky Potion L); the words before it within Slack.
+    static NoticeNames(text, item) {
+        words := [], at := 0
+        for w in StrSplit(String(text), [" ", "`t", "`r", "`n"]) {
+            f := MerchantTask.Norm(w)
+            if (f = "")
+                continue
+            if (!at && InStr(f, MerchantTask.Norm("purchased"))) {
+                at := 1
+                continue
+            }
+            if at
+                words.Push(f)
+        }
+        want := []
+        for w in StrSplit(String(item), [" ", "`t"])
+            if ((f := MerchantTask.Norm(w)) != "")
+                want.Push(f)
+        n := want.Length
+        if (!at || !n || words.Length < n || words.Length > n + 1)     ; + the count
+            return false
+        k := words.Length - n
+        last := words[words.Length], wl := want[n]
+        if !(last == wl || last == wl "s" || (StrLen(wl) >= 4
+            && Min(GameLists.Distance(last, wl), GameLists.Distance(last, wl "s")) <= MerchantTask.Slack(wl)))
+            return false
+        a := "", b := ""
+        Loop n - 1
+            a .= words[k + A_Index], b .= want[A_Index]
+        return GameLists.Distance(a, b) <= MerchantTask.Slack(b)
+    }
+
+    ; The Purchase button's text ("Purchase for (300 Points)") -> "300 Points",
+    ; or "" when it does not read.
+    static Price(text) {
+        t := Trim(RegExReplace(String(text), "\s+", " "))
+        return RegExMatch(t, "i)\bf[o0]r\s*\(?\s*([^()]*?)\s*\)?$", &m) ? m[1] : ""
+    }
+
+    ; "5 Void Coins" -> "Void Coins" (what the item costs in)
+    static Currency(price) => Trim(RegExReplace(String(price), "^\S*\d\S*\s+"))
 
     ; "Stock Left: 10" -> 10, or "" when unreadable. The font's 1 and 0 read
     ; as I and O ("Stock Left: IO").
@@ -843,11 +895,14 @@ class MerchantTask {
         ; its Buy and spend Robux. Closed with Esc, nothing clicked.
         if (env.Unsafe("merchant") != "")
             return spec.name ": not bought (a Roblox purchase prompt was up, closed with Esc)"
+        ; a notice still up from the item before is not this one's: with one
+        ; up, only a notice naming this item counts (NoticeNames)
+        left := MerchantTask.Purchased(this._Ocr(L.notice))
         env.Click(L.buy)
         waited := 0
         Loop {
             n := this._Ocr(L.notice)
-            if (RegExMatch(n, "i)purch[ao]sed") || GameText.Has(n, "purchased")) {
+            if (MerchantTask.Purchased(n) && (!left || MerchantTask.NoticeNames(n, spec.name))) {
                 env.Log("merchant: bought " qty " " spec.name " from " who " (the 'You purchased' notice read)")
                 return "bought " qty " " spec.name
             }
@@ -855,8 +910,18 @@ class MerchantTask {
                 break
             waited += MerchantTask.PollMs
         }
-        env.Log("merchant: Purchase clicked for " qty " " spec.name " at " who " (no 'You purchased' notice seen)")
-        return "Purchase clicked for " qty " " spec.name " (no 'You purchased' notice seen)"
+        ; live 2026-11-22 .. 11-24: 14 such clicks, none a real purchase
+        ; (Jester's Oblivion Potion costs 5 Void Coins and was never once
+        ; bought; Mari's 500,000-coin Void Coin and 10-20 Mixed Potions after
+        ; other buys). The game sells nothing it cannot be paid for and
+        ; shows no "You purchased": the price is logged to say so.
+        p := Trim(RegExReplace(this._Ocr(L.price), "\s+", " "))
+        price := MerchantTask.Price(p)
+        cur := MerchantTask.Currency(price)
+        why := "most likely not bought: not enough " (cur != "" ? cur : "money") "?"
+        env.Log("merchant: Purchase clicked for " qty " " spec.name " at " who " (no 'You purchased' notice seen; the button reads '"
+            . p "', the notice box '" Trim(RegExReplace(n, "\s+", " ")) "'): " why)
+        return spec.name ": no 'You purchased' notice seen, " (price != "" ? "costs " price ", " : "") why
     }
 
     ; -> {name, qty, all} or "". qty "all" / "max" (any case) -> all true,

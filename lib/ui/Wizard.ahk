@@ -42,7 +42,7 @@ class SetupWizard {
     static Pages := ["Lang", "Welcome", "Check", "Server", "Discord", "Run", "Done"]
     static Steps => SetupWizard.Pages.Length
     static RunKeys := [["General.fishing", "Fish when nothing else is due", 1], ["Quests.enabled", "Quest board", 1]
-        , ["Craft.enabled", "Crafting at the Fisher", 0], ["Merchant.enabled", "Buy from Mari and Jester", 1]
+        , ["Craft.enabled", "Crafting at the Fisher", 1], ["Merchant.enabled", "Buy from Mari and Jester", 1]
         , ["MemoryMatch.enabled", "Memory Match (every 12 hours)", 0]]
 
     static ShouldShow(cfg) => !cfg.Get("UI.setupDone", 0)

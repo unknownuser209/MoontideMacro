@@ -424,7 +424,11 @@ Test_ChatWatch_BossOncePerSpawnAndNotAtStart() {
     AssertEq(bosses.Length, 1, "still in the chat a minute later: once")
     clock.t += ChatWatch.BossGapSec * 1000
     cw.Check()
-    AssertEq(bosses.Length, 2, "15 min later: a new spawn")
+    AssertEq(bosses.Length, 1, "the same line 15 min later: still once")
+    text := "Sinister S. has spawned`nhi`nSinister S. has spawned"
+    clock.t += 5000
+    cw.Check()
+    AssertEq(bosses.Length, 2, "a second line: a new spawn")
     ; at the start the line already there is old
     bosses := []
     cw2 := mk(true)
@@ -435,6 +439,51 @@ Test_ChatWatch_BossOncePerSpawnAndNotAtStart() {
     cw2.Check()
     AssertEq(bosses.Length, 1, "a new boss line after the start: announced")
     AssertEq(bosses[1], "p", "P")
+}
+
+; Live: the line of a spawn stays in a quiet chat, and 15 min after it was
+; read it was announced again, the boss long dead and its biome over:
+; 2026-11-23 00:33:39 Sinister S. in HELL (spawn 00:18, dead 00:28),
+; 11-24 07:57:39 Sinister P. in SNOWY (07:42), 10:37:21 P in RAINY (10:22,
+; dead 10:28). A new spawn is a new line: one more boss line than the
+; chat has shown, and the old one counts until it has been gone 15 min.
+Test_ChatWatch_OldBossLineIsNotASecondSpawn() {
+    clock := QmClock(0)
+    line := "[Graveyard]: Sinister S. has spawned!"
+    text := line
+    bosses := []
+    cw := ChatWatch({io: QmIO(), cal: QmCal(, Map("chat_rect", {x: 10, y: 20, w: 400, h: 200}))
+        , ocr: (*) => text, now: () => clock.Now(), onBoss: (b) => bosses.Push(b), startOld: true})
+    text := "Mari has arrived"
+    cw.Check()                                         ; the start: no boss line yet
+    text := line
+    clock.t := 5000
+    cw.Check()
+    AssertEq(bosses.Length, 1, "the spawn")
+    ; the line stays; OCR misses it now and then (reads 5 s apart)
+    t := 5000
+    Loop 400 {
+        t += 5000, clock.t := t
+        text := (Mod(A_Index, 60) < 3) ? "Mari has arrived" : line
+        cw.Check()
+    }
+    AssertEq(bosses.Length, 1, "the same line for 33 min, missed a few reads: no second message")
+    ; a new spawn while the old line is still there
+    text := line "`n" line
+    clock.t := t + 5000
+    cw.Check()
+    AssertEq(bosses.Length, 2, "a second line: the next spawn")
+    ; both scroll away, gone 15 min; a new one later is a spawn again
+    text := "Mari has arrived"
+    t := clock.t
+    Loop 190 {
+        t += 5000, clock.t := t
+        cw.Check()
+    }
+    text := line
+    clock.t := t + 5000
+    cw.Check()
+    AssertEq(bosses.Length, 3, "after the old lines left: a new line is a spawn")
 }
 
 ; review: S then P are two bosses (two messages); "Sinister 5000" is no boss

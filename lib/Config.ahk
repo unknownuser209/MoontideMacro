@@ -298,6 +298,13 @@ class Config {
         up["check"] := "1"            ; 1 = look for a new version once per start
         up["auto"] := "0"             ; 0 = ask in the dashboard, 1 = install without asking
         d["Update"] := up
+        ; Dev copy only (Help > Dev tools): dim every monitor while the macro
+        ; runs, invisible to its screen reads and recordings (lib/ScreenDim.ahk)
+        dv := Config._CIMap()
+        dv["dim"] := "0"
+        dv["dimPct"] := "95"          ; how dark, 5..98
+        dv["lights"] := "1"           ; 1 = the PC's lights fade with it (dev\lights helper, when built)
+        d["Dev"] := dv
         return d
     }
 

@@ -302,3 +302,31 @@ Test_Profiles_ThemeNeverShared() {
         try DirDelete(src, true)
     }
 }
+
+; Bug hunt 2026-11-25: the "never above 100000" rule (meant for intervals:
+; Recovery.afkMin and friends) also caught the aura rarity thresholds, whose
+; defaults are 1 in 100,000,000 (clips) and 1 in 10,000,000 (Discord ping):
+; they were never exported, and an import of them was skipped.
+Test_Profiles_RarityThresholdsShared() {
+    dir := PfDir(), src := PfDir()
+    try {
+        cfg := PfCfg(dir)
+        cfg.Set("Medal.auraMinRarity", "500000000")
+        cfg.Set("AuraAlert.minRarity", "50000000")
+        text := Profiles.ExportText(cfg)
+        AssertTrue(RegExMatch(text, "m)^auraMinRarity=500000000\r?$"), "clip threshold exported")
+        AssertTrue(RegExMatch(text, "m)^minRarity=50000000\r?$"), "ping threshold exported")
+        cfg2 := Config.Load(src)
+        r := Profiles.ImportText(cfg2, "[Medal]`r`nauraMinRarity=100000000000`r`n[AuraAlert]`r`nminRarity=20000000`r`n")
+        AssertEq(r.n, 2, "both imported")
+        AssertEq(String(cfg2.Get("Medal.auraMinRarity", "")), "100000000000", "clip threshold merged (1 in 100 billion)")
+        AssertEq(String(cfg2.Get("AuraAlert.minRarity", "")), "20000000", "ping threshold merged")
+        ; the interval guard still holds
+        AssertEq(Profiles.Shareable("Recovery", "afkMin", "500000"), "", "a huge interval is still refused")
+        AssertEq(Profiles.Shareable("General", "sellEvery", "100001"), "", "over 100000 refused for a small default")
+        AssertEq(Profiles.Shareable("General", "sellEvery", "12345678901"), "", "11 digits refused for a small default")
+    } finally {
+        try DirDelete(dir, true)
+        try DirDelete(src, true)
+    }
+}

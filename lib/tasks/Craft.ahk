@@ -207,6 +207,20 @@ class CraftTask {
     ; split is the route's "portalAt" (steps up to the portal), else the
     ; shipped route's own (PortalRoute: its step count and length).
     static PortalRoute := {steps: 88, ms: 38123, at: 86}
+    ; The black frame comes only ~0.25 s after the walk to the portal ends
+    ; (recorded: in at 35.3 s, black at ~36.2 s, the walk's last key up at
+    ; 35.95 s): a walk a little ahead went black while its last steps still
+    ; played (live 2026-11-25 03:24: "no dark frame", the screen saved at
+    ; the miss shows the player inside). The walk's tail (from the last
+    ; moment no key is held, at least TailMinMs before its end) is played
+    ; with the black frame looked for (PortalTail, _WatchCtx).
+    static TailMinMs := 1500
+    ; A walk that stopped in front of the portal (live 2026-11-25 03:45,
+    ; 04:37: its corridor, its glow beside the player) holds the last key
+    ; walked into it NudgeMs more and waits NudgeWaitMs, before the respawn
+    ; and the whole walk again (~40 s).
+    static NudgeMs := 800
+    static NudgeWaitMs := 2500
     static TeleportWaitMs := 4500
     static TeleportPollMs := 100
     static WalkTries := 3
@@ -731,6 +745,42 @@ class CraftTask {
         return {to: a, inside: b}
     }
 
+    ; The walk to the portal split where its tail starts: the last moment no
+    ; key is held (so the head's end releases nothing the tail still needs)
+    ; at least TailMinMs before the end. None: the whole walk is the tail.
+    ; -> {head, tail} (Arrays of steps)
+    static PortalTail(steps) {
+        held := Map(), cut := 0, left := 0
+        for st in steps
+            left += st.ms
+        for i, st in steps {
+            left -= st.ms
+            if (st.action = "down")
+                held[StrLower(st.key)] := true
+            else if (st.action = "up" && held.Has(StrLower(st.key)))
+                held.Delete(StrLower(st.key))
+            if (i < steps.Length && held.Count = 0 && left >= CraftTask.TailMinMs)
+                cut := i
+        }
+        head := [], tail := []
+        for i, st in steps
+            (i <= cut ? head : tail).Push(st)
+        return {head: head, tail: tail}
+    }
+
+    ; The movement key (W A S D) pressed last in steps, lowercased; "" none.
+    static LastMoveKey(steps) {
+        k := ""
+        for st in steps
+            if (st.action = "down" && RegExMatch(st.key, "i)^[wasd]$"))
+                k := StrLower(st.key)
+        return k
+    }
+
+    ; A ctx for a walk that looks for the black frame at every wait slice
+    ; (Input.Wait asks ShouldStop): .dark latches it; stops as ctx does.
+    _WatchCtx(ctx) => CraftPortalWatch(ctx, () => this._Dark())
+
     ; The black teleport frame: every DarkPts sample dark.
     _Dark() {
         for pt in CraftTask.DarkPts {
@@ -742,11 +792,13 @@ class CraftTask {
     }
 
     ; After the walk to the portal: the teleport seen (the black frame, then
-    ; light again; or the banner) within TeleportWaitMs. -> 1, 0 not, -1 stopped
-    _WaitTeleport(ctx) {
+    ; light again; or the banner) within waitMs. dark: the black frame was
+    ; already seen during the walk (_WatchCtx). -> 1, 0 not, -1 stopped
+    _WaitTeleport(ctx, dark := false, waitMs := "") {
         env := this._env
         b := CraftTask.BannerBox
-        waited := 0, dark := false
+        waited := 0, dark := dark ? true : false
+        waitMs := (waitMs = "") ? CraftTask.TeleportWaitMs : waitMs
         this._bannerRead := ""
         Loop {
             if this._Dark() {
@@ -760,7 +812,7 @@ class CraftTask {
                 if RegExMatch(t, CraftTask.BannerRe)
                     return 1
             }
-            if (waited >= CraftTask.TeleportWaitMs)
+            if (waited >= waitMs)
                 return dark ? 1 : 0
             if !env.Wait(CraftTask.TeleportPollMs, ctx)
                 return -1
@@ -769,21 +821,37 @@ class CraftTask {
     }
 
     ; Walks the cauldron route: to the portal, the teleport waited for, then
-    ; inside. No teleport: respawn and walk again (WalkTries); after the last
-    ; try the rest is walked anyway (F then reports what it finds).
-    ; -> true, false stopped
+    ; inside. The walk's tail is watched for the black frame (PortalTail). No
+    ; teleport: the last key walked into the portal is held NudgeMs more
+    ; (a walk that stopped in front of it), then respawn and walk again
+    ; (WalkTries); after the last try the rest is walked anyway (F then
+    ; reports what it finds). -> true, false stopped
     _WalkToCauldron(ctx, steps) {
         env := this._env
         io := env.io
         split := CraftTask.PortalSplit(steps, this._portalAt)
         if !IsObject(split)
             return Input.PlayRoute(steps, ctx, io)
+        parts := CraftTask.PortalTail(split.to)
+        nk := CraftTask.LastMoveKey(split.to)
         Loop CraftTask.WalkTries {
             if (A_Index > 1 && !Input.ResetToSpawn(ctx, io))
                 return false
-            if !Input.PlayRoute(split.to, ctx, io)
+            if (parts.head.Length && !Input.PlayRoute(parts.head, ctx, io))
                 return false
-            t := this._WaitTeleport(ctx)
+            w := this._WatchCtx(ctx)
+            if !Input.PlayRoute(parts.tail, w, io)
+                return false
+            t := this._WaitTeleport(ctx, w.dark)
+            if (t = 0 && nk != "") {
+                w := this._WatchCtx(ctx)
+                if !Input.PlayRoute([[nk, "down", CraftTask.NudgeMs], [nk, "up", 0]], w, io)
+                    return false
+                t := this._WaitTeleport(ctx, w.dark, CraftTask.NudgeWaitMs)
+                if (t > 0)
+                    env.Log("craft: the walk stopped short of the portal: nudged into the portal (" StrUpper(nk) " held "
+                        . Round(CraftTask.NudgeMs / 1000, 1) " s more, walk " A_Index ")")
+            }
             if (t < 0)
                 return false
             if t {
@@ -802,7 +870,8 @@ class CraftTask {
                     env.Log("craft: screen where the walk missed the portal saved to " shot)
             }
             env.Log("craft: the walk did not go through the portal into Stella's Sanctuary (walk " A_Index "/" CraftTask.WalkTries
-                . "; no dark frame in " Round(CraftTask.TeleportWaitMs / 1000, 1) " s, banner read: '" this._bannerRead "')"
+                . "; no dark frame in " Round(CraftTask.TeleportWaitMs / 1000, 1) " s" (nk != "" ? " nor after the nudge" : "")
+                . ", banner read: '" this._bannerRead "')"
                 . (A_Index < CraftTask.WalkTries ? ": respawning to walk again" : ""))
         }
         return Input.PlayRoute(split.inside, ctx, io)
@@ -1965,4 +2034,23 @@ class CraftTask {
         ; fishing spot (no fishing panel) and walks back on its own.
         return Input.ResetToSpawn(ctx, io)
     }
+}
+
+; The ctx a walk into the portal is played with (CraftTask._WatchCtx): each
+; ShouldStop (Input.Wait asks it every slice) also looks for the black
+; teleport frame until it is seen once (.dark); it stops as ctx does.
+class CraftPortalWatch {
+    __New(ctx, darkFn) {
+        this._ctx := ctx
+        this._darkFn := darkFn
+        this.dark := false
+    }
+    ShouldStop() {
+        if !this.dark
+            this.dark := (this._darkFn)() ? true : false
+        return IsObject(this._ctx) && this._ctx.ShouldStop()
+    }
+    IsHalted() => CleanupCtx.Halted(this._ctx)
+    Stop() => (IsObject(this._ctx) && HasMethod(this._ctx, "Stop")) ? this._ctx.Stop() : ""
+    Pause() => (IsObject(this._ctx) && HasMethod(this._ctx, "Pause")) ? this._ctx.Pause() : ""
 }

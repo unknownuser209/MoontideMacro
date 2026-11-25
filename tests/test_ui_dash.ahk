@@ -431,6 +431,31 @@ Test_Dashboard_SellEveryMinClipHotkeyQuestDismiss() {
     }
 }
 
+; Bug hunt 2026-11-25: Daily quests "Check every" over 720 min was saved as
+; typed, and DailyQuestsTask.IntervalMs (5..720) then ran every 30 min: a
+; player who typed 1440 (once a day) got 48 visits a day. The field keeps
+; to the range the task reads.
+Test_Dashboard_DailyQuestsIntervalInRange() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        d.Ctrl("DailyQuests.intervalMin").Value := "1440"
+        AssertTrue(d.SavePage("Quests"), "quests saved")
+        AssertEq(cfg.Get("DailyQuests.intervalMin", 30), 720, "clamped to the task's longest interval")
+        AssertEq(d.Ctrl("DailyQuests.intervalMin").Value, "720", "field shows what is used")
+        t := DailyQuestsTask({cfg: cfg})
+        AssertEq(t.IntervalMs(), 720 * 60000, "the task uses the saved interval")
+        d.Ctrl("DailyQuests.intervalMin").Value := "2"
+        AssertTrue(d.SavePage("Quests"), "quests saved again")
+        AssertEq(cfg.Get("DailyQuests.intervalMin", 30), 5, "clamped to the shortest")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
 ; ---- rebrand: one app-name constant drives every user-visible title -----------
 
 Test_Rebrand_AppNameUsedEverywhere() {
@@ -1827,6 +1852,83 @@ Test_Wizard_StepsSaveAndSkip() {
         try DirDelete(dir, true)
         if (dir2 != "")
             try DirDelete(dir2, true)
+    }
+}
+
+; Bug hunt 2026-11-25: an older settings.ini has no Craft.enabled; the fish
+; shop then buys (CraftTask and the Craft page read 1), but the wizard (Help >
+; Check & help runs it again) showed "Crafting at the Fisher" off and its
+; Next wrote Craft.enabled=0, switching the shop off unasked. A new install
+; still starts off (settings.ini is made with Craft.enabled=0).
+Test_Wizard_RunPageDefaultsMatchTheCode() {
+    dir := UiDashTmp()
+    w := ""
+    try {
+        FileAppend("[UI]`r`nsetupDone=1`r`n[General]`r`nvip=1`r`n", dir "\settings.ini", "UTF-8")
+        cfg := Config.Load(dir)
+        w := SetupWizard(cfg)
+        Loop 5
+            w.Next()
+        AssertEq(w.Step, 6, "what to run")
+        d := Dashboard(Config.Load(UiDashTmp()))
+        try {
+            for k in SetupWizard.RunKeys
+                for b in d._binds
+                    if (b.key = k[1])
+                        AssertEq(k[3], b.def, k[1] ": the wizard's default is the dashboard's")
+        } finally {
+            try DirDelete(d.cfg.dir, true)
+            UiDashClose(d)
+        }
+        AssertEq(w.Ctrl("run:Craft.enabled").Value, 1, "no Craft.enabled: shown on, as the shop runs")
+        w.Next()
+        AssertEq(Config.Load(dir).Get("Craft.enabled", 1), 1, "Next keeps the shop on")
+        w.Destroy()
+        w := ""
+        ; a new install: settings.ini says 0, the wizard shows off
+        dir2 := UiDashTmp()
+        try {
+            w := SetupWizard(Config.Load(dir2))
+            Loop 5
+                w.Next()
+            AssertEq(w.Ctrl("run:Craft.enabled").Value, 0, "new install: the shop starts off")
+        } finally {
+            try w.Destroy()
+            w := ""
+            try DirDelete(dir2, true)
+        }
+    } finally {
+        try w.Destroy()
+        try DirDelete(dir, true)
+    }
+}
+
+; Bug hunt 2026-11-25: a webhook row's MENTION typed as a name ("@me") or
+; "@everyone" was saved and then never pinged anyone (Webhook.NormalizeMention
+; drops it), though the role pings field next to it is checked "like the
+; webhook MENTION column". The column is now checked on Save too.
+Test_Dashboard_WebhookMentionChecked() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        d.HookAdd()
+        d.Ctrl("hook1.url").Value := "https://discord.com/api/webhooks/123456789012345678/TOKENmention_abc"
+        for bad in ["@everyone", "@here", "@SomeName", "SomeName"] {
+            d.Ctrl("hook1.men").Value := bad
+            AssertEq(d.SavePage("Webhooks"), false, "mention " bad " refused")
+            AssertEq(cfg.Webhooks().Length, 0, "nothing saved with " bad)
+        }
+        AssertTrue(InStr(d._PageByName("Webhooks").status.Text, "Not saved"), "the refusal is shown")
+        for good in ["", "123456789012345678", "<@123456789012345678>", "&123456789012345678", "<@&123456789012345678>"] {
+            d.Ctrl("hook1.men").Value := good
+            AssertTrue(d.SavePage("Webhooks"), "mention '" good "' saved")
+        }
+        AssertEq(cfg.Webhooks()[1]["mention"], "<@&123456789012345678>", "the role mention kept")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
     }
 }
 

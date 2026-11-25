@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Config.ahk
 #Include %A_LineFile%\..\LogBundle.ahk
+#Include %A_LineFile%\..\I18n.ahk
 ; ---------------------------------------------------------------------------
 ; Profiles: one-click setting sets, and settings export / import (Settings >
 ; Profiles). Pure logic on a Config; the Dashboard only adds buttons.
@@ -153,12 +154,18 @@ class Profiles {
             return ""
         ; a number setting (default all digits, or Craft.qty_<id>) takes a
         ; whole number only
-        if ((RegExMatch(Profiles.DefaultOf(path), "^\d+$") || RegExMatch(path, "i)^Craft\.qty_")) && !RegExMatch(v, "^\d{1,10}$"))
+        def := Profiles.DefaultOf(path)
+        num := RegExMatch(def, "^\d+$") || RegExMatch(path, "i)^Craft\.qty_")
+        ; an aura rarity threshold (default 1 in 10,000,000 and more) goes
+        ; to 1 in 999 trillion; every other number stays under 100000
+        big := RegExMatch(def, "^\d{7,15}$") && Integer(def) > 100000
+        if (num && !RegExMatch(v, big ? "^\d{1,15}$" : "^\d{1,10}$"))
             return ""
         ; and a sane one: 0 only where the default is 0 (0 = off / no
-        ; limit), never above 100000 (Recovery.afkMin=0 tapped Space every tick)
-        if (RegExMatch(v, "^\d+$") && (RegExMatch(Profiles.DefaultOf(path), "^\d+$") || RegExMatch(path, "i)^Craft\.qty_"))) {
-            if (Integer(v) > 100000 || (Integer(v) = 0 && RegExMatch(Profiles.DefaultOf(path), "^\d+$") && Integer(Profiles.DefaultOf(path)) > 1))
+        ; limit), never above 100000 (Recovery.afkMin=0 tapped Space every
+        ; tick); a rarity threshold may be 0 (clips: 0 = off)
+        if (num && !big && RegExMatch(v, "^\d+$")) {
+            if (Integer(v) > 100000 || (Integer(v) = 0 && RegExMatch(def, "^\d+$") && Integer(def) > 1))
                 return ""
         }
         ; anything the support-zip scrub would hide (links, user paths, a
@@ -227,9 +234,9 @@ class Profiles {
             f := FileOpen(path, "w", "UTF-8-RAW")
             f.Write(text)
             f.Close()
-            return {ok: 1, path: path, n: n, msg: "Exported " n " settings to exports\" RegExReplace(path, "^.*\\")}
+            return {ok: 1, path: path, n: n, msg: I18n.F("Exported {1} settings to exports\{2}", n, RegExReplace(path, "^.*\\"))}
         } catch Any as e {
-            return {ok: 0, path: "", n: 0, msg: "Not exported: " UiLogic.Scrub(e is Error ? e.Message : String(e))}
+            return {ok: 0, path: "", n: 0, msg: I18n.F("Not exported: {1}", UiLogic.Scrub(e is Error ? e.Message : String(e)))}
         }
     }
 
@@ -272,15 +279,17 @@ class Profiles {
         try {
             text := FileRead(path, "UTF-8")
         } catch {
-            return {ok: 0, n: 0, skipped: 0, msg: "Not imported: the file could not be read"}
+            return {ok: 0, n: 0, skipped: 0, msg: I18n.T("Not imported: the file could not be read")}
         }
         r := Profiles.ImportText(cfg, text)
         if (r.n = 0)
-            return {ok: 0, n: 0, skipped: r.skipped, msg: "Nothing imported: no settings found in that file"}
+            return {ok: 0, n: 0, skipped: r.skipped, msg: I18n.T("Nothing imported: no settings found in that file")}
         turned := ""
         for p in r.on
             turned .= (turned = "" ? "" : ", ") RegExReplace(p, "i)\.enabled$")
-        return {ok: 1, n: r.n, skipped: r.skipped, on: r.on, msg: "Imported " r.n " setting" (r.n = 1 ? "" : "s") (r.skipped ? " (" r.skipped " skipped)" : "")
-            . (turned != "" ? ". Turned on: " turned : "")}
+        ; the status line on Settings > Profiles: in the window's language
+        return {ok: 1, n: r.n, skipped: r.skipped, on: r.on, msg: I18n.F(r.n = 1 ? "Imported {1} setting" : "Imported {1} settings", r.n)
+            . (r.skipped ? " " I18n.F("({1} skipped)", r.skipped) : "")
+            . (turned != "" ? ". " I18n.F("Turned on: {1}", turned) : "")}
     }
 }

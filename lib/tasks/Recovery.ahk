@@ -13,7 +13,9 @@
 ;     focus   callable focus() -> bool, bring Roblox to the foreground
 ;                                                 (default Roblox.Focus)
 ;     close   callable close() -> bool, close the Roblox client (default:
-;             WinClose, then ProcessClose RobloxPlayerBeta.exe after 10 s)
+;             WinClose, then ProcessClose RobloxPlayerBeta.exe after 10 s;
+;             once the window is gone its process gets ExitWaitSec to end,
+;             then it is ended: a relaunch next to it crashed)
 ;   t.name = "recovery", t.priority = 2   (Scheduler task contract)
 ;
 ; CanRun(state) is true when ANY of (checked in this order):
@@ -412,24 +414,50 @@ class RecoveryTask {
         return this._discSeen
     }
 
-    static _CloseRoblox() {
-        h := Roblox.Hwnd()
+    static ExitWaitSec := 10       ; after the window went: its process ends within this, else it is ended
+
+    ; the real window / process calls _CloseRoblox makes (tests pass fakes;
+    ; each is called as a method: the first parameter is this object)
+    static _RealCloseApi() => {
+        hwnd: (_) => Roblox.Hwnd(),
+        pid: (_, h) => WinGetPID("ahk_id " h),
+        winClose: (_, h) => WinClose("ahk_id " h),
+        winWaitClose: (_, h, sec) => WinWaitClose("ahk_id " h, , sec),
+        procWait: (_, pid, sec) => ProcessWaitClose(pid, sec),     ; 0 = ended, else the pid
+        procClose: (_, x) => ProcessClose(x)
+    }
+
+    static _CloseRoblox(api := "") {
+        if !IsObject(api)
+            api := RecoveryTask._RealCloseApi()
+        h := api.hwnd()
         if !h
             return true
         pid := 0
-        try pid := WinGetPID("ahk_id " h)
-        try WinClose("ahk_id " h)
-        if WinWaitClose("ahk_id " h, , 10)
+        try pid := api.pid(h)
+        try api.winClose(h)
+        if api.winWaitClose(h, 10) {
+            ; the window gone is not the client gone: a relaunch while the
+            ; old process still exited crashed the new client within 2 min
+            ; (live 2026-11-24 23:23: the old one ran 8 s past its window,
+            ; the new one crashed at 23:25:04; 5 of 8 such rejoins)
+            if pid {
+                left := 0
+                try left := api.procWait(pid, RecoveryTask.ExitWaitSec)
+                if left
+                    try api.procClose(pid)
+            }
             return true
+        }
         ; the process that owns the window: Roblox runs two
         ; RobloxPlayerBeta.exe, and closing "the" one by name could hit the
         ; small helper and leave the game window up (live 2026-11-11 15:23:
         ; "the old Roblox window did not close")
         if pid
-            try ProcessClose(pid)
-        if Roblox.Hwnd()
-            try ProcessClose("RobloxPlayerBeta.exe")
-        return !Roblox.Hwnd()
+            try api.procClose(pid)
+        if api.hwnd()
+            try api.procClose("RobloxPlayerBeta.exe")
+        return !api.hwnd()
     }
 
     _Stuck(state, now) {
@@ -622,6 +650,13 @@ class RecoveryTask {
             this._state.progressAt := env.Now()
         this._afkAt := env.Now()
         this._limitTold := false
+        ; joined through the private server link: no ghost server, whatever
+        ; started the rejoin (live 2026-11-23 15:37: Start with Roblox closed
+        ; and the last log's public join; the no-window rejoin kept
+        ; state.ghost and the next tick closed the fresh private client)
+        if (IsObject(this._state) && HasProp(this._state, "ghost"))
+            this._state.ghost := false
+        this._ghostTold := false
         Auras.Quiet(Auras.JoinQuietMs)
         env.Log("recovery: rejoined")
         if (IsObject(this._state) && HasMethod(this._state, "Bump"))

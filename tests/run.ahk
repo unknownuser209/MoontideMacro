@@ -127,3 +127,4 @@ Out(line) {
 #Include test_autocal.ahk
 #Include test_caltest.ahk
 #Include test_transitions.ahk
+#Include test_screendim.ahk
