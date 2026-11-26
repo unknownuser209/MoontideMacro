@@ -374,9 +374,82 @@ Test_RouteRec_BuiltinSellWalks() {
     AssertTrue(IsObject(b), "sell_to_fisher has a built-in walk")
     AssertEq(b.steps.Length, 2, "its closing E is left out (the walk test presses it)")
     AssertEq(b.label, "built-in VIP walk", "label")
-    b := RouteRecorder.BuiltinWalk(routes, "fisher_to_fishing", false)
-    AssertEq(b.steps[2][3], 1100, "non-VIP back walk")
-    AssertEq(b.label, "built-in non-VIP walk", "non-VIP label")
+    keep := RouteRecorder.DefaultsPath
+    RouteRecorder.DefaultsPath := A_Temp "\no_such_default_routes.json"   ; no shipped non-VIP file: routes.json's
+    try {
+        b := RouteRecorder.BuiltinWalk(routes, "fisher_to_fishing", false)
+        AssertEq(b.steps[2][3], 1100, "non-VIP back walk")
+        AssertEq(b.label, "built-in non-VIP walk", "non-VIP label")
+    } finally RouteRecorder.DefaultsPath := keep
     AssertEq(RouteRecorder.BuiltinWalk(routes, "quest_board", true), "", "other routes have none")
     AssertEq(RouteRecorder.BuiltinWalk(Map(), "sell_to_fisher", true), "", "no shipped walk: none")
 }
+
+; ---- non-VIP walks shipped in data\default_routes.json (2026-11-25) --------
+
+RrNonVipFile() {
+    d := RrTmp()
+    FileAppend('{"nonvip": {"toShop": [["w","down",0],["w","up",700],["e","down",300],["e","up",300]], "back": [["a","down",0],["a","up",1200]]'
+        . ', "quest_board": {"_recorded": "2026-11-25 22:13", "_replaces": "2026-10-26 13:49", "steps": [["w","down",0],["w","up",900]]}'
+        . ', "broken": [["nokey"]]}}', d "\def.json", "UTF-8")
+    return d
+}
+
+class RrCfg {
+    __New(vip, routes) {
+        this.vip := vip, this.routes := routes
+    }
+    Get(k, d := "") => (k = "General.vip") ? this.vip : d
+    Data(n) => (n = "routes") ? this.routes : ""
+}
+
+Test_RouteRec_NonVipLookup() {
+    d := RrNonVipFile(), f := d "\def.json"
+    try {
+        AssertEq(RouteRecorder.NonVip("back", f)[2][3], 1200, "the shipped non-VIP back walk")
+        AssertEq(RouteRecorder.NonVip("cauldron", f), "", "none shipped: none")
+        AssertEq(RouteRecorder.NonVip("broken", f), "", "one that does not parse: none")
+        AssertEq(RouteRecorder.NonVip("back", d "\missing.json"), "", "no file: none")
+        AssertTrue(IsObject(RouteRecorder.NonVipFor("quest_board", "", f)), "no route of the player's: the non-VIP one")
+        AssertTrue(IsObject(RouteRecorder.NonVipFor("quest_board", Map("_recorded", "2026-10-26 13:49", "steps", [["w", "down", 0]]), f)), "the creator's VIP recording: replaced")
+        AssertEq(RouteRecorder.NonVipFor("quest_board", Map("_recorded", "2026-11-20 10:00", "steps", [["w", "down", 0]]), f), "", "the player's own recording wins")
+        AssertEq(RouteRecorder.NonVipFor("back", "", f), "", "the sell walks are not routes (no _replaces)")
+    } finally DirDelete(d, true)
+}
+
+Test_RouteRec_TaskEnvRouteNonVip() {
+    d := RrNonVipFile()
+    keep := RouteRecorder.DefaultsPath
+    RouteRecorder.DefaultsPath := d "\def.json"
+    try {
+        creator := Map("_recorded", "2026-10-26 13:49", "steps", [["w", "down", 0], ["w", "up", 500]])
+        own := Map("_recorded", "2026-11-20 10:00", "steps", [["w", "down", 0], ["w", "up", 650]])
+        r := TaskEnv({cfg: RrCfg(0, Map("quest_board", creator))}).Route("quest_board")
+        AssertEq(r["steps"][2][3], 900, "VIP off: the non-VIP walk instead of the creator's VIP one")
+        r := TaskEnv({cfg: RrCfg(1, Map("quest_board", creator))}).Route("quest_board")
+        AssertEq(r["steps"][2][3], 500, "VIP on: the VIP walk")
+        r := TaskEnv({cfg: RrCfg(0, Map("quest_board", own))}).Route("quest_board")
+        AssertEq(r["steps"][2][3], 650, "VIP off: the player's own recording kept")
+        r := TaskEnv({cfg: RrCfg(0, Map())}).Route("quest_board")
+        AssertEq(r["steps"][2][3], 900, "VIP off, none recorded: the non-VIP walk")
+    } finally {
+        RouteRecorder.DefaultsPath := keep
+        DirDelete(d, true)
+    }
+}
+
+; the real shipped file: the non-VIP recordings parse, toShop ends with the
+; E that opens Captain Flarg's dialog, and the routes name the VIP
+; recording they replace
+Test_RouteRec_ShippedNonVipWalks() {
+    def := Json.Parse(FileRead(RouteRecorder.DefaultsPath, "UTF-8"))
+    t := RouteRecorder.NonVip("toShop")
+    AssertTrue(IsObject(t) && t[t.Length][1] = "e" && t[t.Length][2] = "up", "toShop ends with E")
+    AssertTrue(IsObject(RouteRecorder.NonVip("back")), "back")
+    for name in ["quest_board", "memory_match"] {
+        nv := RouteRecorder.NonVip(name)
+        AssertTrue(nv is Map && nv.Has("_replaces"), name " names the VIP recording it replaces")
+    }
+    AssertEq(RouteRecorder.NonVip("quest_board")["_replaces"], def["quest_board"]["_recorded"], "the creator's VIP quest_board")
+}
+

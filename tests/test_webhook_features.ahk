@@ -491,6 +491,33 @@ Test_Wf_StartFieldsReflectConfig() {
 
 ; ---- dashboard --------------------------------------------------------------
 
+; a new webhook row starts with every event box ticked (2026-11-26)
+Test_Wf_NewHookAllEvents() {
+    dir := UiDashTmp()
+    d := ""
+    try {
+        cfg := Config.Load(dir)
+        d := Dashboard(cfg)
+        d.HookAdd()
+        d.Ctrl("hook1.url").Value := "https://discord.com/api/webhooks/123456789012345678/TOKENallevents_abc"
+        AssertTrue(d.SavePage("Webhooks"), "saved")
+        ev := cfg.Webhooks()[1]["events"]
+        AssertEq(ev.Length, Config.EventTypes.Length, "every event ticked")
+        for e in Config.EventTypes
+            AssertTrue(Config.EventTypes.Length && InStr("," Wf_Join(ev) ",", "," e ","), e " ticked")
+    } finally {
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
+}
+
+Wf_Join(a) {
+    s := ""
+    for v in a
+        s .= (s = "" ? "" : ",") v
+    return s
+}
+
 Test_Wf_DashboardTestButton() {
     dir := UiDashTmp()
     d := ""
@@ -726,7 +753,7 @@ Test_Embed_StopHasUptimeAndLoops() {
 }
 
 Test_Embed_RareBiomeFieldsAndJoinLink() {
-    rig := WfRig(Map("General.joinButton", 1, "General.privateServer", "https://www.roblox.com/share?code=ABC123&type=Server"))
+    rig := WfRig(Map("General.privateServer", "https://www.roblox.com/share?code=ABC123&type=Server"))
     p := rig.Rare("GLITCHED")
     AssertTrue(IsObject(p), "one rare message")
     e := p["embeds"][1]
@@ -749,7 +776,7 @@ WfBiome(r, name) {
 }
 
 Test_Embed_BiomeCardsStartedAndEnded() {
-    r := WfRig(Map("General.joinButton", 1, "General.privateServer", "https://www.roblox.com/share?code=ABC123&type=Server"))
+    r := WfRig(Map("General.privateServer", "https://www.roblox.com/share?code=ABC123&type=Server"))
     try {
         c := WfBiome(r, "WINDY")
         AssertEq(c.Length, 1, "WINDY: one card")
@@ -785,7 +812,7 @@ Test_Embed_BiomeCardsStartedAndEnded() {
 
 Test_Embed_BiomeStartedHasJoinServerButton() {
     link := "https://www.roblox.com/share?code=ABC123&type=Server"
-    r := WfRig(Map("General.privateServer", link, "General.joinButton", 1))   ; opt-in (default off since the privacy audit)
+    r := WfRig(Map("General.privateServer", link))
     try {
         WfBiome(r, "WINDY")
         recs := WfRecs(r.wh, "", "biome")

@@ -1,5 +1,5 @@
 {
-  "_source": "Moontide's own walks to Captain Flarg and back. vip.toShop (spawn -> Flarg, then E) and vip.back (Flarg -> the fishing spot) were recorded in game with the Sol's RNG VIP gamepass (Setup > Routes, 2026-11-10; vip.toShop ends with the E press that opens his dialog). nonvip = the same walks with every wait x1.25 (without VIP you walk about 20% slower): an estimate, record your own walks without VIP. Each step is [key, down|up, ms waited before it] for Input.PlayRoute. Dialog and sell clicks live in coords.json. CraftTask reuses vip/nonvip toShop+back for the fisher (the same shop NPC as selling). cauldron is a placeholder to record in game (craft respawns after the cauldron; merchants use the Merchant Teleporter, no routes).",
+  "_source": "Moontide's own walks to Captain Flarg and back. vip.toShop (spawn -> Flarg, then E) and vip.back (Flarg -> the fishing spot) were recorded in game with the Sol's RNG VIP gamepass (Setup > Routes, 2026-11-10; vip.toShop ends with the E press that opens his dialog). nonvip = the same walks recorded in game WITHOUT the VIP gamepass (2026-11-25): toShop / back, plus quest_board and memory_match (used instead of the creator's VIP recording, the one whose _recorded is their _replaces, while VIP gamepass routes is off; a player's own recording always wins). No non-VIP cauldron, obby or limbo_eden yet. Each step is [key, down|up, ms waited before it] for Input.PlayRoute. Dialog and sell clicks live in coords.json. CraftTask reuses vip/nonvip toShop+back for the fisher (the same shop NPC as selling). cauldron is a placeholder to record in game (craft respawns after the cauldron; merchants use the Merchant Teleporter, no routes).",
   "cauldron": {
     "_note": "Walk from spawn (after Input.ResetToSpawn) to a spot OUT of Stella's interaction range; CraftTask presses F only after this route ends. Empty = the cauldron step is skipped (movement is never invented).",
     "_recorded": "2026-10-26 13:46",
@@ -449,129 +449,99 @@
   "nonvip": {
     "toShop": [
       [
+        "a",
+        "down",
+        14
+      ],
+      [
         "w",
         "down",
-        0
+        3988
+      ],
+      [
+        "a",
+        "up",
+        621
       ],
       [
         "a",
         "down",
-        5621
+        2344
       ],
       [
         "a",
         "up",
-        706
-      ],
-      [
-        "w",
-        "up",
-        195
-      ],
-      [
-        "s",
-        "down",
-        154
-      ],
-      [
-        "s",
-        "up",
-        156
+        687
       ],
       [
         "d",
         "down",
-        314
-      ],
-      [
-        "w",
-        "down",
-        0
+        237
       ],
       [
         "d",
         "up",
-        2094
+        91
       ],
       [
         "a",
         "down",
-        758
+        426
       ],
       [
         "w",
         "up",
-        40
+        543
       ],
       [
         "a",
         "up",
-        258
-      ],
-      [
-        "a",
-        "down",
-        646
-      ],
-      [
-        "a",
-        "up",
-        159
+        99
       ],
       [
         "s",
         "down",
-        149
+        157
       ],
       [
         "s",
         "up",
-        291
+        235
       ],
       [
         "Space",
         "down",
-        142
+        89
+      ],
+      [
+        "Space",
+        "up",
+        34
       ],
       [
         "w",
         "down",
-        0
-      ],
-      [
-        "Space",
-        "up",
-        370
-      ],
-      [
-        "w",
-        "up",
-        162
+        357
       ],
       [
         "Space",
         "down",
-        126
-      ],
-      [
-        "w",
-        "down",
-        0
+        107
       ],
       [
         "Space",
         "up",
-        440
+        454
       ],
       [
         "Space",
         "down",
-        148
+        127
       ],
       [
         "Space",
         "up",
-        668
+        544
       ],
       [
         "w",
@@ -581,36 +551,248 @@
       [
         "e",
         "down",
-        375
+        300
       ],
       [
         "e",
         "up",
-        375
+        300
       ]
     ],
     "back": [
       [
         "a",
         "down",
-        1469
-      ],
-      [
-        "w",
-        "down",
-        16
+        1609
       ],
       [
         "a",
         "up",
-        3224
+        47
+      ],
+      [
+        "w",
+        "down",
+        3046
       ],
       [
         "w",
         "up",
         0
       ]
-    ]
+    ],
+    "quest_board": {
+      "_recorded": "2026-11-25 22:13",
+      "_replaces": "2026-10-26 13:49",
+      "steps": [
+        [
+          "d",
+          "down",
+          1501
+        ],
+        [
+          "s",
+          "down",
+          31
+        ],
+        [
+          "d",
+          "up",
+          5105
+        ],
+        [
+          "a",
+          "down",
+          896
+        ],
+        [
+          "s",
+          "up",
+          1690
+        ],
+        [
+          "w",
+          "down",
+          0
+        ],
+        [
+          "a",
+          "up",
+          289
+        ],
+        [
+          "w",
+          "up",
+          125
+        ],
+        [
+          "d",
+          "down",
+          175
+        ],
+        [
+          "d",
+          "up",
+          138
+        ],
+        [
+          "s",
+          "down",
+          112
+        ],
+        [
+          "s",
+          "up",
+          187
+        ],
+        [
+          "Space",
+          "down",
+          63
+        ],
+        [
+          "a",
+          "down",
+          47
+        ],
+        [
+          "Space",
+          "up",
+          435
+        ],
+        [
+          "s",
+          "down",
+          17
+        ],
+        [
+          "a",
+          "up",
+          1081
+        ],
+        [
+          "s",
+          "up",
+          0
+        ],
+        [
+          "d",
+          "down",
+          1121
+        ],
+        [
+          "d",
+          "up",
+          235
+        ],
+        [
+          "Right",
+          "down",
+          1529
+        ],
+        [
+          "Right",
+          "up",
+          329
+        ],
+        [
+          "w",
+          "down",
+          1021
+        ],
+        [
+          "w",
+          "up",
+          0
+        ]
+      ]
+    },
+    "memory_match": {
+      "_recorded": "2026-11-25 22:14",
+      "_replaces": "2026-10-26 23:01",
+      "steps": [
+        [
+          "d",
+          "down",
+          1384
+        ],
+        [
+          "s",
+          "down",
+          0
+        ],
+        [
+          "d",
+          "up",
+          4759
+        ],
+        [
+          "a",
+          "down",
+          76
+        ],
+        [
+          "s",
+          "up",
+          1052
+        ],
+        [
+          "s",
+          "down",
+          264
+        ],
+        [
+          "a",
+          "up",
+          668
+        ],
+        [
+          "a",
+          "down",
+          47
+        ],
+        [
+          "s",
+          "up",
+          267
+        ],
+        [
+          "w",
+          "down",
+          16
+        ],
+        [
+          "a",
+          "up",
+          327
+        ],
+        [
+          "w",
+          "up",
+          0
+        ],
+        [
+          "d",
+          "down",
+          896
+        ],
+        [
+          "w",
+          "down",
+          0
+        ],
+        [
+          "d",
+          "up",
+          9543
+        ],
+        [
+          "w",
+          "up",
+          0
+        ]
+      ]
+    }
   },
   "nudge": {
     "_note": "Sell: when the route's E did not open Captain Flarg's dialog, this short hop forward + E is tried (SellTask.Nudges times) before a full re-walk. The VIP/non-VIP routes tend to stop just short of the fisher, below the ledge.",

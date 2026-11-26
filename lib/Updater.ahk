@@ -53,7 +53,7 @@ class Updater {
         , "data\update_skip.txt", "data\aura_hints.json"]
     static WhatsNewFile := "data\whatsnew.json"
     static NotesMax := 8000
-    static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\"]
+    static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\", "imported\"]
 
     static ParseVersion(tag) {
         if !RegExMatch(Trim(String(tag)), "^[vV]?(\d{1,9})(?:\.(\d{1,9}))?(?:\.(\d{1,9}))?$", &m)

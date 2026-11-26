@@ -16,7 +16,7 @@ $version = $Matches[1]
 # biomes): a fresh install needs them, and the updater never overwrites a
 # user's own copy (Updater.Protected).
 $exclude = @(
-    '^settings\.ini$', '^logs/', '^exports/', '^backup/', '^dist/', '^update_tmp/',
+    '^settings\.ini$', '^logs/', '^exports/', '^imported/', '^backup/', '^dist/', '^update_tmp/',
     '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/',
     '^\.gitattributes$', '^\.gitignore$',
     '^data/auras_had\.txt$', '^data/[^/]*state[^/]*\.json$',

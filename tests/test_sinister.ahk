@@ -192,21 +192,18 @@ SnLogged(logs, s) {
     return false
 }
 
-; General.joinButton off: the boss card goes out without the private server
-; link or its button (as the biome cards); in a ghost server too
-Test_Sinister_JoinButtonOffSendsNoLink() {
+; The Join Server link is always on (no switch since 2026-11-25): an old
+; General.joinButton=0 still sends it; a ghost server goes without it
+Test_Sinister_JoinLinkAlwaysOn() {
     wh := SnFakeWh()
     rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => false})
     AssertTrue(rep.Spawn("k"), "posted")
     c := wh.posts[1].content
     AssertTrue(SnHas(c, "Sinister S. has spawned"), "the boss named")
-    AssertTrue(!InStr(c.desc, "roblox.com") && !InStr(c.desc, "Join Server"), "no link in the card")
-    AssertTrue(!IsObject(c.buttons), "no Join Server button")
-    rep.Killed("toast")
-    d := wh.edits[1].content
-    AssertTrue(!IsObject(d.buttons) && !InStr(d.desc, "roblox.com"), "the dead card has no link either")
+    AssertTrue(InStr(c.desc, SnLink()) && InStr(c.desc, "Join Server"), "the link in the card")
+    AssertTrue(IsObject(c.buttons) && c.buttons[1].url = SnLink(), "the Join Server button")
     wh2 := SnFakeWh()
-    rep2 := SinisterReport({webhook: wh2, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => true})
+    rep2 := SinisterReport({webhook: wh2, cfg: QmCfg(Map("General.privateServer", SnLink())), ghost: () => true})
     rep2.Spawn("k")
     SnNoLink(wh2, "ghost server")
 }
@@ -672,18 +669,12 @@ Test_Sinister_OrbSpawnPostsAndDedupes() {
     AssertEq(r.wh.posts.Length, 4, "four messages")
 }
 
-; no Join link for an orb in a ghost server or with General.joinButton off
-Test_Sinister_OrbNoLinkInGhostOrJoinOff() {
+; no Join link for an orb in a ghost server
+Test_Sinister_OrbNoLinkInGhost() {
     r := SnRep(, () => true)
     r.rep.Spawn("k", "orb:Typhoon")
     c := r.wh.posts[1].content
     AssertTrue(SnHas(c, "Typhoon orb has spawned"), "ghost: the orb named")
     AssertTrue(!InStr(c.desc, "roblox.com") && !InStr(c.desc, "Join Server") && !IsObject(c.buttons), "ghost: no link, no button")
     AssertTrue(SnLogged(r.logs, "orb message goes without the Join Server link"), "logged why")
-    wh := SnFakeWh()
-    rep := SinisterReport({webhook: wh, cfg: QmCfg(Map("General.privateServer", SnLink(), "General.joinButton", 0)), ghost: () => false})
-    AssertTrue(rep.Spawn("k", "orb:Flame"), "posted")
-    c := wh.posts[1].content
-    AssertTrue(SnHas(c, "Flame orb has spawned"), "join off: the orb named")
-    AssertTrue(!InStr(c.desc, "roblox.com") && !InStr(c.desc, "Join Server") && !IsObject(c.buttons), "join off: no link, no button")
 }

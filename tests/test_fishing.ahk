@@ -821,6 +821,8 @@ Test_Sell_BuysInTheSameVisitBeforeWalkingBack() {
 Test_Sell_VipVsNonVipDuration() {
     t := FsMakeCfg()
     FsScreen.Install()
+    keep := RouteRecorder.DefaultsPath
+    RouteRecorder.DefaultsPath := t.dir "/no_default_routes.json"   ; routes.json's vip / nonvip walks (the shipped non-VIP file: RouteRec tests)
     try {
         io := FsIO()
         FsSellScreen(io, 1)
@@ -843,6 +845,7 @@ Test_Sell_VipVsNonVipDuration() {
             FsClean(t2.dir)
         }
     } finally {
+        RouteRecorder.DefaultsPath := keep
         FsScreen.Restore()
         FsClean(t.dir)
     }

@@ -3,6 +3,7 @@
 #Include %A_LineFile%\..\..\Scheduler.ahk
 #Include %A_LineFile%\..\..\Roblox.ahk
 #Include %A_LineFile%\..\..\Input.ahk
+#Include %A_LineFile%\..\..\RouteRecorder.ahk
 #Include %A_LineFile%\..\..\Pixel.ahk
 #Include %A_LineFile%\..\..\Ocr.ahk
 #Include %A_LineFile%\..\..\Calibrate.ahk
@@ -143,6 +144,15 @@ class TaskEnv {
         r := this.cfg.Data("routes")
         if (r is Map && r.Has("routes") && r["routes"] is Map)
             r := r["routes"]
+        ; without the VIP gamepass: the shipped non-VIP walk instead of the
+        ; creator's VIP one (a player's own recording is kept)
+        vip := 1
+        try vip := this.cfg.Get("General.vip", 1)
+        if !vip {
+            nv := RouteRecorder.NonVipFor(name, (r is Map && r.Has(name)) ? r[name] : "")
+            if IsObject(nv)
+                return nv
+        }
         if !(r is Map && r.Has(name)) {
             this.Problem("route:" name, "route '" name "' not found in data\routes.json (record it first): skipped")
             return ""

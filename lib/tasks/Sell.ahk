@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\FishLogic.ahk
 #Include %A_LineFile%\..\..\UiStuck.ahk
+#Include %A_LineFile%\..\..\RouteRecorder.ahk
 ; ---------------------------------------------------------------------------
 ; SellTask: walk the timed route to the seller, sell, walk back (priority 6).
 ;
@@ -343,6 +344,10 @@ class SellTask {
                 return steps
             }
         }
+        ; no own recording: the shipped non-VIP walk (data\default_routes.json,
+        ; recorded without VIP; an update never refreshes data\routes.json)
+        if (variant = "nonvip" && IsObject(nv := RouteRecorder.NonVip(which)))
+            return nv
         return this._routes[variant][which]
     }
 

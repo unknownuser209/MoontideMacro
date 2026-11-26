@@ -39,15 +39,14 @@ class Profiles {
     static Extra := [["Quests.enabled", "1"], ["Merchant.enabled", "1"], ["Merchant.chatPollSec", "5"], ["Minions.normal", "0"]]
 
     ; never exported or imported: dry run is only turned off with its own
-    ; question, a shared file must not point the updater elsewhere or put
-    ; the private server link into webhooks (joinButton)
+    ; question, a shared file must not point the updater elsewhere
     ; General.alertSound: a file path (a shared "\\host\share\x.wav" would make
     ; Windows connect to someone else's PC on the next rare biome); UI.customPictureFile
     ; likewise (the custom theme's own picture; its colours are shared).
     ; UI.theme / UI.themesMigrated: the theme in use is a file in the user's
     ; own themes folder (a shared name would point at a theme they do not
     ; have), and the migration mark is per install.
-    static NoShare := ["General.dryRun", "Potions.dryRun", "General.joinButton", "General.joinDefaultOn", "UI.setupDone", "Update.repo", "Update.check", "Update.auto"
+    static NoShare := ["General.dryRun", "Potions.dryRun", "UI.setupDone", "Update.repo", "Update.check", "Update.auto"
         , "General.alertSound", "UI.customPictureFile", "UI.theme", "UI.themesMigrated"]
 
     static Description(name) {

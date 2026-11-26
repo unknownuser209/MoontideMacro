@@ -16,6 +16,7 @@
 #Include %A_LineFile%\..\..\tasks\BiomeItems.ahk
 #Include %A_LineFile%\..\..\tasks\MemoryMatch.ahk
 #Include %A_LineFile%\..\..\Profiles.ahk
+#Include %A_LineFile%\..\..\Backup.ahk
 ; ---------------------------------------------------------------------------
 ; Dashboard: the main Moontide Macro window (1040x680). The sidebar lists seven
 ; hubs (Dashboard.Hubs); a hub shows its title, a tab strip of its pages and
@@ -165,6 +166,13 @@
 ;     webhooks, links, the bot or dry run). d.ApplyProfile(name),
 ;     d.ExportSettings(), d.ImportSettings(path) (tests). Ids: "profile:<name>",
 ;     "profileStatus", "export", "exportShow", "import", "shareStatus".
+;     Move to another PC (lib\Backup.ahk): "Export everything" writes every
+;     setting (secrets too), the user's data files and themes to
+;     exports\moontide_backup_<stamp>.json; "Import everything" (refused
+;     while the app says "backupBusy") checks, asks, saves the current state
+;     first, writes, reloads cfg and the pages, then fires "backupImported"
+;     (the App restarts). d.ExportEverything(), d.ImportEverything(path);
+;     ids "backupWarn", "backupExport", "backupImport", "backupStatus".
 ;   Tools page (tab "Routes"): Record route buttons (data\routes.json via
 ;     RouteRecorder). Dev tools page: test events (refused by the app
 ;     unless dry run is ON).
@@ -367,6 +375,11 @@ class Dashboard {
         ; Settings > Profiles: apply a profile (yes / no), the file to import ("" = cancel)
         this._confirmProfile := (title, text) => Theme.Confirm(this._gui, title, text, "Apply", "Cancel")
         this._pickImport := () => this._PickIni()
+        ; Move to another PC: the backup to import ("" = cancel), the yes / no
+        ; before it, and the export shown in Explorer
+        this._pickBackup := () => this._PickBackupFile()
+        this._confirmBackup := (title, text) => Theme.Confirm(this._gui, title, text, "Import", "Cancel")
+        this._reveal := (path) => Run('explorer.exe /select,"' path '"')
         this._bigWarned := ""
         this._scaleNote := ""
         this._side := Dashboard.NormSide(Theme.Sidebar)
@@ -3329,7 +3342,7 @@ class Dashboard {
         if (this._hooks.Length >= Dashboard.MaxHooks)
             return
         this._hooks.Push(Map("name", "Webhook " (this._hooks.Length + 1), "url", "", "mention", "", "enabled", 1
-            , "events", ["rare", "errors", "startstop"]))
+            , "events", Config.EventTypes.Clone()))   ; every box ticked (the user, 2026-11-26)
         this._hooksDirty := true
         this._HooksRender()
         this._MarkDirty("Webhooks")
@@ -3649,7 +3662,7 @@ class Dashboard {
         this._IntField(220, 490, "Load wait", "recovery.loadSec", 20, "s", 160)
         this._BoolField(220, 526, "Anti ghost server (rejoin if moved out of it)", "recovery.antiGhost", 1, 360)
 
-        this._Panel(616, 152, 396, 196, "Alerts")
+        this._Panel(616, 152, 396, 164, "Alerts")
         this._BoolField(632, 186, "Sound on rare biome", "General.sound", 1)
         this._BoolField(632, 214, "Ping @everyone on the biomes below", "General.everyonePing", 1)
         e := this._StrField(632, 244, "@everyone biomes", "General.everyoneBiomes", "DREAMSPACE,GLITCHED,CYBERSPACE", 214, 150)
@@ -3658,7 +3671,6 @@ class Dashboard {
         ; only @everyone); checked like the webhook MENTION column on Save
         e := this._StrField(632, 278, "Role pings per biome", "General.biomePings", "", 214, 150)
         e.SetFont(Theme.FontOpt("muted", Theme.IsScaled(g)))
-        this._BoolField(632, 312, "Join Server link in biome and boss messages", "General.joinButton", 1, 360)
 
         this._Panel(616, 364, 396, 68, "Routes", "Every walk that comes with the macro was recorded with Sol's RNG VIP gamepass, which walks faster. "
             . "Without VIP you walk slower and the walks fall short: turn this off and record your own walks under Help > Routes.")
@@ -6548,17 +6560,24 @@ class Dashboard {
             Theme.Label(g, "x220 y" y + 36 " w364 h36", Profiles.Description(name), "muted")
         }
         this._ids["profileStatus"] := Theme.Label(g, "x220 y546 w364 h56", "", "muted")
-        this._Panel(616, 152, 396, 464, "Share settings")
+        this._Panel(616, 152, 396, 272, "Share settings")
         Theme.Label(g, "x632 y184 w364 h100", "Export saves your settings in a file you can send to a friend. Webhooks, server links, "
             . "the bot token and Discord ids are left out.`n`nImport takes the settings from such a file. Your own webhooks, links and token stay.", "body", Theme.CardBg)
-        this._ids["export"] := Theme.Button(g, "x632 y300 w164 h30", "Export settings", (*) => this.ExportSettings(), "primary")
-        this._exportBtn := Theme.Button(g, "x806 y300 w100 h30", "Show it", (*) => this._ExportShow(), "quiet")
+        this._ids["export"] := Theme.Button(g, "x632 y292 w164 h30", "Export settings", (*) => this.ExportSettings(), "primary")
+        this._exportBtn := Theme.Button(g, "x806 y292 w100 h30", "Show it", (*) => this._ExportShow(), "quiet")
         this._ids["exportShow"] := this._exportBtn
         this._SetHidden(this._exportBtn, true)
-        this._ids["import"] := Theme.Button(g, "x632 y342 w164 h30", "Import settings", (*) => this.ImportSettings())
-        this._ids["shareStatus"] := Theme.Label(g, "x632 y386 w364 h56", "", "muted")
-        Theme.Label(g, "x632 y560 w364 h40", "Exports go to the exports folder next to the macro.", "muted")
+        this._ids["import"] := Theme.Button(g, "x632 y330 w164 h30", "Import settings", (*) => this.ImportSettings())
+        this._ids["shareStatus"] := Theme.Label(g, "x632 y368 w364 h48", "", "muted")
         this._exportPath := ""
+        ; Move to another PC (lib\Backup.ahk): everything, secrets too
+        this._Panel(616, 436, 396, 180, "Move to another PC", "Export everything puts every setting, your calibration, walks, quests, merchants, potions, biomes, "
+            . "stats and your own themes in one file in the exports folder. On the other PC, open this tab and press Import everything. "
+            . "Your current ones are saved in the exports folder first.")
+        this._ids["backupWarn"] := Theme.Label(g, "x632 y466 w340 h40", "The file holds your server link, webhooks and bot token. Never share it.", "body", Theme.CardBg)
+        this._ids["backupExport"] := Theme.Button(g, "x632 y512 w176 h30", "Export everything", (*) => this.ExportEverything(), "primary")
+        this._ids["backupImport"] := Theme.Button(g, "x820 y512 w176 h30", "Import everything", (*) => this.ImportEverything())
+        this._ids["backupStatus"] := Theme.Label(g, "x632 y550 w364 h60", "", "muted")
     }
 
     _ProfileBtn(name, *) => this.ApplyProfile(name)
@@ -6641,6 +6660,77 @@ class Dashboard {
         }
         Theme.SetText(this._ids["shareStatus"], r.msg)
         return r
+    }
+
+    ; ---- Move to another PC (lib\Backup.ahk) ----
+
+    ; Everything into exports\moontide_backup_<stamp>.json, shown in
+    ; Explorer. -> Backup.Export's result. Only counts are logged.
+    ExportEverything() {
+        this._Fire("backupFlush")          ; the App writes its day counters first
+        r := Backup.Export(this.cfg.dir)
+        Theme.SetText(this._ids["backupStatus"], r.msg)
+        if r.ok {
+            this.Log(Backup.LogLine("exported", r))
+            try this._reveal.Call(r.path)
+        }
+        return r
+    }
+
+    _PickBackupFile() {
+        start := DirExist(this.cfg.dir "\exports") ? this.cfg.dir "\exports" : this.cfg.dir
+        this._gui.Opt("+OwnDialogs")
+        f := ""
+        try f := FileSelect(1, start, I18n.T("Import everything"), I18n.T("Moontide backup") " (*.json)")
+        return f
+    }
+
+    ; path "" = ask. Refused while the macro runs (or records / tests a
+    ; route). Checks the file, asks, saves the current state, writes, reloads
+    ; the settings and every page, then the App restarts the macro so every
+    ; part (theme, hotkeys, tasks) starts from the new files.
+    ; -> Backup's result, {ok: 0, msg} when refused, "" when cancelled.
+    ImportEverything(path := "") {
+        st := this._ids["backupStatus"]
+        busy := this._Fire("backupBusy")
+        if (busy != "" && busy != 0) {
+            msg := I18n.T("Stop the macro first (F3), then import.")
+            Theme.SetText(st, msg)
+            return {ok: 0, msg: msg}
+        }
+        if (path = "")
+            path := this._pickBackup.Call()
+        if (path = "")
+            return ""
+        r := Backup.Read(path)
+        if !r.ok {
+            Theme.SetText(st, r.msg)
+            this.Log("Backup: import refused (the file did not pass the checks)")
+            return r
+        }
+        body := I18n.T("This replaces your settings, calibration, walks, quests, merchants, potions, biomes and stats with the file's, and adds its themes. Your current ones are saved in the exports folder first. Only import your own backup.")
+        if (r.screenNote != "")
+            body .= "`n`n" r.screenNote
+        if (this._confirmBackup.Call(I18n.T("Import everything?"), body) != true)
+            return ""
+        res := Backup.ImportData(this.cfg.dir, r.data)
+        if !res.ok {
+            Theme.SetText(st, res.msg)
+            this.Log("Backup: import failed" (res.HasOwnProp("beforeName") ? ", the state before it is in exports\" res.beforeName : ""))
+            try this.cfg.Reload()
+            this._ReloadOthers()
+            return res
+        }
+        try this.cfg.Reload()
+        this._ReloadOthers()
+        ; (a screen-size note was in the question already; the log keeps it too)
+        Theme.SetText(st, res.msg)
+        this.Log(Backup.LogLine("imported", res) ", the state before it is in exports\" res.beforeName)
+        if (res.screenNote != "")
+            this.Log("Backup: the backup was made on another screen size or scale; calibration may need redoing (Help > Check & help > Test my calibration)")
+        this._Fire("saved", "Profiles")
+        this._Fire("backupImported")
+        return res
     }
 
     ; ---- page: Log --------------------------------------------------------------

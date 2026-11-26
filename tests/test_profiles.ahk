@@ -136,7 +136,6 @@ Test_Profiles_ImportSkipsSecretAndUnknownKeys() {
     try {
         cfg := PfCfg(dir)
         cfg.Set("Remote.enabled", 0)
-        cfg.Set("General.joinButton", 0)
         other :="https://discord.com/api/webhooks/555/OtherPersonHook"
         text := "; shared`r`n[General]`r`nsellEvery=42`r`nfishing=0`r`nprivateServer=https://www.roblox.com/share?code=OTHERCODE`r`n"
             . "dryRun=0`r`njoinButton=1`r`nmadeUpKey=7`r`n`r`n[Webhook.1]`r`nname=Theirs`r`nurl=" other "`r`nmention=<@1>`r`n`r`n"
@@ -164,7 +163,7 @@ Test_Profiles_ImportSkipsSecretAndUnknownKeys() {
         AssertEq(cfg.Webhooks().Length, 1, "no webhook added")
         AssertEq(cfg.Webhooks()[1]["url"], PfHook(), "own webhook kept")
         AssertEq(cfg.Get("General.dryRun", 1), 1, "dry run never imported")
-        AssertEq(cfg.Get("General.joinButton", 1), 0, "the Join Server link switch never imported")
+        AssertEq(cfg.Get("General.joinButton", ""), "", "the retired Join Server link switch is not imported")
         AssertEq(cfg.Get("Update.repo", ""), Config.IniDefaults()["Update"]["repo"], "updater repo never imported")
         AssertEq(cfg.Get("Update.auto", 0), 0, "auto update never imported")
         AssertEq(cfg.Get("General.madeUpKey", ""), "", "unknown key skipped")

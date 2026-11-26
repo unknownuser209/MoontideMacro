@@ -58,7 +58,6 @@ class Config {
         this.dstat := Map()
         if FileExist(this.iniPath) {
             this._ReadIni()
-            this._JoinOnce()
             this._DropRetired()
         } else {
             this._ApplyIniDefaults()
@@ -67,9 +66,10 @@ class Config {
     }
 
     ; Settings the app no longer has (2026-11-23: Minions.putBack, "Put my
-    ; aura back after", nobody used it): dropped on load, gone from the
-    ; file at the next Save.
-    static RetiredKeys := ["Minions.putBack"]
+    ; aura back after", nobody used it; 2026-11-25: General.joinButton and
+    ; its marker joinDefaultOn, the Join Server link is always on, the user):
+    ; dropped on load, gone from the file at the next Save.
+    static RetiredKeys := ["Minions.putBack", "General.joinButton", "General.joinDefaultOn"]
 
     _DropRetired() {
         for path in Config.RetiredKeys {
@@ -136,8 +136,6 @@ class Config {
         g["dryRun"] := "1"
         g["sound"] := "1"
         g["alertSound"] := "*48"      ; SoundPlay arg: *48 = Windows exclamation, or a .wav path
-        g["joinButton"] := "1"        ; 1 = biome / rare webhooks carry the private-server link (Join Server button); 0 = no link (anyone who can read the channel can join)
-        g["joinDefaultOn"] := "1"     ; set once the v1.5 "Join Server link on by default" change was applied (see _JoinOnce)
         g["everyonePing"] := "1"      ; 1 = live rare webhook for the biomes below also pings @everyone
         g["everyoneBiomes"] := "DREAMSPACE,GLITCHED,CYBERSPACE"
         g["biomePings"] := ""         ; BIOME=role or user ID, comma list (SINGULARITY=&123): the live rare message also pings it (2026-11-22)
@@ -308,22 +306,6 @@ class Config {
         return d
     }
 
-    ; v1.5: the Join Server link is on by default. Before v1.5 there was no
-    ; switch for it, so every older settings.ini holds the old default
-    ; joinButton=0: turn it on once (in memory, saved with the next Save).
-    ; A later "off" is kept: the marker joinDefaultOn is saved with it.
-    _JoinOnce() {
-        if this.readFail
-            return
-        if !this.sections.Has("General")
-            this.sections["General"] := Config._CIMap()
-        g := this.sections["General"]
-        if g.Has("joinDefaultOn")
-            return
-        g["joinButton"] := "1"
-        g["joinDefaultOn"] := "1"
-    }
-
     _ApplyIniDefaults() {
         this.sections := Config.IniDefaults()
         this.hooks := []
@@ -423,6 +405,19 @@ class Config {
             out .= Config._SectionText("Webhook." i, sect)
         }
         Config._WriteText(this.iniPath, out)
+    }
+
+    ; Reads settings.ini again and forgets the loaded data files (the next
+    ; Data() reads them from disk): after Settings > Profiles "Import
+    ; everything" wrote new files under this object.
+    Reload() {
+        this.readFail := false
+        this.dcache := Map()
+        this.dstat := Map()
+        if FileExist(this.iniPath) {
+            this._ReadIni()
+            this._DropRetired()
+        }
     }
 
     static _SectionText(name, keys) {

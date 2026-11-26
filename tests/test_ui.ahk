@@ -257,24 +257,22 @@ Test_Ui_Scrub_HidesTheWindowsUserName() {
     AssertTrue(!InStr(UiLogic.Scrub("d:/users/Other/x.txt"), "Other"), "forward slashes, other drive")
 }
 
-; v1.5: the Join Server link is on by default, also for a settings.ini
-; from before v1.5 (joinButton=0 was the old default with no switch); an
-; "off" saved after that stays off
-Test_Config_JoinButtonOnByDefault() {
+; 2026-11-25: the Join Server link is always on; the old switch and its
+; marker are dropped from an older settings.ini (gone after the next Save)
+Test_Config_JoinButtonRetired() {
     dir := UiDashTmp()
     try {
-        cfg := Config.Load(dir)
-        AssertEq(cfg.Get("General.joinButton", 0), 1, "on for a new settings.ini")
+        AssertEq(Config.Load(dir).Get("General.joinButton", ""), "", "no such setting in a new settings.ini")
     } finally CfgTmpClean(dir)
     dir := UiDashTmp()
     try {
-        FileAppend("[General]`r`nsellEvery=9`r`njoinButton=0`r`n", dir "\settings.ini", "UTF-8")
+        FileAppend("[General]`r`nsellEvery=9`r`njoinButton=0`r`njoinDefaultOn=1`r`n", dir "\settings.ini", "UTF-8")
         cfg := Config.Load(dir)
-        AssertEq(cfg.Get("General.joinButton", 0), 1, "an old settings.ini gets it on once")
+        AssertEq(cfg.Get("General.joinButton", ""), "", "an old joinButton=0 is dropped")
+        AssertEq(cfg.Get("General.joinDefaultOn", ""), "", "its marker too")
         AssertEq(cfg.Get("General.sellEvery", 0), 9, "other keys kept")
-        cfg.Set("General.joinButton", 0)
         cfg.Save()
-        AssertEq(Config.Load(dir).Get("General.joinButton", 1), 0, "turned off after that: stays off")
+        AssertTrue(!InStr(FileRead(dir "\settings.ini"), "joinButton"), "gone from the file after Save")
     } finally CfgTmpClean(dir)
 }
 

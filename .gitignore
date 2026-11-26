@@ -21,6 +21,7 @@ data/*.bak
 clips_for_user/
 logs/
 exports/
+imported/
 
 # v1.6 local state
 data/stats.json

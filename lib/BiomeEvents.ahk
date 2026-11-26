@@ -54,7 +54,7 @@
 ;     normal, non-rare biomes. state.stats: biomes, rareBiomes.
 ;   - Non-rare biome (live or not) clears state.rareActive.
 ;   - Live rare biome: rareActive := true, `rare` webhook with mention and a
-;     Roblox screenshot (+ "[Join server](link)" if [General] joinButton=1 and
+;     Roblox screenshot (+ "[Join server](link)" (always on) if
 ;     privateServer is an https://www.roblox.com/ link; the link is never
 ;     logged). If [General] everyonePing=1 (default) and the biome is in
 ;     [General] everyoneBiomes (default DREAMSPACE,GLITCHED,CYBERSPACE) the
@@ -462,9 +462,10 @@ class BiomeEvents {
     ; may be empty). They go with the webhook's own mention and @everyone.
     _BiomePings(name) => Webhook.BiomePings(this._cfg.Get("General.biomePings", ""), name)
 
-    ; Private-server link for the rare webhook, or "". Never logged.
+    ; Private-server link for the rare webhook, or "" (ghost server, no
+    ; usable link). Always on since 2026-11-25 (no switch). Never logged.
     _JoinLink() {
-        if (!this._cfg.Get("General.joinButton", 1) || this._Ghost())
+        if this._Ghost()
             return ""
         return BiomeEvents.JoinUrl(this._cfg.Get("General.privateServer", ""))
     }

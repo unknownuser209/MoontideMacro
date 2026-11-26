@@ -175,6 +175,23 @@ The sidebar hubs:
   alerts, hotkeys), **Look** (themes, above), **Schedule** and **Profiles**.
 - **Help**: **Check & help**, Calibrate, Routes, Dev tools and Credits.
 
+## Move to another PC
+
+**Settings > Profiles > Export everything** writes one file,
+`exports\moontide_backup_<date>_<time>.json`, with every setting (private
+server link, webhooks, the Discord bot, hotkeys, everything in settings.ini),
+your calibration, walks, quests, merchants, potions, biomes, stats, auras and
+your own themes with their pictures. A custom alert sound comes along too.
+Copy it to the other PC, put the macro there and press **Import everything**
+on the same tab (with the macro stopped). Your settings there are saved first
+(`exports\moontide_backup_before_import_...json`), then everything is replaced
+and the macro restarts. If the other PC has another screen size or Windows
+scale, run **Help > Check & help > Test my calibration** afterwards.
+
+This file holds your private server link, webhook links and bot token: never
+share it (use **Export settings** for a file you can send to a friend). Only
+import your own backup.
+
 ## Setup wizard
 
 The first time you start the macro a short wizard opens: a check of your PC,

@@ -216,7 +216,7 @@ class SetupWizard {
                 if (hooks.Length >= 8)
                     return this._Why("hookWhy", "There are already 8 webhooks: add more under Discord & Clips > Discord.")
                 hooks.Push(Map("name", "Webhook " (hooks.Length + 1), "url", typed, "mention", "", "enabled", 1
-                    , "events", ["biome", "rare", "errors", "startstop"]))
+                    , "events", Config.EventTypes.Clone()))   ; every box ticked
                 this.cfg.SetWebhooks(hooks)
                 this._ids["hook"].Value := ""
                 this._Save()

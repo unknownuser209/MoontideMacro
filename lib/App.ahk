@@ -257,6 +257,7 @@ class App {
         this._recRespawnFn := App._Dep(d, "recordRespawn", (ctx) => this.input.ResetToSpawn(ctx))
         this._sleepFn := App._Dep(d, "sleep", (ms) => Sleep(ms))
         this._exitFn := App._Dep(d, "exit", () => ExitApp(0))
+        this._restartFn := App._Dep(d, "reload", () => Reload())   ; after "Import everything" (tests: a counter)
         this._testCtx := ""
         this._toolBusy := false      ; a route Record / Test or Calibrate is running (Start refused)
         this.launchFn := App._Dep(d, "launch", (fn) => SetTimer(fn, -1))
@@ -3068,6 +3069,28 @@ class App {
         return true
     }
 
+    ; Settings > Profiles "Move to another PC" (lib\Backup.ahk). An import
+    ; is refused while the macro runs or a route record / test / calibration
+    ; is on: "busy", else "".
+    BackupBusy() => (this._started || IsObject(this._running) || this._toolBusy) ? "busy" : ""
+
+    ; before an export: the day counters on disk are the ones in memory
+    OnBackupFlush() {
+        if IsObject(this.daily)
+            try this.daily.Save()
+        try CalHealth.Flush()
+    }
+
+    ; after an import: the day counters are read from the imported file (the
+    ; exit hook saves them, it must not write the old ones back), then the
+    ; macro restarts so every part loads the new files.
+    OnBackupImported() {
+        if IsObject(this.daily)
+            try this.daily.Load()
+        this.Log("Backup: restarting to load the imported settings")
+        this._restartFn.Call()
+    }
+
     ; ---- check & help, setup wizard ----
 
     OnCheckSetup() => SetupCheck.Run(this.cfg)
@@ -3294,6 +3317,9 @@ class App {
             "sendSummary", () => this.SendSummary(),
             "testRemote", () => this.OnTestRemote(),
             "restart", () => this.OnRestart(),
+            "backupBusy", () => this.BackupBusy(),
+            "backupFlush", () => this.OnBackupFlush(),
+            "backupImported", () => this.OnBackupImported(),
             "close", () => this.OnDashClose())
         this.dash := Dashboard(this.cfg, cb)
         this.overlay := Overlay(this.cfg, Map("start", cb["start"], "pause", cb["pause"], "stop", cb["stop"]))

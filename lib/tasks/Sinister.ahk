@@ -26,7 +26,7 @@
 ;                    OrbGapMs and leaves the boss fight's state alone (no
 ;                    dead edit for orbs). The Join Server link
 ;                    is left out (the card still goes, as the biome cards)
-;                    when General.joinButton is off, the link is empty or
+;                    when the link is empty or
 ;                    not a roblox.com link, or ghost() is not false (audit
 ;                    2026-11-20: these sent no boss card at all).
 ;   rep.Note(fill, seen [, now])  a fight tick: fill = the boss plate's HP
@@ -118,7 +118,7 @@ class SinisterReport {
     ; "Boss Spawned - <name>"), the same for an orb.
     static SpawnCard(link, boss := "s", unix := "") {
         u := (unix = "") ? DateDiff(A_NowUTC, "19700101000000", "Seconds") : unix
-        ; link "": General.joinButton is off, the card names no server
+        ; link "": no usable link or a ghost server, the card names no server
         return {desc: "<t:" u ":F> (<t:" u ":R>)`n> ## " SinisterReport.BossName(boss) " has spawned" (link != "" ? "`n> **[Join Server](" link ")**" : "")
             , color: SinisterReport.ColorOf(boss), buttons: (link != "") ? [{label: "Join Server", url: link}] : ""}
     }
@@ -184,15 +184,11 @@ class SinisterReport {
         return true
     }
 
-    ; the Join Server link for a card, "" when General.joinButton is off
-    ; (Alerts), there is no usable link or not in the private server: the
+    ; the Join Server link for a card (always on), "" when there is no
+    ; usable link or not in the private server: the
     ; card goes out without it, as the biome cards (BiomeEvents._JoinLink)
     _JoinLink(what) {
         link := this._LinkNow()
-        off := false
-        try off := !this._cfg.Get("General.joinButton", 1)
-        if off
-            return ""
         if (link = "") {
             this._Log("sinister: no usable private server link - the " what " message goes without the Join Server link")
             return ""

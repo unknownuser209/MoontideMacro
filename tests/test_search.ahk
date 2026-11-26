@@ -98,9 +98,9 @@ Test_Search_TwoWords() {
     d := ""
     try {
         d := Dashboard(Config.Load(dir))
-        AssertTrue(SrHas(d.SearchFor("join link"), "Settings", "Settings:Alerts"), "join link finds the Join Server link switch")
-        AssertTrue(SrHas(d.SearchFor("link join"), "Settings", "Settings:Alerts"), "link join does too")
-        AssertEq(SrFirst(d, "join link"), "Join Server link in biome and boss messages|Settings|Settings:Alerts", "and it is first")
+        AssertTrue(SrHas(d.SearchFor("vip routes"), "Settings", "Settings:Routes"), "vip routes finds the VIP gamepass routes switch")
+        AssertTrue(SrHas(d.SearchFor("routes vip"), "Settings", "Settings:Routes"), "routes vip does too")
+        AssertEq(SrFirst(d, "vip routes"), "VIP gamepass routes|Settings|Settings:Routes", "and it is first")
     } finally {
         UiDashClose(d)
         try DirDelete(dir, true)

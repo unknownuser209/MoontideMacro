@@ -179,14 +179,52 @@ class RouteRecorder {
         if !(RouteRecorder.Builtin.Has(name) && routes is Map)
             return ""
         variant := vip ? "vip" : "nonvip"
-        if !(routes.Has(variant) && routes[variant] is Map && routes[variant].Has(RouteRecorder.Builtin[name]))
-            return ""
-        steps := routes[variant][RouteRecorder.Builtin[name]]
+        steps := vip ? "" : RouteRecorder.NonVip(RouteRecorder.Builtin[name])
+        if !IsObject(steps) {
+            if !(routes.Has(variant) && routes[variant] is Map && routes[variant].Has(RouteRecorder.Builtin[name]))
+                return ""
+            steps := routes[variant][RouteRecorder.Builtin[name]]
+        }
         if !(steps is Array && steps.Length > 0)
             return ""
         if (name = "sell_to_fisher")
             steps := RouteRecorder.TrimInteract(steps).steps
         return {steps: steps, label: "built-in " (vip ? "VIP" : "non-VIP") " walk"}
+    }
+
+    ; The shipped non-VIP walks: data\default_routes.json "nonvip" (an
+    ; update replaces that file, never data\routes.json; recorded WITHOUT the
+    ; VIP gamepass 2026-11-25). which: "toShop" | "back" | a route name
+    ; (quest_board, memory_match). -> the entry (a steps Array, or a Map
+    ; with steps and _replaces) or "" (none, or it does not parse).
+    static NonVip(which, path := "") {
+        path := (path = "") ? RouteRecorder.DefaultsPath : path
+        d := ""
+        try d := Json.Parse(FileRead(path, "UTF-8"))
+        if !(d is Map && d.Has("nonvip") && d["nonvip"] is Map && d["nonvip"].Has(which))
+            return ""
+        e := d["nonvip"][which]
+        try {
+            if (Input.ParseRoute(e).Length = 0)
+                return ""
+        } catch Any {
+            return ""
+        }
+        return e
+    }
+
+    ; While VIP gamepass routes is off: the shipped non-VIP walk for route
+    ; `name` when the player has no `name` (own = "") or still has the
+    ; creator's VIP recording it replaces (the same _recorded stamp). A
+    ; player's own recording always wins. -> the entry or "".
+    static NonVipFor(name, own, path := "") {
+        nv := RouteRecorder.NonVip(name, path)
+        if !(nv is Map && nv.Has("_replaces"))
+            return ""
+        if !IsObject(own)
+            return nv
+        stamp := (own is Map && own.Has("_recorded")) ? String(own["_recorded"]) : ""
+        return (stamp = String(nv["_replaces"])) ? nv : ""
     }
 
     static Merge(routes, name, steps, stamp := "") {

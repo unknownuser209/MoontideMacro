@@ -540,7 +540,6 @@ Test_Pt_JoinLinkNeverLogged() {
     try {
         link := "https://www.roblox.com/share?code=SECRETCODE123&type=Server"
         r.cfg.Set("General.privateServer", link)
-        r.cfg.Set("General.joinButton", 1)
         r.be.Handle(PtEv("biome", "DREAMSPACE", "2026-10-24T11:00:00.000Z", true))
         found := false
         for s in r.wh.sent
@@ -549,7 +548,7 @@ Test_Pt_JoinLinkNeverLogged() {
         AssertTrue(found, "join link in rare webhook")
         for t in r.logs
             AssertTrue(!InStr(t, "SECRETCODE123"), "link never logged")
-        ; joinButton off -> no link
+        ; always on (no switch since 2026-11-25): an old joinButton=0 changes nothing
         r.cfg.Set("General.joinButton", 0)
         r.be.Handle(PtEv("biome", "NORMAL", "2026-10-24T11:01:00.000Z", true))
         r.be.Handle(PtEv("biome", "CYBERSPACE", "2026-10-24T11:02:00.000Z", true))
@@ -557,7 +556,7 @@ Test_Pt_JoinLinkNeverLogged() {
         for s in r.wh.sent
             if (InStr(s.desc, "SECRETCODE123") || PtFieldsHave(s, "SECRETCODE123"))
                 n++
-        AssertEq(n, 1, "link only when joinButton=1 (the rare alert)")
+        AssertTrue(n >= 2, "the second rare alert carries the link too: " n)
     } finally
         r.Done()
 }

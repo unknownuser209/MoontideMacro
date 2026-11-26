@@ -653,6 +653,12 @@ class CraftTask {
         routes := env.cfg.Data("routes")
         toShop := CraftTask._Steps(FishLogic._Dig(routes, variant ".toShop"))
         back := CraftTask._Steps(FishLogic._Dig(routes, variant ".back"))
+        if (variant = "nonvip") {               ; the shipped non-VIP recording first (as Sell)
+            if IsObject(s := CraftTask._Steps(RouteRecorder.NonVip("toShop")))
+                toShop := s
+            if IsObject(s := CraftTask._Steps(RouteRecorder.NonVip("back")))
+                back := s
+        }
         if !IsObject(toShop)
             bad.Push("routes." variant ".toShop")
         if !IsObject(back)
