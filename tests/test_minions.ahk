@@ -1,8 +1,8 @@
 #Requires AutoHotkey v2.0
-; Tests for lib\tasks\Minions.ahk. The aura storage fake (ObStore) and the
+; Tests for lib\plugins\hunting\Minions.ahk. The aura storage fake (ObStore) and the
 ; helpers come from test_obby.ahk / test_questmatch.ahk. Bar colors are the
 ; live ones (2026-10-31, a Sand Storm orb read live).
-#Include ..\lib\tasks\Minions.ahk
+#Include ..\lib\plugins\hunting\Minions.ahk
 
 ; QmIO whose waits move a fake clock (io.t, ms): the hunt's time limits.
 ; The keys stay down across the steps (_Go), so a walk is no w press:

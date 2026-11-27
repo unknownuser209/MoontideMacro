@@ -141,7 +141,7 @@ class SetupWizard {
         ; they stop short of the fishing spot (tester 2026-11-24). Asked here
         ; because General.vip defaults to 1 and nobody finds it in Settings.
         this._ids["vip"] := Theme.Check(g, 24, 116 + SetupWizard.RunKeys.Length * 36 + 6, "I own the VIP gamepass in Sol's RNG (faster walking)", 0, "", "pill", 520)
-        Theme.Label(g, "x24 y342 w552 h44", "Hunting (Limited tab) and the obby stay off here: turn them on in the dashboard when you want them.", "muted", Theme.Bg)
+        Theme.Label(g, "x24 y342 w552 h44", "Orb & boss hunting (Plugins tab) and the obby stay off here: turn them on in the dashboard when you want them.", "muted", Theme.Bg)
     }
 
     _PageDone(g) {

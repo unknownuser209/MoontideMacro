@@ -1,10 +1,11 @@
 #Requires AutoHotkey v2.0
-#Include %A_LineFile%\..\TaskEnv.ahk
-#Include %A_LineFile%\..\FishLogic.ahk
-#Include %A_LineFile%\..\Obby.ahk
+#Include %A_LineFile%\..\..\..\tasks\TaskEnv.ahk
+#Include %A_LineFile%\..\..\..\tasks\FishLogic.ahk
+#Include %A_LineFile%\..\..\..\tasks\Obby.ahk
 #Include %A_LineFile%\..\OrbBeacon.ahk
 #Include %A_LineFile%\..\Sinister.ahk
-#Include %A_LineFile%\..\..\LogWatch.ahk
+#Include %A_LineFile%\..\..\..\LogWatch.ahk
+#Include %A_LineFile%\..\..\..\Plugins.ahk
 ; ---------------------------------------------------------------------------
 ; MinionsTask: fights the Biome Orbs and Minions of a weather biome
 ; (2026 Halloween update) with a combat aura (and puts the user's aura back
@@ -164,7 +165,7 @@ class MinionsTask {
     ; The numbers live in data\auras_abilities.json (AurasFile, read once:
     ; Auras); an aura not in it goes by its "default" block.
     static Keys := ["e", "r", "t", "f", "q", "v"]
-    static AurasFile := A_LineFile "\..\..\..\data\auras_abilities.json"
+    static AurasFile := A_LineFile "\..\..\..\..\data\auras_abilities.json"   ; lib\plugins\hunting -> repo
     static _auras := ""
     ; aura (lower case) -> {name, panel, order, cool, cast, cost, roots,
     ; rank (Maps key -> value), strategy, charge, rank reads (readsCharge,
@@ -854,7 +855,7 @@ class MinionsTask {
 
     CanRun(state) {
         env := this._env
-        if (!IsObject(env.cfg) || !env.cfg.Get("Minions.enabled", 0))
+        if (!IsObject(env.cfg) || !env.cfg.Get("Minions.enabled", 0) || !Plugins.On(env.cfg, "hunting", 1))
             return false
         b := state.HasProp("biome") ? state.biome : ""
         if (b != this._biome)

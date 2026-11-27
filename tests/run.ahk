@@ -129,3 +129,6 @@ Out(line) {
 #Include test_transitions.ahk
 #Include test_screendim.ahk
 #Include test_backup.ahk
+#Include test_plugins.ahk
+#Include test_portable.ahk
+#Include test_silentstop.ahk

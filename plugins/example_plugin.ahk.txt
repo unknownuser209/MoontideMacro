@@ -1,0 +1,27 @@
+; @moontide-plugin
+; id: hello
+; name: Hello (example)
+; version: 1.0.0
+; api: 1
+; class: HelloPlugin
+; author: Moontide
+; description: An example: says hello in the log when the biome changes. Rename this file to example_plugin.ahk to try it.
+; setting: greeting | text | Hello | What to say
+; setting: ping | bool | 0 | Also send it to Discord (Biome webhooks)
+
+; A Moontide plugin is one class that extends MoontidePlugin. Every hook is
+; optional: OnLoad(), OnStart(), OnStop(), OnTick(), OnBiome(biome, prev) and
+; Task() (a scheduler task {priority, CanRun(state), Run(ctx)}).
+; this.api: Log, Get, Set, Save, Notify, Biome, IsStarted, Dir, Id, Name.
+; The README (Plugins) has the whole list.
+class HelloPlugin extends MoontidePlugin {
+    OnLoad() {
+        this.api.Log("loaded")
+    }
+
+    OnBiome(biome, prev) {
+        this.api.Log(this.api.Get("greeting") ", " biome "!")
+        if this.api.Get("ping")
+            this.api.Notify("biome", "Hello", "The biome is " biome " now.")
+    }
+}

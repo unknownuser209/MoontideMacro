@@ -1036,8 +1036,10 @@ Test_Wf_BiomePings_RoleUserAndNone() {
         ; a normal biome's card never pings, mapped or not
         r.cfg.Set("General.biomePings", "WINDY=&555")
         AssertEq(r.Rare("WINDY", "2026-10-25T04:00:00.000Z"), "", "no rare message for WINDY")
+        ; 555 as a number of its own (a time or size in the card can hold
+        ; the digits: the full suite failed on it once, 2026-11-26)
         for x in WfRecs(r.wh)
-            AssertTrue(!InStr(x.rec.json, "555"), "no role on a biome card")
+            AssertTrue(!RegExMatch(x.rec.json, "(?<!\d)555(?!\d)"), "no role on a biome card")
     } finally {
         r.Done()
     }

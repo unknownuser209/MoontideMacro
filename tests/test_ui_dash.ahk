@@ -579,7 +579,7 @@ UiDashPos(c) {
 Test_Hubs_EveryPageOnce() {
     want := [["Home", "home", "Run,Stats,Log"]
         , ["Farming", "bolt", "Fishing,Craft,Merchants,Limbo"]
-        , ["Quests & events", "star", "Quests,Obby & Memory,Biome items,Hunting"]
+        , ["Quests & events", "star", "Quests,Obby & Memory,Biome items,Plugins,Hunting,Sniper,Plugin settings"]
         , ["Biomes & Potions", "moon", "Biomes & Potions,Potions"]
         , ["Discord & Clips", "bell", "Webhooks,Clips,Summary,Remote"]
         , ["Settings", "gear", "Settings,Look,Schedule,Profiles"]
@@ -704,7 +704,7 @@ Test_Hubs_TabLabels() {
     AssertEq(Dashboard.TabLabel("Dev tools"), "Dev tools", "Dev tools")
     AssertEq(Dashboard.TabLabel("Run"), "Overview", "Run")
     AssertEq(Dashboard.TabLabel("Settings"), "General", "Settings")
-    AssertEq(Dashboard.TabLabel("Hunting"), "Limited", "Hunting")
+    AssertEq(Dashboard.TabLabel("Hunting"), "Orb & boss hunting", "Hunting (the Limited tab before)")
     AssertEq(Dashboard.TabLabel("Look"), "Look", "Look")
     AssertEq(Dashboard.TabLabel("Potions"), "Potions", "Potions")
     AssertEq(Dashboard.TabLabel("Summary"), "Daily summary", "Summary")
@@ -1526,7 +1526,7 @@ Test_ObbyMemory_Page() {
         AssertEq(d.PageOf(d.Ctrl("Obby.intervalMin")), "Obby & Memory", "interval on the page")
         AssertEq(d.PageOf(d.Ctrl("Obby.retries")), "Obby & Memory", "retries on the page")
         AssertEq(d.PageOf(d.Ctrl("MemoryMatch.enabled")), "Obby & Memory", "Memory Match switch on the page")
-        AssertEq(d.PageOf(d.Ctrl("Minions.normal")), "Hunting", "NORMAL hunt switch on Quests & events > Limited")
+        AssertEq(d.PageOf(d.Ctrl("Minions.normal")), "Hunting", "NORMAL hunt switch on Plugins > Orb & boss hunting")
         AssertEq(d.Ctrl("Minions.normal").Value, 0, "NORMAL not hunted by default")
         AssertEq(d.PageOf(d.Ctrl("Auras.equipFirst")), "Obby & Memory", "equip-first switch on the page")
         AssertEq(d.Ctrl("Auras.equipFirst").Value, 0, "equip first off by default")
@@ -1769,7 +1769,7 @@ Test_Dashboard_V16Pages() {
         AssertEq(d.Ctrl("stats:run:reelRate").Text, "-", "no tries yet")
         AssertEq(d.Ctrl("stats:run:uptimeText").Text, "0m", "no uptime yet")
         AssertEq(d.Ctrl("stats:history").GetCount(), 1, "one history row")
-        ; Hunting moved to the Limited hub
+        ; Hunting: the hunting plugin's page (Plugins tab)
         AssertEq(d.PageOf(d.Ctrl("Minions.enabled")), "Hunting", "hunting switch on Hunting")
         d.Ctrl("Minions.maxSec").Value := "30"
         AssertEq(d.SavePage("Hunting"), false, "30 s refused")
@@ -2697,10 +2697,20 @@ Test_Scale_FitScale() {
         AssertEq(Theme.FitScale(130, 1366, 728, 1040, 680), 100, "a small laptop")
         AssertEq(Theme.FitScale(130, 1920, 840, 1040, 680), 115, "in between")
         AssertEq(Theme.FitScale(115, 1920, 1040, 1040, 680), 115, "never above the wish")
-        AssertEq(Theme.FitScale(100, 640, 480, 1040, 680), 100, "nothing fits: 100")
+        AssertEq(Theme.FitScale(100, 640, 480, 1040, 680), 70, "nothing fits: the smallest")
+        AssertEq(Theme.FitScale(100, 1280, 672, 1040, 680), 90, "1280x720 at 100 %: 90")
         Theme.DpiFn := () => 120
         AssertEq(Theme.FitScale(100, 1920, 1080, 1040, 680), 100, "1080p at 125 %: 100 fits")
         AssertEq(Theme.FitScale(130, 1920, 1080, 1040, 680), 115, "1080p at 125 %: 115 fits, 130 does not")
+        ; bug hunt 2026-11-26: the window ran under the taskbar here
+        AssertEq(Theme.FitScale(100, 1366, 708, 1040, 680), 70, "1366x768 at 125 %: 70")
+        Theme.DpiFn := () => 144
+        AssertEq(Theme.FitScale(100, 1920, 1008, 1040, 680), 90, "1080p at 150 %: 90")
+        AssertEq(Theme.FitScale(130, 1920, 1008, 1040, 680), 90, "1080p at 150 %, 130 wanted: 90")
+        Theme.DpiFn := () => 168
+        AssertEq(Theme.FitScale(100, 1920, 996, 1040, 680), 80, "1080p at 175 %: 80")
+        Theme.DpiFn := () => 96
+        AssertEq(Theme.FitScale(130, 1366, 728, 1040, 680), 100, "never below 100 when 100 fits")
     } finally {
         Theme.DpiFn := old
     }
@@ -2754,6 +2764,67 @@ Test_Scale_EveryControlInsideWindow() {
         }
     }
     Theme.WorkAreaFn := oldWa
+}
+
+; the sizes below 100 (a small or high-scale screen, FitScale): every
+; control still inside the window, the tab strip still in 100 % units
+Test_Scale_SmallSizesEveryControlInsideWindow() {
+    old := Theme.Scale
+    oldWa := Theme.WorkAreaFn
+    Theme.WorkAreaFn := () => {w: 3840, h: 2160}
+    for sc in [90, 80, 70] {
+        dir := UiDashTmp()
+        d := ""
+        try {
+            Theme.Scale := sc
+            d := Dashboard(Config.Load(dir))
+            AssertEq(Theme.Scale, sc, "built at " sc)
+            gw := Theme.S(Dashboard.W), gh := Theme.S(Dashboard.H)
+            bad := ""
+            for i, page in d._pages {
+                d.SelectPage(i)
+                for c in page.ctrls {
+                    c.GetPos(&x, &y, &w, &h)
+                    if (w = 0 || h = 0)
+                        continue
+                    if (x < 0 || y < 0 || x + w > gw + 1 || y + h > gh + 1) {
+                        bad .= Dashboard.Pages[i] ":" c.Type ":" x "," y "," w "," h "  "
+                        if (StrLen(bad) > 600)
+                            break
+                    }
+                }
+            }
+            t := Theme.Pos(d.Ctrl("tab:Run"))
+            AssertTrue(Abs(t.y - 104) <= 1 && Abs(t.h - 26) <= 2, "the tab strip reads back in 100 % units at " sc " %: " t.y "," t.h)
+            AssertEq(bad, "", "controls outside the " gw "x" gh " client at " sc " %")
+        } finally {
+            Theme.Scale := old
+            UiDashClose(d)
+            try DirDelete(dir, true)
+        }
+    }
+    Theme.WorkAreaFn := oldWa
+}
+
+; 1080p at 150 %: the dashboard is built at 90 % and the log says so
+Test_Scale_ShrunkBelow100OnASmallScreen() {
+    old := Theme.Scale
+    oldWa := Theme.WorkAreaFn, oldDpi := Theme.DpiFn
+    dir := UiDashTmp()
+    d := ""
+    try {
+        Theme.WorkAreaFn := () => {w: 1920, h: 1008}
+        Theme.DpiFn := () => 144
+        Theme.Scale := 100
+        d := Dashboard(Config.Load(dir))
+        AssertEq(Theme.Scale, 90, "built at 90")
+        AssertTrue(InStr(d.LogText(), "90 %"), "the log names the size used: " d.LogText())
+    } finally {
+        Theme.WorkAreaFn := oldWa, Theme.DpiFn := oldDpi
+        Theme.Scale := old
+        UiDashClose(d)
+        try DirDelete(dir, true)
+    }
 }
 
 Test_Scale_RefusedOverWorkArea() {

@@ -1,5 +1,5 @@
 #Requires AutoHotkey v2.0
-#Include %A_LineFile%\..\Ocr.ahk
+#Include %A_LineFile%\..\..\..\Ocr.ahk
 ; ---------------------------------------------------------------------------
 ; ClockWatch (2026-11-17, the owner): the Sinister bosses seen without the
 ; chat. In PUMPKIN MOON (Sinister P.) and GRAVEYARD (Sinister S.) the game's

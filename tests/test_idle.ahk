@@ -330,6 +330,47 @@ Test_Idle_ScreenshotOnlyViaWindow() {
     }
 }
 
+; PrintWindow waits on the window's own thread: a Roblox that is not
+; responding would freeze the macro inside it (F3 too). Such a window is
+; not read and not copied (bug hunt 2026-11-26).
+Test_Idle_HungWindowNotRead() {
+    AssertEq(Ocr.Hung(DllCall("GetDesktopWindow", "Ptr")), false, "the real check answers (desktop not hung)")
+    g := IdleWindow()
+    path := ""
+    try {
+        o := IdleOrigin(g.Hwnd)
+        Ocr.Win := g.Hwnd
+        Loop 20 {
+            if IdleCapPixel(o.x + 50, o.y + 50)
+                break
+            Sleep(100)
+        }
+        AssertTrue(IdleCapPixel(o.x + 50, o.y + 50) != 0, "a responding window is read")
+        asked := [0]
+        Ocr.HungFn := (h) => (asked[1]++, h = g.Hwnd)
+        got := ""
+        try got := IdleCapPixel(o.x + 50, o.y + 50)
+        catch Error as e
+            got := e.Message
+        AssertTrue(InStr(got, "not responding"), "a hung window is not copied: " got)
+        AssertTrue(asked[1] > 0, "asked before the copy")
+        AssertEq(Ocr.Read(0, 0, 50, 20), "", "Ocr.Read on it: nothing, no throw")
+        Screenshot.FromWindow := true
+        Screenshot.HungFn := (h) => (h = g.Hwnd)
+        AssertEq(Screenshot.Capture(g.Hwnd), "", "a hung window is not copied")
+        Screenshot.HungFn := ""
+        path := Screenshot.Capture(g.Hwnd)
+        AssertTrue(path != "" && FileExist(path), "responding again: copied")
+    } finally {
+        Ocr.HungFn := "", Screenshot.HungFn := ""
+        Ocr.Win := 0
+        Screenshot.FromWindow := false
+        g.Destroy()
+        if (path != "")
+            try FileDelete(path)
+    }
+}
+
 ; Home > Overview: the switch sits in the Potion safety panel, overlaps nothing,
 ; and a flip is saved at once (the Run page has no Save button)
 Test_Idle_DashboardSwitch() {

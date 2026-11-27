@@ -61,8 +61,8 @@ auto=0
   (Home page: "Update available: vX.Y.Z", **Install** or **Later**), `auto=1`
   installs without asking. **Check for updates** on Home checks on demand.
 - Installing only happens while the macro is stopped. Your `settings.ini`,
-  calibration, routes, quests, merchants, potions, biomes, state files, logs
-  and `backup\` are never overwritten. The replaced program files are copied
+  calibration, routes, quests, merchants, potions, biomes, state files, logs,
+  `backup\` and your `plugins\` folder are never overwritten or deleted. The replaced program files are copied
   to `backup\<old version>\` first; if anything fails they are restored and the
   old version keeps running. Then the macro restarts itself.
 
@@ -153,10 +153,10 @@ The sidebar hubs:
 - **Home**: Overview (status, Start / Pause / Stop, potion dry run, updates),
   **Stats** (today, this run and the last 7 days) and the **Log**.
 - **Farming**: Fishing, Crafting, Merchants, Limbo.
-- **Quests & events**: Quests, Obby & Memory, Biome items and **Hunting**:
-  features that only exist during a game event. **Hunting**
-  (Halloween orbs, minions and the Graveyard boss) is here; Sol's RNG removes
-  it later in November and this tab goes with it. Also here: the **boss
+- **Quests & events**: Quests, Obby & Memory, Biome items and **Plugins**
+  (below). The Limited tab is now the built-in plugin **Orb & boss hunting**
+  (Plugins > Orb & boss hunting > Settings): Halloween orbs, minions and the
+  Graveyard boss, all your old settings kept. Also there: the **boss
   message** (when the chat names Sinister S. or Sinister P., your Boss webhook
   gets a "Sinister S. / P. has spawned" card with a Join Server button for
   your private server, even with hunting off; it changes to "Sinister S. is
@@ -174,6 +174,81 @@ The sidebar hubs:
 - **Settings**: **General** (private server link, routes, intervals, recovery,
   alerts, hotkeys), **Look** (themes, above), **Schedule** and **Profiles**.
 - **Help**: **Check & help**, Calibrate, Routes, Dev tools and Credits.
+
+## Plugins
+
+Quests & events > **Plugins** lists every plugin: the built-in ones and each
+file or folder in the `plugins` folder next to `MoontideMacro.exe`. A plugin
+is switched on and off there, and **Settings** opens its own settings. A file
+that is not a working plugin gets a row too, with the reason (no header, an
+error in its code, a name the macro already uses...). It never stops the
+macro.
+
+Built in:
+
+- **Orb & boss hunting** (on): what the Limited tab was. Switched off, no
+  hunt, no boss or orb message and no Cursed Rune Fragment.
+
+### Adding a plugin
+
+Drop the `.ahk` file (or a folder with a `plugin.ahk` inside) into `plugins\`,
+press **Rescan**, switch it on and press **Restart to load**. Updates never
+touch the `plugins` folder.
+
+Why a restart: AutoHotkey reads `#Include` files when the script loads, so code
+cannot be added to a running macro. Plugins run inside the macro (they need
+its scheduler, input, screen reading and webhooks, and two programs sending
+keys to Roblox would fight), loaded by a generated
+`plugins\.loaded\_enabled.ahk`. Before a plugin goes into that file it is
+checked in a **separate** AutoHotkey process (`/Validate`: loads the macro
+plus the plugin without running it), so a syntax error or a clashing name
+only shows an error row. The checked copy in `plugins\.loaded\` is what loads,
+so editing the original later can never stop the macro from starting. At run
+time every plugin call is guarded: a plugin that throws 3 times is switched
+off for the session.
+
+### Writing a plugin
+
+The header (comment lines at the very top) is the manifest:
+
+```ahk
+; @moontide-plugin
+; id: hello              ; a-z 0-9 _, 2-32 characters, a letter first
+; name: Hello
+; version: 1.0.0
+; api: 1                 ; the plugin API it was written for
+; class: HelloPlugin
+; author: you
+; description: Says hello in the log when the biome changes.
+; setting: greeting | text | Hello | What to say
+; setting: ping | bool | 0 | Also send it to Discord (Biome webhooks)
+
+class HelloPlugin extends MoontidePlugin {
+    OnBiome(biome, prev) {
+        this.api.Log(this.api.Get("greeting") ", " biome "!")
+        if this.api.Get("ping")
+            this.api.Notify("biome", "Hello", "The biome is " biome " now.")
+    }
+}
+```
+
+Settings types: `bool`, `int`, `text`, `secret` (hidden; kept out of exports
+and log zips), at most 8. They are stored in `settings.ini` under
+`[Plugin.<id>]`.
+
+Hooks (all optional): `OnLoad()`, `OnStart()`, `OnStop()`, `OnTick()` (about
+every 250 ms, started or not: keep it short, never `Sleep`),
+`OnBiome(biome, prev)`, and `Task()`, which may return a scheduler task
+`{priority, CanRun(state), Run(ctx)}`: it then gets turns like the macro's own
+tasks (Run may press keys; check `ctx.ShouldStop()` often). A plugin from the
+folder gets priority 3 to 97 (fishing is 99).
+
+`this.api`: `Log(text)`, `Get(key [, default])`, `Set(key, value)`, `Save()`,
+`Notify(event, title, text [, color])` (a card to the webhooks with `event`
+ticked: biome, rare, merchant, quests, craft, errors, startstop, potions,
+clips, obby, memorymatch, sinister), `Biome()`, `IsStarted()`, `Dir`, `Id`,
+`Name`. The example above ships as `plugins\example_plugin.ahk.txt`: rename it
+to `.ahk` to try it.
 
 ## Move to another PC
 

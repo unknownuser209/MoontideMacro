@@ -680,6 +680,196 @@ Test_Screens_Fishing1080CatchCard() {
         Screen.Reset()
 }
 
+; ---- fishing at 1920x991 (live, windowed, 2026-11-26) ---------------------
+; A 1080p monitor at 125 % with Roblox maximized (a tester: "starts the
+; minigame but it doesnt start clicking"). Wider than 16:9: the panel, the
+; reel and the card are their 1920x1080 size (they scale by the width), only
+; moved with their anchors. Crops of the client (fish991_<what>_x<ox>_y<oy>).
+
+ScrAt991(ox, oy) => Screen.SetClient(-ox, -oy, 1920, 991)
+
+ScrFish991(name) => A_ScriptDir "\screens\fish991_" name ".png"
+
+; FishingTask.UiS swapped for fn while body runs (the old height rule)
+ScrWithUiS(fn, body) {
+    old := FishingTask.GetOwnPropDesc("UiS")
+    FishingTask.DefineProp("UiS", {Call: (*) => fn()})
+    try
+        return body()
+    finally
+        FishingTask.DefineProp("UiS", old)
+}
+
+; a FishingTask whose grab reads frame p (Screen set by the caller)
+ScrReelTask(p, t) {
+    g := MatchFileGrab(p)
+    task := FishingTask(t.cfg, SchedState(), FsDeps(FsIO(), "", true, []))
+    task.deps.grab := (x1, x2, ys, stride) => ScrStripRows(g, x1, x2, ys, stride)
+    return task
+}
+
+Test_Screens_Fishing991PanelReads() {
+    p := ScrFish991("idle_x700_y530")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt991(700, 530)
+        fc := ScrFishMapped()
+        s := FishingTask.MapRect(FishingTask.StatusRect)
+        AssertTrue(RegExMatch(Ocr.ReadFile(p, s*), FishingTask.ReadyRe) > 0, "status line reads Location")
+        t := fc["panelTitle"]
+        AssertTrue(InStr(StrLower(Ocr.ReadFile(p, t["rect"]*)), t["word"]), "panel title reads Fishing")
+        b := fc["fishButton"]
+        AssertTrue(InStr(StrLower(Ocr.ReadFile(p, b["rect"]*)), b["word"]), "button reads Fish")
+        ; the Fish button: crop 65..233, 220..246
+        r := Screen.Pt(fc["rod"][1], fc["rod"][2])
+        AssertTrue(r.x >= 70 && r.x <= 228 && r.y >= 222 && r.y <= 244, "rod click on the button (" r.x "," r.y ")")
+    } finally
+        Screen.Reset()
+}
+
+; The reel bar (crop: inside 57..462, borders y 160 / 181) is seen at once,
+; on the arrow row as mapped. The old height rule (s 0.688 -> k 0.81) put
+; the rows 6 design px under it: not seen, nothing clicked.
+Test_Screens_Fishing991ReelSeen() {
+    for f in ["reel_x700_y530", "reel_night_x700_y530"] {
+        p := ScrFish991(f)
+        AssertTrue(FileExist(p), f ": frame exists")
+        t := FsMakeCfg()
+        try {
+            ScrAt991(700, 530)
+            a := FishingTask.PanelPt(1042, 1030), b := FishingTask.PanelPt(1517, 1055)
+            AssertTrue(Abs(Screen.X(a.x) - 57) <= 3 && Abs(Screen.X(b.x) - 462) <= 3, f ": bar x " Screen.X(a.x) ".." Screen.X(b.x))
+            AssertTrue(Abs(Screen.Y(a.y) - 160) <= 2 && Abs(Screen.Y(b.y) - 181) <= 2, f ": borders y " Screen.Y(a.y) ", " Screen.Y(b.y))
+            task := ScrReelTask(p, t)
+            AssertTrue(task._ReelUp(), f ": the reel bar is seen")
+            rc := task._Fc()["reel"]
+            AssertTrue(Abs(task._arrowRow - rc["arrowY"]) <= 4, f ": arrow on the mapped row (+" task._arrowRow - rc["arrowY"] ")")
+            old := ScrWithUiS(() => Screen.s, () => ScrReelTask(p, t)._ReelUp())
+            AssertEq(old, false, f ": the height rule missed it (why the fix)")
+        } finally {
+            Screen.Reset()
+            FsClean(t.dir)
+        }
+    }
+}
+
+; _ReelUnseen on the real frame: the borders are where the rows are (no move)
+Test_Screens_Fishing991ReelSearchInPlace() {
+    t := FsMakeCfg()
+    try {
+        ScrAt991(700, 530)
+        task := ScrReelTask(ScrFish991("reel_x700_y530"), t)
+        task._ReelUnseen()
+        AssertEq(FishingTask.ReelDy, 0, "rows stay")
+    } finally {
+        FishLogic.WhiteMin := 220
+        FishingTask.ReelDy := 0
+        Screen.Reset()
+        FsClean(t.dir)
+    }
+}
+
+; FishingTask._FitFind measures the bar anywhere in the lower middle: on the
+; real 1920x991 crops (frame 757..1162, top border y 690 on the client), the
+; whole 1366x768 frame (bar 510..855, x0.726) and the 1080p crop; never on a
+; frame without the reel.
+Test_Screens_FishingFitFindsTheBar() {
+    t := FsMakeCfg()
+    try {
+        for f in ["reel_x700_y530", "reel_night_x700_y530"] {
+            ScrAt991(700, 530)
+            r := ScrReelTask(ScrFish991(f), t)._FitFind()
+            AssertTrue(IsObject(r), f ": found")
+            if IsObject(r) {
+                AssertTrue(Abs(r.x1 - 757) <= 2 && Abs(r.x2 - 1162) <= 2 && Abs(r.y - 690) <= 1, f ": at " r.x1 ".." r.x2 ", y " r.y)
+                AssertTrue(Abs(r.k - 0.853) <= 0.01, f ": x" r.k)
+            }
+        }
+        Screen.SetClient(0, 0, 1366, 768)
+        r := ScrReelTask(A_ScriptDir "\screens\reel768_shot1.png", t)._FitFind()
+        AssertTrue(IsObject(r) && Abs(r.k - 0.726) <= 0.015 && Abs(r.x1 - 510) <= 3, "768: " (IsObject(r) ? r.x1 ".." r.x2 " y " r.y " x" r.k : "not found"))
+        ScrAt1080(700, 600)
+        r := ScrReelTask(ScrFish1080("reel_x700_y600"), t)._FitFind()
+        AssertTrue(IsObject(r) && Abs(r.k - 0.85) <= 0.02, "1080: " (IsObject(r) ? r.x1 ".." r.x2 " y " r.y " x" r.k : "not found"))
+        for f in ["idle_x700_y530", "card_x600_y120"] {
+            ScrAt991(700, 530)
+            AssertEq(ScrReelTask(ScrFish991(f), t)._FitFind(), "", f ": no bar")
+        }
+        ScrAt1080(700, 600)
+        AssertEq(ScrReelTask(ScrFish1080("idle_x700_y600"), t)._FitFind(), "", "1080 idle: no bar")
+    } finally {
+        Screen.Reset()
+        FsClean(t.dir)
+    }
+}
+
+; The bar drawn at another scale than the table says (the 125 % tester:
+; border rows 10 bright, no border pair near them): _ReelUnseen measures it,
+; the panel follows it, the next look sees the reel.
+Test_Screens_FishingFitFollowsTheBar() {
+    for v in [1.4, 0.45] {
+        uis := v                    ; (a for variable is not kept by the closures)
+        t := FsMakeCfg()
+        try {
+            ScrAt991(700, 530)
+            p := ScrFish991("reel_x700_y530")
+            try
+                seen := ScrWithUiS(() => uis, () => ScrReelTask(p, t)._ReelUp())
+            catch as e
+                AssertTrue(false, uis ": " e.Message " at " e.File ":" e.Line " " e.What " " e.Extra)
+            AssertEq(seen, false, uis ": not seen at the wrong scale")
+            logs := []
+            task := ScrReelTask(p, t)
+            task.deps.log := (m) => logs.Push(m)
+            try
+                ScrWithUiS(() => uis, () => task._ReelUnseen())
+            catch as e
+                AssertTrue(false, uis ": " e.Message " at " e.File ":" e.Line " " e.What)
+            AssertTrue(FishingTask.FitOn(), uis ": measured (" FsJoin(logs) ")")
+            AssertTrue(FsHasLog(logs, "found on screen"), uis ": said")
+            AssertTrue(ScrWithUiS(() => uis, () => ScrReelTask(p, t)._ReelUp()), uis ": seen after")
+            Screen.SetClient(-700, -530, 1920, 1080)
+            AssertTrue(!FishingTask.FitOn(), uis ": another client size drops it")
+        } finally {
+            FishingTask.Fit := ""
+            FishingTask.ReelDy := 0
+            FishLogic.WhiteMin := 220
+            Screen.Reset()
+            FsClean(t.dir)
+        }
+    }
+}
+
+Test_Screens_Fishing991CatchCard() {
+    p := ScrFish991("card_x600_y120")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt991(600, 120)
+        fc := ScrFishMapped()
+        r := fc["result"]["rect"]
+        t := Ocr.ReadFile(p, r[1], r[2], r[3], r[4], FishingTask.CardScale)
+        AssertTrue(RegExMatch(t, FishingTask.CardRe) > 0, "card reads Fish Caught (" t ")")
+        AssertEq(RegExMatch(t, FishingTask.FailRe), 0, "not a miss")
+        ; the close click on the card's X (crop ~498..516, 171..189)
+        c := Screen.Pt(fc["close"][1], fc["close"][2])
+        AssertTrue(Abs(c.x - 507) <= 10 && Abs(c.y - 180) <= 10, "close click on the X (" c.x "," c.y ")")
+    } finally
+        Screen.Reset()
+}
+
+; At 16:9 and 16:10 the width is the smaller factor (1366x768: a hair over
+; it), so the panel scale is the old one there
+Test_Screens_FishingUiSWidthOnlyWider() {
+    try {
+        for sz in [[1920, 1080], [1920, 1200], [1366, 768], [1280, 800], [1440, 900], [1680, 1050]] {
+            Screen.SetClient(0, 0, sz[1], sz[2])
+            AssertTrue(Abs(FishingTask.UiK(FishingTask.UiS()) - FishingTask.UiK(Screen.s)) < 0.001, sz[1] "x" sz[2] ": as before")
+        }
+        Screen.SetClient(0, 0, 1920, 991)
+        AssertTrue(Abs(FishingTask.UiS() - 0.75) < 0.000001, "1920x991: the width")
+    } finally Screen.Reset()
+}
+
 Test_Screens_FishingMappingOnlyOff1440() {
     c := Json.Parse(FileRead(A_ScriptDir "\..\data\coords.json", "UTF-8"))["fishing"]
     m := FishingTask.MapFishing(c)
@@ -747,5 +937,96 @@ Test_Screens_DailyRewardsClaimFrameReads() {
             continue
         b := Input.DailyClaimBox
         AssertTrue(!RegExMatch(Ocr.ReadFile(A_LoopFileFullPath, b.x, b.y, b.w, b.h), Input.DailyClaimRe), A_LoopFileName ": no Claim button")
+    }
+}
+
+; ---- fishing at 150 % Windows scale (2026-11-26) ---------------------------
+; Two testers (1920x1080 at 150 %, 1920x991 at 125 %) saw the minigame start
+; and nothing clicked: the reel bar "not seen". Roblox lays its UI out for
+; the client divided by the Windows scale and draws it that much bigger, so
+; a 1920x1080 client at 150 % shows the 1280x720 layout x1.5. These frames
+; ARE that: live 1280x720 frames (windowed, 100 %) scaled x1.5 nearest
+; neighbour (thin lines keep their brightness), cropped
+; (fish150_<what>_x<ox>_y<oy>). The fishing panel is sized by its own
+; table (UiK), read at the smaller size and grown by Screen.Ui.
+
+ScrAt150(ox, oy) => (Screen.SetClient(-ox, -oy, 1920, 1080), Screen.dpi := 144)
+ScrFish150(name) => A_ScriptDir "\screens\fish150_" name ".png"
+
+; The bar (crop: borders y 93 / 119, inside x 107..612) is where the panel
+; mapping puts it at 150 %, and is seen; read as a 100 % client it is not.
+Test_Screens_Fishing150ReelSeen() {
+    for f in ["reel_x600_y640", "reel_b_x600_y640"] {
+        p := ScrFish150(f)
+        AssertTrue(FileExist(p), f ": frame exists")
+        t := FsMakeCfg()
+        try {
+            ScrAt150(600, 640)
+            a := FishingTask.PanelPt(1042, 1030), b := FishingTask.PanelPt(1517, 1055)
+            AssertTrue(Abs(Screen.X(a.x) - 107) <= 3 && Abs(Screen.X(b.x) - 612) <= 3, f ": bar x " Screen.X(a.x) ".." Screen.X(b.x))
+            AssertTrue(Abs(Screen.Y(a.y) - 93) <= 2 && Abs(Screen.Y(b.y) - 119) <= 2, f ": borders y " Screen.Y(a.y) ", " Screen.Y(b.y))
+            AssertTrue(ScrReelTask(p, t)._ReelUp(), f ": the reel bar is seen")
+            Screen.dpi := 96                    ; the same screen taken as 100 %
+            b0 := FishingTask.PanelPt(1517, 1055)
+            AssertTrue(Abs(Screen.Y(b0.y) - 119) > 10, f ": at 100 % the rows miss the bar (y " Screen.Y(b0.y) ", why the fix)")
+        } finally {
+            Screen.Reset(), Screen.dpi := 0
+            FsClean(t.dir)
+        }
+    }
+}
+
+Test_Screens_Fishing150PanelReads() {
+    p := ScrFish150("idle_x600_y640")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt150(600, 640)
+        fc := ScrFishMapped()
+        t := fc["panelTitle"]
+        AssertTrue(InStr(StrLower(Ocr.ReadFile(p, t["rect"]*)), t["word"]), "panel title reads Fishing")
+        ; mid-cast the button says Exit (crop 116..328, 170..205)
+        AssertTrue(InStr(StrLower(Ocr.ReadFile(p, fc["fishButton"]["rect"]*)), "exit"), "the button box reads Exit")
+        r := Screen.Pt(fc["rod"][1], fc["rod"][2])
+        AssertTrue(r.x >= 120 && r.x <= 324 && r.y >= 172 && r.y <= 203, "rod click on the button (" r.x "," r.y ")")
+    } finally {
+        Screen.Reset(), Screen.dpi := 0
+    }
+}
+
+Test_Screens_Fishing150CatchCard() {
+    p := ScrFish150("card_x600_y200")
+    AssertTrue(FileExist(p), "frame exists")
+    try {
+        ScrAt150(600, 200)
+        fc := ScrFishMapped()
+        r := fc["result"]["rect"]
+        t := Ocr.ReadFile(p, r[1], r[2], r[3], r[4], FishingTask.CardScale)
+        AssertTrue(RegExMatch(t, FishingTask.CardRe) > 0, "card reads Fish Caught (" t ")")
+        ; the card: crop 130..590 x 52..628; its X sits in the top right
+        c := Screen.Pt(fc["close"][1], fc["close"][2])
+        AssertTrue(c.x >= 530 && c.x <= 592 && c.y >= 50 && c.y <= 112, "close click in the card's top right (" c.x "," c.y ")")
+    } finally {
+        Screen.Reset(), Screen.dpi := 0
+    }
+}
+
+; Screen.Ui: 1 at 100 % and when unknown; the panel scale grows with it
+Test_Screens_UiScaleKnow() {
+    try {
+        Screen.SetClient(0, 0, 1920, 1080)
+        Screen.dpi := 0
+        AssertEq(Screen.Ui, 1, "unknown dpi: 1")
+        k100 := FishingTask.KNow()
+        AssertTrue(Abs(k100 - 0.84) < 0.005, "1080p at 100 %: 0.84 as measured (" k100 ")")
+        Screen.dpi := 144
+        AssertEq(Screen.Ui, 1.5, "144 dpi: 1.5")
+        AssertTrue(Abs(FishingTask.KNow() - 1.5 * FishingTask.UiK(0.5)) < 0.0001, "150 %: the 1280x720 size x1.5")
+        Screen.SetClient(0, 0, 2560, 1440), Screen.dpi := 96
+        AssertEq(FishingTask.Native(), true, "1440p at 100 %: the coords as they are")
+        Screen.dpi := 192
+        AssertEq(FishingTask.Native(), false, "1440p at 200 %: mapped (the 1280x720 layout x2)")
+        AssertTrue(Abs(FishingTask.KNow() - 2 * FishingTask.UiK(0.5)) < 0.0001, "200 %: x2")
+    } finally {
+        Screen.Reset(), Screen.dpi := 0
     }
 }

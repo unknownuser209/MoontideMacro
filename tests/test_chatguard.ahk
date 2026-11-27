@@ -268,3 +268,49 @@ Test_ChatGuard_HiddenChatSurvivesARestart() {
         try FileDelete(f)
     }
 }
+
+; 2026-11-26: at 150 % Windows scale Roblox draws its chat and top bar x1.5
+; (Screen.Ui). The real frames x1.5 (nearest neighbour, as the game draws
+; them crisp) read the same states; the chat window and its button are
+; taken x1.5 too.
+CgIcon150(file, x, y, w, h) {
+    static grabs := Map()
+    if !grabs.Has(file)
+        grabs[file] := MatchFileGrab(A_ScriptDir "\screens\" file)
+    x0 := x * 2 // 3, x1 := (x + w - 1) * 2 // 3
+    ys := []
+    Loop h
+        ys.Push((y + A_Index - 1) * 2 // 3)
+    out := []
+    for row in grabs[file].Call(x0, x1, ys) {
+        Loop w
+            out.Push(row[(x + A_Index - 1) * 2 // 3 - x0 + 1])
+    }
+    return out
+}
+
+Test_ChatGuard_At150Percent() {
+    try {
+        Screen.SetClient(0, 0, 1920, 1080), Screen.dpi := 144
+        rd := (f) => ChatGuard.State({GrabScreen: (self, x, y, w, h) => CgIcon150(f, x, y, w, h)})
+        for f in ["world_day.jpg", "collections_chat_052142.jpg", "inventory_open_day.jpg"]
+            AssertEq(rd(f), 1, f ": open at 150 %")
+        for f in ["mm_end.jpg", "aura_search_sailor.jpg", "mari_night_buttons.jpg"]
+            AssertEq(rd(f), 0, f ": closed at 150 %")
+        ; the chat window: client 12..725 x 96..630 at 150 % (8..483 x 64..420 at 100 %)
+        AssertEq(ChatGuard.Covers(Screen.Inv(600, 500).x, Screen.Inv(600, 500).y), true, "client 600,500: under the bigger chat")
+        Screen.dpi := 96
+        AssertEq(ChatGuard.Covers(Screen.Inv(600, 500).x, Screen.Inv(600, 500).y), false, "at 100 % that spot is clear")
+        ; the chat button is clicked at 207,48 (138,32 x1.5)
+        Screen.dpi := 144
+        io := {pts: [], MoveTo: (self, x, y) => self.pts.Push(Screen.Pt(x, y)), Wait: (self, ms, ctx := "") => true, ClickHere: (self) => 0}
+        old := Input.ClickGuard
+        Input.DefineProp("ClickGuard", {Call: (*) => 1})
+        try ChatGuard._Click(io, "")
+        finally Input.DefineProp("ClickGuard", {Call: old})
+        AssertTrue(io.pts.Length = 1 && Abs(io.pts[1].x - 207) <= 1 && Abs(io.pts[1].y - 48) <= 1, "clicked at " (io.pts.Length ? io.pts[1].x "," io.pts[1].y : "nothing"))
+    } finally {
+        Screen.Reset(), Screen.dpi := 0
+        ChatGuard.Reset()
+    }
+}

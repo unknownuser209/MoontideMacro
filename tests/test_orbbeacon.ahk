@@ -1,5 +1,5 @@
 #Requires AutoHotkey v2.0
-; Tests for lib\tasks\OrbBeacon.ahk: real frames (tests\screens\glow_*.png,
+; Tests for lib\plugins\hunting\OrbBeacon.ahk: real frames (tests\screens\glow_*.png,
 ; 2026-11-02 clip frames at HALF size, 1280x720 of 2560x1440: one file px =
 ; 2 screen px) and the Minions crops (minions_*.png, full size).
 ;
@@ -20,7 +20,7 @@
 ; (screen 560.., 360..); glow_day_sun screen 80.., 0..; glow_hell_sun
 ; 1360.., 40..; glow_sand_close 1520.., 640..; glow_windy_moon 80.., 460..
 ; MatchFileGrab: lib\MatchVision.ahk (included by MemoryMatch, as test_screens)
-#Include ..\lib\tasks\OrbBeacon.ahk
+#Include ..\lib\plugins\hunting\OrbBeacon.ahk
 
 ; OrbBeacon.Find over a file at screen coords: file px = (screen - o) / scale
 ; (x1 - ox a multiple of scale, stride a multiple of scale); rows RowStep

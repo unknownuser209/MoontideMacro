@@ -4,7 +4,7 @@
 ; (window titles, tray, webhook embeds, log lines) goes through Brand.Name.
 class Brand {
     static Name := "Moontide Macro"
-    static Version := "2.1.7"
+    static Version := "2.1.8"
     static DiscordUrl := "https://discord.gg/TPuxESDxe7"
     static Repo := "unknownuser209/MoontideMacro"       ; the public GitHub repo (releases, download counts)
     ; stored credits check value (see lib\Credits.ahk); one line, rewritten by tools\update_credits.ahk

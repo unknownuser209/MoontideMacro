@@ -363,6 +363,23 @@ Test_Overlay_AvoidsTheGameWindow() {
     AssertEq(p.x " " p.y, "100 100", "fullscreen-sized window: no room, stays")
 }
 
+; 2026-11-26 (a player never saw the small window): a saved spot counts only
+; on a real screen's work area, not anywhere in the box around all screens
+Test_Overlay_OnScreenRealMonitors() {
+    ; a 2560x1440 main screen and a 1920x1080 one right of it, tops level:
+    ; the box around both is 4480x1440, its lower right corner on no screen
+    mons := [{l: 0, t: 0, r: 2560, b: 1400}, {l: 2560, t: 0, r: 4480, b: 1040}]
+    AssertEq(Overlay.MonitorAt(100, 100, mons), 1, "main screen")
+    AssertEq(Overlay.MonitorAt(3000, 500, mons), 2, "second screen")
+    AssertEq(Overlay.MonitorAt(3000, 1200, mons), 0, "under the smaller screen: nobody sees it")
+    AssertTrue(Overlay.OnScreen(2256, 24, 350, 150, mons), "top right of the main screen")
+    AssertTrue(Overlay.OnScreen(3000, 300, 350, 150, mons), "on the second screen")
+    AssertTrue(!Overlay.OnScreen(3000, 1150, 350, 150, mons), "the dead corner under the second screen")
+    AssertTrue(!Overlay.OnScreen(4400, 300, 350, 150, mons), "mostly past the right edge")
+    AssertTrue(!Overlay.OnScreen(-99999, -99999, 350, 150, mons), "never saved")
+    AssertTrue(Overlay.OnScreen(5, 5, 350, 150, []), "no screens known: as before")
+}
+
 ; a maximized window wider than 16:9 (live 2560x1369, 2026-11-14): the
 ; Daily Quests window ("C") kept its 1440p size, centred up / down; the
 ; quest board ("RH") and lengths keep the smaller (height) factor

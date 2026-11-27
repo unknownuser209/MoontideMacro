@@ -55,6 +55,16 @@ class ChatGuard {
     static Icon := {inner: [130, 133, 27, 37], edge: [128, 129, 27, 37]
         , outside: [121, 124, 27, 37], tail: [137, 139, 41, 42]}
     static BrightLum := 170
+    ; The pixel sizes above are at 100 % Windows scale. Roblox draws its chat
+    ; and top bar that many times bigger at 125 / 150 % (Screen.Ui, as the
+    ; rest of its UI; 2026-11-26), so every one is multiplied by it (the same
+    ; numbers at 100 %).
+    static Px(v) => (Screen.Ui = 1) ? v : Round(v * Screen.Ui)
+    static GrabNow() {
+        g := ChatGuard.Grab
+        return {x: ChatGuard.Px(g.x), y: ChatGuard.Px(g.y), w: ChatGuard.Px(g.w), h: ChatGuard.Px(g.h)}
+    }
+    static BoxNow(b) => [ChatGuard.Px(b[1]), ChatGuard.Px(b[2]), ChatGuard.Px(b[3]), ChatGuard.Px(b[4])]
     static HoverMs := 150         ; on the button before the click
     static SeeMs := 600           ; for the new state after a click
     static PollMs := 150
@@ -108,20 +118,20 @@ class ChatGuard {
         c := ChatGuard.Win
         x1 := p.x - Screen.cx, y1 := p.y - Screen.cy
         x2 := q.x - Screen.cx, y2 := q.y - Screen.cy
-        return x2 >= c.x1 && x1 <= c.x2 && y2 >= c.y1 && y1 <= c.y2
+        return x2 >= ChatGuard.Px(c.x1) && x1 <= ChatGuard.Px(c.x2) && y2 >= ChatGuard.Px(c.y1) && y1 <= ChatGuard.Px(c.y2)
     }
 
     static State(io) {
         if !(IsObject(io) && HasMethod(io, "GrabScreen"))
             return -1
-        g := ChatGuard.Grab
+        g := ChatGuard.GrabNow()
         px := ""
         try px := io.GrabScreen(Screen.cx + g.x, Screen.cy + g.y, g.w, g.h)
         if !(px is Array && px.Length >= g.w * g.h)
             return -1
         i := ChatGuard.Icon
-        inner := ChatGuard._Bright(px, i.inner), edge := ChatGuard._Bright(px, i.edge)
-        out := ChatGuard._Bright(px, i.outside), tail := ChatGuard._Bright(px, i.tail)
+        inner := ChatGuard._Bright(px, ChatGuard.BoxNow(i.inner), g), edge := ChatGuard._Bright(px, ChatGuard.BoxNow(i.edge), g)
+        out := ChatGuard._Bright(px, ChatGuard.BoxNow(i.outside), g), tail := ChatGuard._Bright(px, ChatGuard.BoxNow(i.tail), g)
         if (out > 0.25 || tail < 0.5)
             return -1
         if (inner >= 0.75)
@@ -134,8 +144,9 @@ class ChatGuard {
     static IsOpen(io) => ChatGuard.State(io) = 1
 
     ; share of bright px in client box [x1, x2, y1, y2] of a Grab
-    static _Bright(px, box) {
-        g := ChatGuard.Grab
+    static _Bright(px, box, g := "") {
+        if !IsObject(g)
+            g := ChatGuard.Grab
         n := 0, lit := 0
         y := box[3]
         while (y <= box[4]) {
@@ -237,7 +248,7 @@ class ChatGuard {
         if (g <= 0)
             return g
         t := ChatGuard.Toggle
-        p := Screen.Inv(Screen.cx + t[1], Screen.cy + t[2])
+        p := Screen.Inv(Screen.cx + ChatGuard.Px(t[1]), Screen.cy + ChatGuard.Px(t[2]))
         io.MoveTo(p.x, p.y)
         if !io.Wait(ChatGuard.HoverMs, ctx)
             return -1

@@ -530,18 +530,22 @@ class Theme {
             , w = "" ? cw : (k ? Theme.S(w) : w), h = "" ? ch : (k ? Theme.S(h) : h))
     }
 
-    ; The largest of 130 / 115 / 100 that is at most `want` and whose window
-    ; (winW x winH in 100 % units) fits workW x workH screen px. The window
-    ; is counted at the Windows scale (Theme.Dpi) plus an allowance for the
-    ; title bar and borders (16 px wide, 40 px high); 100 when nothing fits.
+    ; The largest of 130 / 115 / 100 / 90 / 80 / 70 that is at most `want`
+    ; and whose window (winW x winH in 100 % units) fits workW x workH screen
+    ; px. The window is counted at the Windows scale (Theme.Dpi) plus an
+    ; allowance for the title bar and borders (16 px wide, 40 px high); the
+    ; smallest when nothing fits. Below 100 only when 100 does not fit: a
+    ; 1920x1080 laptop at 150 % (the dashboard 1060 px tall on 1032) or
+    ; 1366x768 at 125 % had its bottom buttons under the taskbar.
+    static FitSizes := [130, 115, 100, 90, 80, 70]
     static FitScale(want, workW, workH, winW, winH) {
-        for sc in [130, 115, 100] {
+        for sc in Theme.FitSizes {
             if (sc > want)
                 continue
             if (Theme.Dpi(Round(winW * sc / 100)) + 16 <= workW && Theme.Dpi(Round(winH * sc / 100)) + 40 <= workH)
                 return sc
         }
-        return 100
+        return Theme.FitSizes[Theme.FitSizes.Length]
     }
 
     ; The primary monitor's work area -> {w, h}. Tests replace the hook.

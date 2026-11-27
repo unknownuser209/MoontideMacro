@@ -86,6 +86,15 @@ class Screen {
             Screen.Mode := old
     }
     static dpi := 0              ; the Roblox window's DPI at the last Refresh (0 = unknown)
+    ; Windows' display scale as Roblox draws its UI (1 = 100 %, 1.5 = 150 %;
+    ; 1 when unknown). Roblox lays its UI out for the client size divided by
+    ; it and draws that bigger: a 1920x1080 client at 150 % shows the
+    ; 1280x720 layout x1.5 (Roblox's DevForum; tests\screens fish150_*,
+    ; 1280x720 frames x1.5). UI that follows the client's size maps the same
+    ; either way; UI sized by its own table (the fishing panel's UiK) must
+    ; read that table at the smaller size and grow by this (2026-11-26: two
+    ; testers at 125 % / 150 % saw the minigame and nothing was clicked).
+    static Ui => (Screen.dpi > 96) ? Screen.dpi / 96 : 1
     static dpiSet := ""          ; how InitDpi made the thread aware ("" = not called)
 
     static SetClient(x, y, w, h) {

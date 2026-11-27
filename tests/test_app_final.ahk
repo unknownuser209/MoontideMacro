@@ -74,7 +74,7 @@ Test_App_ChatDueOnlyWhenWatchingAndNotRare() {
     seen := {d: ""}
     fish := AppFakeTask("fishing", 99, true, (self, ctx) => (t.clk.t += 60000, t.app.Tick(), seen.d := t.app.state.chatDue))
     ; merchants off
-    t := AppTestMake(Map("tasks", Map("fishing", fish), "cfgVals", Map("General.sound", 0, "merchant.enabled", 0, "Limited.bossAlert", 0)))
+    t := AppTestMake(Map("tasks", Map("fishing", fish), "cfgVals", Map("General.sound", 0, "merchant.enabled", 0, "Hunting.bossAlert", 0)))
     t.app.chat := AppFakeChat(t.app)
     t.app.Start(), t.app.Tick(), AppTestRunLaunched(t)
     AssertEq(seen.d, false, "merchant.enabled = 0 and no boss message: no yield")

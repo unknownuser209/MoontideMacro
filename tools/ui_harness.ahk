@@ -15,7 +15,7 @@
 ; ---------------------------------------------------------------------------
 #Include ..\lib\ui\Dashboard.ahk
 #Include ..\lib\ui\Overlay.ahk
-#Include ..\lib\tasks\Minions.ahk      ; Dashboard reads MinionsTask.IsBig (the app includes it)
+#Include ..\lib\plugins\hunting\Minions.ahk      ; Dashboard reads MinionsTask.IsBig (the app includes it)
 
 Out(s) => FileAppend(s "`n", "*")
 OnError((e, *) => (Out("ERROR " e.Message " | " e.Extra " | line " e.Line " | " e.File), ExitApp(3)))

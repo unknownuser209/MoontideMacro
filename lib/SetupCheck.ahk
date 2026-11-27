@@ -23,6 +23,11 @@
 ;       verified ()        size was tested in game        (Screen.Verified)
 ;       scale ()           Windows display scale, percent (Screen.ScaleAt)
 ;       hdr ()             1 on, 0 off, "" unknown        (Screen.HdrOn)
+;       ocr ()             {tag, english} Windows' recognizer (Ocr.EngineInfo)
+;       root ()            the macro folder               (A_ScriptDir)
+;       temp ()            the temp folder, long form     (A_Temp)
+;       writable (dir)     a file can be saved there, "" unknown (makes and
+;                          deletes one small file: the check's only write)
 ;       logAge ()          seconds since the newest Roblox log was written,
 ;                          "" = no log found  (LogWatch folder, PickLog)
 ;       privateOk (link)   the link looks right           (RecoveryTask.LinkOk)
@@ -63,12 +68,12 @@ class SetupCheck {
     ; (audit 2026-11-20: the inventory, aura storage and chat steps were not
     ; listed, so "none is needed" showed while Limbo, merchants, potions,
     ; biome items, the obby or hunting skipped for want of them)
-    static InvNeeds := [["merchant.enabled", 1], ["Limbo.enabled", 0], ["BiomeItems.enabled", 0], ["Limited.cursedRune", 0], ["DailyQuests.usePotions", 0]]
+    static InvNeeds := [["merchant.enabled", 1], ["Limbo.enabled", 0], ["BiomeItems.enabled", 0], ["Hunting.cursedRune", 0], ["DailyQuests.usePotions", 0]]
     static CalNeeds := [
         ["inv_open", SetupCheck.InvNeeds], ["inv_items_tab", SetupCheck.InvNeeds], ["inv_search", SetupCheck.InvNeeds],
         ["inv_use", SetupCheck.InvNeeds], ["inv_tile1_rect", SetupCheck.InvNeeds], ["inv_desc_rect", SetupCheck.InvNeeds],
         ["aura_", [["Obby.enabled", 0], ["Minions.enabled", 0]]],
-        ["chat_rect", [["merchant.enabled", 1], ["Limited.bossAlert", 1], ["Limited.orbAlert", 0]]],
+        ["chat_rect", [["merchant.enabled", 1], ["Hunting.bossAlert", 1], ["Hunting.orbAlert", 0]]],
         ["fisher_", [["Craft.enabled", 1]]],
         ["cauldron_", [["Craft.cauldron", 0]]],
         ["stella_", [["Craft.cauldron", 0]]],
@@ -130,6 +135,15 @@ class SetupCheck {
             add("hdr", "HDR", "info", "HDR is on: this works on most PCs", "If fishing or Memory Match misbehave, try turning HDR off in Windows display settings")
         else
             add("hdr", "HDR", "ok", "HDR is off")
+
+        ; ---- Windows' text recognizer (OCR language) --------------------------
+        SetupCheck._OcrRow(call("ocr", () => Ocr.EngineInfo()), add)
+
+        ; ---- the macro's folder: a real, writable one ----------------------------
+        rt := call("root", () => A_ScriptDir)
+        tp := call("temp", () => SetupCheck._LongPath(A_Temp))
+        wr := call("writable", (dir) => SetupCheck._Writable(dir), rt.ok ? rt.v : "")
+        SetupCheck._FolderRow(rt.ok ? rt.v : "", tp.ok ? tp.v : "", wr.ok ? wr.v : "", add)
 
         ; ---- Roblox logs --------------------------------------------------
         la := call("logAge", () => SetupCheck._LogAge())
@@ -314,6 +328,61 @@ class SetupCheck {
             return ""
         b := SetupCheck.RollBox
         return Ocr.Read(b.x, b.y, b.w, b.h, 1)
+    }
+
+    ; Windows reads text only in the languages it has installed (Ocr._Engine).
+    static OcrFix := "Windows Settings > Time & language > Language & region > Add a language > English (United States), then restart the macro"
+    static _OcrRow(oc, add) {
+        if !(oc.ok && IsObject(oc.v) && oc.v.HasProp("tag"))
+            add("ocr", "Reading game text", "info", "could not check Windows' text recognizer")
+        else if (oc.v.tag = "")
+            add("ocr", "Reading game text", "fail", "Windows has no text recognizer (OCR) installed, so the macro cannot read any text in the game", SetupCheck.OcrFix)
+        else if !oc.v.english
+            add("ocr", "Reading game text", "warn", "Windows has no English text recognizer: the macro reads the game with the " oc.v.tag " one, which misreads some English words", SetupCheck.OcrFix)
+        else
+            add("ocr", "Reading game text", "ok", "Windows' English text recognizer (" oc.v.tag ") is installed")
+    }
+
+    ; Pure: the macro folder row. Run from a temporary folder (a zip opened
+    ; in Explorer / 7-Zip / WinRAR, not extracted: Windows deletes it, and
+    ; the rest of the zip is missing), or a folder Windows will not let it
+    ; write (Program Files, a read-only copy, Controlled folder access): the
+    ; settings, calibration and logs are lost. writable "" = unknown.
+    static _FolderRow(root, temp, writable, add) {
+        r := StrLower(RTrim(String(root), "\/")) "\", t := StrLower(RTrim(String(temp), "\/")) "\"
+        if (root = "")
+            return add("folder", "Macro folder", "info", "could not check the macro's folder")
+        if ((t != "\" && SubStr(r, 1, StrLen(t)) = t) || InStr(r, ".zip\"))
+            return add("folder", "Macro folder", "fail", "the macro runs from inside a zip or a temporary folder: settings and calibration are lost when it closes"
+                , "Right-click the zip, Extract All, and start the macro from the extracted folder")
+        if (writable != "" && !writable)
+            return add("folder", "Macro folder", "fail", "Windows does not let the macro save files in its folder (settings, calibration and logs are not kept)"
+                , "Move the macro folder somewhere of your own, e.g. C:\Games\MoontideMacro (not Program Files); if Windows Security's Controlled folder access is on, allow AutoHotkey")
+        if InStr(r, "\onedrive")
+            return add("folder", "Macro folder", "info", "the macro folder is inside OneDrive, which can hold files while it syncs"
+                , "If settings ever fail to save, move the macro folder out of OneDrive")
+        add("folder", "Macro folder", "ok", writable = "" ? "the macro runs from a normal folder" : "the macro can save its settings and logs")
+    }
+
+    ; true when a file can be made and deleted in dir
+    static _Writable(dir) {
+        if (dir = "")
+            return ""
+        p := RTrim(dir, "\/") "\.moontide_write_check"
+        try {
+            f := FileOpen(p, "w"), f.Write("x"), f.Close()
+            FileDelete(p)
+            return true
+        } catch {
+            try FileDelete(p)
+            return false
+        }
+    }
+
+    static _LongPath(p) {
+        buf := Buffer(2048, 0)
+        n := DllCall("GetLongPathNameW", "Str", p, "Ptr", buf, "UInt", 1024, "UInt")
+        return (n > 0 && n < 1024) ? StrGet(buf) : p
     }
 
     ; The shipped walks were recorded with the VIP gamepass (faster walking).

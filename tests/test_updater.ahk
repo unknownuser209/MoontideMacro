@@ -661,3 +661,228 @@ Test_Updater_DownloadCounts() {
     } finally
         try DirDelete(d, true)
 }
+
+; ---- nothing in an update can hang (bug hunt 2026-11-26) ---------------------
+; A PowerShell that never returned kept "Making the zip..." up for 20+ minutes
+; on a player's PC. The updater had the same kind of waits: AHK's Download()
+; (no time cap, the dashboard frozen) and Expand-Archive under RunWait.
+
+; a WinHttp request stand-in: answers after `polls` WaitForResponse(0) calls
+; (-1 = never), with status / body
+class UpdFakeReq {
+    __New(polls := 0, status := 200, body := "") {
+        this.polls := polls, this.Status := status, this.body := body
+        this.calls := [], this.aborted := false, this.async := ""
+    }
+    SetTimeouts(a*) => this.calls.Push("timeouts")
+    Open(m, url, async) => (this.async := async, this.calls.Push("open " m))
+    SetRequestHeader(k, v) => this.calls.Push(k ": " v)
+    Send(*) => this.calls.Push("send")
+    Abort() => this.aborted := true
+    WaitForResponse(sec := -1) {
+        if (this.polls < 0)
+            return false
+        return this.polls-- <= 0
+    }
+    ResponseText => this.body
+    ResponseBody {
+        get {
+            if (this.body = "")
+                return ""
+            a := ComObjArray(0x11, StrLen(this.body))
+            Loop Parse this.body
+                a[A_Index - 1] := Ord(A_LoopField)
+            return a
+        }
+    }
+}
+
+Test_Updater_DownloadHasATimeCap() {
+    d := UpdTmp()
+    try {
+        q := UpdFakeReq(-1)
+        t0 := A_TickCount
+        err := ""
+        try Updater._Download("https://github.com/o/r/M.zip", d "\r.zip", 400, () => q)
+        catch Error as e
+            err := e.Message
+        ms := A_TickCount - t0
+        AssertTrue(InStr(err, "no answer"), "a download that never answers throws: " err)
+        AssertTrue(ms >= 350 && ms < 3000, "gave up at the cap, not later (" ms " ms)")
+        AssertTrue(q.aborted, "the request is aborted")
+        AssertTrue(q.async = true, "asked asynchronously (the GUI keeps running)")
+        AssertTrue(!FileExist(d "\r.zip"), "no file left")
+    } finally
+        UpdClean(d)
+}
+
+Test_Updater_DownloadWritesTheBody() {
+    d := UpdTmp()
+    try {
+        q := UpdFakeReq(3, 200, "PK-zip-bytes")
+        Updater._Download("https://github.com/o/r/M.zip", d "\r.zip", 5000, () => q)
+        AssertEq(FileRead(d "\r.zip", "UTF-8-RAW"), "PK-zip-bytes", "the body is the file")
+        err := ""
+        try Updater._Download("https://github.com/o/r/M.zip", d "\x.zip", 5000, () => UpdFakeReq(0, 404, "no"))
+        catch Error as e
+            err := e.Message
+        AssertEq(err, "HTTP 404", "a refused download throws")
+        err := ""
+        try Updater._Download("https://github.com/o/r/M.zip", d "\y.zip", 5000, () => UpdFakeReq(0, 200, ""))
+        catch Error as e
+            err := e.Message
+        AssertTrue(InStr(err, "empty"), "an empty download throws: " err)
+        ; the update check has a cap too
+        AssertTrue(Updater.HttpCapMs > 0 && Updater.HttpCapMs <= 60000, "update check capped")
+        AssertTrue(Updater.DownloadCapMs > 0 && Updater.DownloadCapMs <= 600000, "download capped")
+        AssertEq(Updater(Map("root", A_Temp))._download.MinParams, 2, "download(url, dest)")
+    } finally
+        UpdClean(d)
+}
+
+Test_Updater_UnzipNeverWaitsForGood() {
+    cmds := Updater._UnzipCmds("C:\a b\r.zip", "C:\a b\x")
+    last := cmds[cmds.Length]
+    AssertEq(last.name, "PowerShell", "PowerShell is the last resort")
+    AssertTrue(InStr(last.cmd, "-NonInteractive") && InStr(last.cmd, "-NoProfile"), "no prompt, no profile")
+    AssertTrue(InStr(last.cmd, "$ErrorActionPreference='Stop'"), "an error is exit code 1 (a broken zip exited 0)")
+    if FileExist(A_WinDir "\System32\tar.exe")
+        AssertEq(cmds[1].name, "tar", "Windows' tar first (no PowerShell)")
+    ; every try gets the cap; one that runs past it is given up
+    seen := []
+    run := (cmd, capMs) => (seen.Push(capMs), {code: "", timedOut: true})
+    err := ""
+    try Updater._Unzip("C:\r.zip", "C:\x", run)
+    catch Error as e
+        err := e.Message
+    AssertEq(seen.Length, cmds.Length, "each way tried once")
+    AssertEq(seen[1], Updater.UnzipCapMs, "with the cap")
+    AssertTrue(InStr(err, "could not unzip") && InStr(err, "was stopped"), "says it was stopped: " err)
+    ; the first way stuck, the next one works
+    n := [0]
+    run2 := (cmd, capMs) => (++n[1] < cmds.Length ? {code: "", timedOut: true} : {code: 0, timedOut: false})
+    AssertEq(Updater._Unzip("C:\r.zip", "C:\x", run2), last.name, "falls back and succeeds")
+    ; a way that cannot start, then one that fails
+    run3 := (cmd, capMs) => InStr(cmd, "tar.exe") ? UpdThrowing() : {code: 1, timedOut: false}
+    err := ""
+    try Updater._Unzip("C:\r.zip", "C:\x", run3)
+    catch Error as e
+        err := e.Message
+    AssertTrue(InStr(err, "PowerShell failed (code 1)"), "the exit code is said: " err)
+    ; no RunWait or Download() left in the updater
+    src := FileRead(A_LineFile "\..\..\lib\Updater.ahk", "UTF-8")
+    AssertTrue(!RegExMatch(src, "m)^[^;]*\bRunWait\("), "no RunWait")
+    AssertTrue(!RegExMatch(src, "m)^[^;]*[^._\w]Download\("), "no Download()")
+}
+
+; the real unzip on a real zip (made by Windows' tar), as the updater runs it
+Test_Updater_UnzipRealZip() {
+    tar := A_WinDir "\System32\tar.exe"
+    if !FileExist(tar)
+        return
+    d := UpdTmp()
+    try {
+        UpdPut(d "\src\Vesper.ahk", "new main")
+        UpdPut(d "\src\lib\App.ahk", "new app")
+        r := Proc.RunCapped('"' tar '" -a -cf "' d '\r.zip" -C "' d '\src" Vesper.ahk lib', "", 30000)
+        AssertEq(r.code, 0, "zip made")
+        DirCreate(d "\x")
+        AssertEq(Updater._Unzip(d "\r.zip", d "\x"), "tar", "unzipped by tar")
+        AssertEq(UpdGet(d "\x\Vesper.ahk"), "new main", "main file out")
+        AssertEq(UpdGet(d "\x\lib\App.ahk"), "new app", "sub folder out")
+        ; the PowerShell way (no tar.exe), its command line as built
+        cmds := Updater._UnzipCmds(d "\r.zip", d "\p s")
+        DirCreate(d "\p s")
+        r := Proc.RunCapped(cmds[cmds.Length].cmd, "", Updater.UnzipCapMs)
+        AssertTrue(!r.timedOut && r.code = 0, "PowerShell unzipped (code " r.code ")")
+        AssertEq(UpdGet(d "\p s\lib\App.ahk"), "new app", "PowerShell: files out")
+        ; a broken zip fails (tar, then PowerShell), it does not hang
+        UpdPut(d "\bad.zip", "not a zip")
+        DirCreate(d "\y")
+        err := ""
+        try Updater._Unzip(d "\bad.zip", d "\y")
+        catch Error as e
+            err := e.Message
+        AssertTrue(InStr(err, "could not unzip"), "a broken zip fails: " err)
+    } finally
+        UpdClean(d)
+}
+
+Test_Updater_InstallWhileInstallingOrStarted() {
+    r := UpdMakeRoot()
+    try {
+        inner := [""]
+        u := [""]
+        m := UpdMake(r, Map("download", (url, dest) => (inner[1] := u[1].Install(Map("url", url, "tag", "v1.1")), UpdPut(dest, "zip"))))
+        u[1] := m[1]
+        res := m[1].Install(Map("url", "https://github.com/o/r/M.zip", "tag", "v1.1"))
+        AssertTrue(res["ok"], "the first install goes on")
+        AssertTrue(!inner[1]["ok"] && InStr(inner[1]["msg"], "already installing"), "a second click is refused")
+        AssertTrue(!m[1]._busy, "not busy afterwards")
+    } finally {
+        UpdClean(r)
+    }
+    ; F1 while it downloaded: nothing replaced
+    r2 := UpdMakeRoot()
+    try {
+        running := [false]
+        m2 := UpdMake(r2, Map("isStopped", () => !running[1]
+            , "download", (url, dest) => (running[1] := true, UpdPut(dest, "zip"))))
+        res := m2[1].Install(Map("url", "https://github.com/o/r/M.zip", "tag", "v1.1"))
+        AssertTrue(!res["ok"] && InStr(res["msg"], "started"), "refused: " res["msg"])
+        AssertEq(UpdGet(r2 "\Vesper.ahk"), "old main", "old version kept")
+        AssertEq(m2[2]["restart"], 0, "no restart")
+    } finally
+        UpdClean(r2)
+}
+
+class UpdFakeDash {
+    notes := []
+    SetUpdate(version, note := "") => this.notes.Push(version "|" note)
+}
+
+class UpdFakeInstaller {
+    __New(dash) {
+        this.dash := dash, this.seen := ""
+        this.last := Map("status", "available", "version", "9.9.9", "url", "https://github.com/o/r/M.zip")
+    }
+    Install(info) {
+        this.seen := this.dash.notes.Length ? this.dash.notes[this.dash.notes.Length] : ""
+        return Map("ok", false, "msg", "Update failed, kept the old version: x")
+    }
+}
+
+; Install can take a while now that it waits without freezing: the notice
+; says so and the Install button is hidden (no second click) meanwhile
+Test_Updater_AppSaysInstalling() {
+    t := AppTestMake()
+    old := t.app.dash
+    try {
+        d := UpdFakeDash()
+        t.app.dash := d
+        u := UpdFakeInstaller(d)
+        t.app._updater := u
+        t.app.OnInstallUpdate()
+        AssertEq(u.seen, "|Installing the update...", "said before the install, Install hidden (version empty)")
+        AssertEq(d.notes[d.notes.Length], "|Update failed, kept the old version: x", "the failure shown after")
+    } finally
+        t.app.dash := old
+}
+
+; Proc.RunCapped: the helper the updater waits on
+Test_Proc_RunCappedStopsAHang() {
+    t0 := A_TickCount
+    r := Proc.RunCapped('"' A_WinDir '\System32\PING.EXE" -n 30 127.0.0.1', "", 500)
+    ms := A_TickCount - t0
+    AssertTrue(r.timedOut, "a program past the cap is stopped")
+    AssertEq(r.code, "", "no exit code then")
+    AssertTrue(ms < 4000, "stopped near the cap (" ms " ms)")
+    r := Proc.RunCapped('"' A_WinDir '\System32\cmd.exe" /c exit 7', "", 10000)
+    AssertTrue(!r.timedOut, "a quick one ends")
+    AssertEq(r.code, 7, "its exit code")
+    err := ""
+    try Proc.RunCapped('"C:\no\such\program_x.exe"', "", 1000)
+    catch Error as e
+        err := e.Message
+    AssertTrue(InStr(err, "cannot start"), "a missing program throws: " err)
+}

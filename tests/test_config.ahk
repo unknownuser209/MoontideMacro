@@ -152,6 +152,36 @@ Test_Config_RetiredKeyDropped() {
     } finally CfgTmpClean(d)
 }
 
+Test_Config_UpdateKeysBackfilled() {
+    ; a settings.ini from before the updater has no [Update]: the Home page's
+    ; Updates box (Check for updates) and the start check were gone for good
+    ; (the owner's PC, 2026-11-26). Missing keys get their defaults on load;
+    ; a key that is there, even empty (= never check), is kept.
+    d := CfgTmpDir()
+    try {
+        f := FileOpen(d "\settings.ini", "w", "UTF-8-RAW")
+        f.Write("[General]`r`nsellEvery=4`r`n")
+        f.Close()
+        cfg := Config.Load(d)
+        def := Config.IniDefaults()["Update"]
+        AssertTrue(def["repo"] != "", "the shipped default follows a repo")
+        AssertEq(cfg.Get("Update.repo", ""), def["repo"], "repo backfilled")
+        AssertEq(cfg.Get("Update.check", ""), def["check"], "check backfilled")
+        AssertEq(cfg.Get("Update.auto", ""), def["auto"], "auto backfilled")
+        AssertEq(cfg.Get("General.sellEvery", 15), 4, "the rest untouched")
+        cfg.Save()
+        AssertTrue(InStr(FileRead(d "\settings.ini", "UTF-8"), "[Update]"), "written at the next Save")
+
+        f := FileOpen(d "\settings.ini", "w", "UTF-8-RAW")
+        f.Write("[Update]`r`nrepo=`r`nauto=1`r`n")
+        f.Close()
+        cfg := Config.Load(d)
+        AssertEq(cfg.Get("Update.repo", "x"), "", "an empty repo (never check) is kept")
+        AssertEq(cfg.Get("Update.auto", 0), 1, "a set key is kept")
+        AssertEq(cfg.Get("Update.check", ""), def["check"], "only the missing key is filled")
+    } finally CfgTmpClean(d)
+}
+
 ; ---- Config: data json -----------------------------------------------------
 
 Test_Config_MissingOrBadJson_Defaults() {

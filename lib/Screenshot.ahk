@@ -20,6 +20,12 @@
 
 class Screenshot {
     static FromWindow := false      ; idle mode: PrintWindow copy, Roblox need not be in front
+    ; PrintWindow waits on the window's own thread: a window that is not
+    ; responding is not copied (it would freeze the macro, bug hunt
+    ; 2026-11-26). HungFn: (hwnd) -> true when hung ("" = IsHungAppWindow).
+    static HungFn := ""
+    static Hung(hwnd) => IsObject(Screenshot.HungFn) ? (Screenshot.HungFn.Call(hwnd) ? true : false)
+        : (DllCall("IsHungAppWindow", "Ptr", hwnd, "Int") ? true : false)
 
     ; Pure: how a capture may be made -> "window" (PrintWindow: only the
     ; window's own pixels), "screen" (a screen copy: Roblox in front only)
@@ -53,7 +59,7 @@ class Screenshot {
         ; front is captured (privacy audit 2026-11-10). Idle mode copies the
         ; window's own image instead (PrintWindow: nothing else in it).
         src := Screenshot.Source(WinActive("ahk_id " hwnd) ? true : false, Screenshot.FromWindow)
-        if (src = "")
+        if (src = "" || (src = "window" && Screenshot.Hung(hwnd)))
             return ""
         ; the CLIENT rect (no title bar / borders; the same as the window
         ; rect for fullscreen Roblox), at its physical size (DPI aware)

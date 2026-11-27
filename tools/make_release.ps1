@@ -19,6 +19,8 @@ $exclude = @(
     '^settings\.ini$', '^logs/', '^exports/', '^imported/', '^backup/', '^dist/', '^update_tmp/',
     '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/',
     '^\.gitattributes$', '^\.gitignore$',
+    # only the plugins readme and example ship: never a player's plugins or plugins/.loaded
+    '^plugins/(?!README\.txt$|example_plugin\.ahk\.txt$)',
     '^data/auras_had\.txt$', '^data/[^/]*state[^/]*\.json$',
     '^data/(potion_usage\.json|last_biome\.txt|minions_routes\.json|auras_learnt\.json|aura_hints\.json)$',
     '^data/(stats\.json|summary_last\.txt|schedule_state\.txt|update_skip\.txt|whatsnew\.json)$'
@@ -40,6 +42,12 @@ if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
 & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $tar -C $src   # Windows tar (Git Bash puts its own tar first)
 if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
 Remove-Item $tar
+
+# What is not released (the biome sniper) comes out, as in the public repo
+# (tools\strip_private.py); only files still there are packed.
+& python -I (Join-Path $root 'tools\strip_private.py') $src
+if ($LASTEXITCODE -ne 0) { throw 'strip_private.py failed' }
+$files = @($files | Where-Object { Test-Path -LiteralPath (Join-Path $src $_) })
 
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force $dist | Out-Null

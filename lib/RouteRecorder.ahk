@@ -407,7 +407,9 @@ class RouteRecorder {
             Input.HiRes(true)
             hi := true
             mouse := raw.ok ? ObjBindMethod(raw, "Take") : ""
-            isDown := (k) => GetKeyState(k, "P")
+            ; by the key's place (Input.PhysKey), as the walk is played back:
+            ; on AZERTY "w" alone is the key labelled W, not the one to walk with
+            isDown := (k) => GetKeyState(Input.PhysKey(k), "P")
             ; keys held when the window opens are not a start / cancel press
             sess._prevStart := isDown.Call(sess.startKey) ? true : false
             sess._prevEsc := isDown.Call("Escape") ? true : false

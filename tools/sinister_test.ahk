@@ -2,7 +2,7 @@
 #SingleInstance Off
 #Include %A_LineFile%\..\..\lib\Config.ahk
 #Include %A_LineFile%\..\..\lib\Webhook.ahk
-#Include %A_LineFile%\..\..\lib\tasks\Sinister.ahk
+#Include %A_LineFile%\..\..\lib\plugins\hunting\Sinister.ahk
 ; ---------------------------------------------------------------------------
 ; Test send of the GRAVEYARD boss message to ONE webhook entry (dev only).
 ; SENDS FOR REAL to Discord.

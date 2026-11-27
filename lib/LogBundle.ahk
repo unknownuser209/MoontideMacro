@@ -12,6 +12,8 @@
 ;       settings.ini     SCRUBBED: see below
 ;       vesper_shot_*.png  the newest (up to 5) screenshots in A_Temp written
 ;                        in the last 24 h
+;       reel_trace.log   <root>\logs\reel_trace.log, when there is one (the
+;                        last reels pass by pass: numbers only, ReelTrace)
 ;       setup_check.txt  opts.report (the SetupCheck report), if given
 ;       about.txt        version, AutoHotkey, Windows, screen size
 ;     ok = 1: path = the zip, msg = a sentence for the user. ok = 0: msg says
@@ -22,7 +24,7 @@
 ;       userName   the Windows user name to hide (default A_UserName)
 ;       now        "yyyyMMddHHmmss" timestamp (default A_Now)
 ;       zip        callable (stageDir, zipFile) that makes the zip
-;                  (default: PowerShell Compress-Archive)
+;                  (default: LogBundle.WriteZip, no PowerShell)
 ;
 ;   Scrubbing (LogBundle.ScrubText / ScrubIni, both pure):
 ;     UiLogic.Scrub: Discord webhook URLs, roblox.com / ro.blox.com links,
@@ -143,6 +145,7 @@ class LogBundle {
         o := (key, def) => LogBundle._Opt(opts, key, def)
         logPath := o("logPath", root "\logs\macro.log")
         iniPath := o("settingsPath", root "\settings.ini")
+        tracePath := o("tracePath", root "\logs\reel_trace.log")
         tempDir := RTrim(o("tempDir", A_Temp), "\/")
         outDir := RTrim(o("outDir", root "\logs"), "\/")
         user := o("userName", A_UserName)
@@ -184,6 +187,9 @@ class LogBundle {
                 for s in shots
                     FileCopy(s, stage "\" LogBundle._Base(s), 1)
             }
+
+            if FileExist(tracePath)
+                try FileCopy(tracePath, stage "\reel_trace.log", 1)
 
             report := String(o("report", ""))
             LogBundle._Put(stage "\setup_check.txt", report != "" ? LogBundle.ScrubText(report, secrets, user)
@@ -252,12 +258,69 @@ class LogBundle {
             . "Made " FormatTime(, "yyyy-MM-dd HH:mm:ss") "`r`n"
     }
 
-    ; PowerShell Compress-Archive, like Updater._Unzip uses Expand-Archive.
+    ; The zip is written here, not by PowerShell's Compress-Archive: on a
+    ; tester's PC (2026-11-26) "Making the zip..." stayed up for 20+ min
+    ; (RunWait on a PowerShell that never returned) while it takes 2 s here.
     static _Zip(stage, zip) {
-        q := (s) => "'" StrReplace(s, "'", "''") "'"
-        cmd := 'powershell.exe -NoProfile -NonInteractive -Command "Compress-Archive -Path ' q(stage "\*")
-            . ' -DestinationPath ' q(zip) ' -Force"'
-        if (RunWait(cmd, , "Hide") != 0)
-            throw Error("could not zip the files")
+        files := []
+        Loop Files, stage "\*", "F"
+            files.Push(A_LoopFileFullPath)
+        LogBundle.WriteZip(files, zip)
+    }
+
+    ; A plain zip (stored, no compression: the PNGs are packed already and
+    ; the text is a few hundred KB) of files, each under its own name.
+    ; CRC-32 from ntdll. Throws when a file cannot be read or written.
+    static WriteZip(files, zip) {
+        f := FileOpen(zip, "w")
+        if !IsObject(f)
+            throw Error("could not create the zip")
+        cd := []                                ; central directory entries
+        try {
+            dos := LogBundle._DosTime(A_Now)
+            for path in files {
+                data := FileRead(path, "RAW")
+                size := data.Size
+                crc := size ? DllCall("ntdll\RtlComputeCrc32", "UInt", 0, "Ptr", data, "UInt", size, "UInt") : 0
+                name := LogBundle._Base(path)
+                nb := Buffer(StrPut(name, "UTF-8") - 1)
+                StrPut(name, nb, nb.Size, "UTF-8")
+                off := f.Pos
+                h := Buffer(30, 0)
+                NumPut("UInt", 0x04034B50, "UShort", 20, "UShort", 0x0800, "UShort", 0
+                    , "UInt", dos, "UInt", crc, "UInt", size, "UInt", size
+                    , "UShort", nb.Size, "UShort", 0, h)
+                f.RawWrite(h), f.RawWrite(nb)
+                if size
+                    f.RawWrite(data)
+                cd.Push({name: nb, crc: crc, size: size, off: off})
+            }
+            cdStart := f.Pos
+            for e in cd {
+                c := Buffer(46, 0)
+                NumPut("UInt", 0x02014B50, "UShort", 20, "UShort", 20, "UShort", 0x0800, "UShort", 0
+                    , "UInt", dos, "UInt", e.crc, "UInt", e.size, "UInt", e.size
+                    , "UShort", e.name.Size, "UShort", 0, "UShort", 0, "UShort", 0, "UShort", 0
+                    , "UInt", 0, "UInt", e.off, c)
+                f.RawWrite(c), f.RawWrite(e.name)
+            }
+            cdSize := f.Pos - cdStart
+            z := Buffer(22, 0)
+            NumPut("UInt", 0x06054B50, "UShort", 0, "UShort", 0, "UShort", cd.Length, "UShort", cd.Length
+                , "UInt", cdSize, "UInt", cdStart, "UShort", 0, z)
+            f.RawWrite(z)
+        } catch Any as e {
+            f.Close()
+            try FileDelete(zip)
+            throw e
+        }
+        f.Close()
+    }
+
+    ; "yyyyMMddHHmmss" -> MS-DOS time (low word) and date (high word)
+    static _DosTime(ts) {
+        y := SubStr(ts, 1, 4), mo := SubStr(ts, 5, 2), d := SubStr(ts, 7, 2)
+        h := SubStr(ts, 9, 2), mi := SubStr(ts, 11, 2), sec := SubStr(ts, 13, 2)
+        return (((y - 1980) << 9 | mo << 5 | d) << 16) | (h << 11 | mi << 5 | sec // 2)
     }
 }

@@ -37,3 +37,8 @@ data/cal_health.json
 dev/lights/*.exe
 dev/lights/*.dll
 dev/lights/*.flag
+
+# the player's plugins (lib\Plugins.ahk): only the readme and the example ship
+plugins/*
+!plugins/README.txt
+!plugins/example_plugin.ahk.txt

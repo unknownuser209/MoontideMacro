@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\FishLogic.ahk
 #Include %A_LineFile%\..\ReelPause.ahk
+#Include %A_LineFile%\..\ReelTrace.ahk
 #Include %A_LineFile%\..\..\GameText.ahk
 ; ---------------------------------------------------------------------------
 ; FishingTask: the default loop (priority 99, always runnable).
@@ -97,7 +98,41 @@ class FishingTask {
     ; 0.726 (reel bar 345 of 475 px, card 312 of 430). UiK interpolates
     ; between the measured sizes (UiPoints, s ascending) and extends the end
     ; segments past them.
+    ; The size UiK is read at: the client's WIDTH factor (Screen.E), not the
+    ; smaller of width / height. Live 1920x991 (a 1080p monitor at 125 %
+    ; with Roblox maximized, a tester's size; windowed here 2026-11-26): the
+    ; panel, its reel bar and the card were exactly their 1920x1080 size
+    ; (panel frame 500 x 144 px, bar borders 21 px apart, 406 px wide), only
+    ; moved up with the anchor. Read at the height (s 0.688 -> k 0.81) the
+    ; reel rows sat 6 design px under the bar and the reel was not seen
+    ; (nothing clicked) until the once-a-run bar search (_ReelUnseen) moved
+    ; them; that search needs the reel prompt to read. At 16:9 and narrower
+    ; the width is the smaller factor, so every tested size maps as before.
+    static UiS() => Screen.sx
+    ; The panel's scale now (screen px per design px). Windows above 100 %
+    ; (Screen.Ui): Roblox draws the layout of a client Ui times smaller, Ui
+    ; times bigger, so the table is read at UiS / Ui and grown by Ui (a
+    ; 1920x1080 client at 150 %: 1.5 x UiK(0.5) = 1.06, not UiK(0.75) = 0.84;
+    ; testers at 125 % / 150 %, 2026-11-26: the reel bar not found).
+    static KNow() {
+        d := Screen.Ui
+        return d * FishingTask.UiK(FishingTask.UiS() / d)
+    }
     static PanelAnchor := [0.5, 0.804]
+
+    ; The reel bar measured on screen (_FitFind), for the session: {k, ox,
+    ; oy, cw, ch} = the panel's scale (screen px per design px) and its bar's
+    ; top border centre in px from the client's top left, for a client of
+    ; cw x ch (another size drops it), or "". Set by _ReelUnseen when the bar
+    ; is nowhere near where the scale table puts it (a tester at 1920x991,
+    ; 125 %, 2026-11-26: the border rows 10 bright, no border pair within 45
+    ; px; the game may draw its UI another size there). Every panel coord
+    ; then follows the measured bar; the card keeps its centre, at k.
+    static Fit := ""
+    static FitCx := 1279.5, FitTop := 1030, FitW := 475   ; the bar's top border: centre x, y, width (design)
+    static FitOn() => IsObject(FishingTask.Fit) && FishingTask.Fit.cw = Screen.cw && FishingTask.Fit.ch = Screen.ch
+    ; the coords as they are: 2560x1440 and no measured bar
+    static Native() => Screen.IsIdentity() && Screen.Ui = 1 && !FishingTask.FitOn()
     static CardAnchor := [0.5, 0.5]
     static UiPoints := [[0.5333, 0.726], [0.75, 0.84], [1.0, 1.0]]
     static UiK(s) {
@@ -114,11 +149,12 @@ class FishingTask {
     _Fc() {
         fc := this._coords["fishing"]
         dy := FishingTask.ReelDy
-        if (Screen.IsIdentity() && !dy)
+        if (FishingTask.Native() && !dy)
             return fc
-        key := Screen.cx "," Screen.cy "," Screen.cw "," Screen.ch "," dy
+        f := FishingTask.FitOn() ? FishingTask.Fit : ""
+        key := Screen.cx "," Screen.cy "," Screen.cw "," Screen.ch "," Screen.Ui "," dy (IsObject(f) ? "," f.k "," f.ox "," f.oy : "")
         if (this._fcKey != key) {
-            m := Screen.IsIdentity() ? FishingTask._Copy(fc) : FishingTask.MapFishing(fc)
+            m := FishingTask.Native() ? FishingTask._Copy(fc) : FishingTask.MapFishing(fc)
             if dy
                 FishingTask._ShiftReel(m["reel"], dy)
             this._fcMapped := m, this._fcKey := key
@@ -127,7 +163,7 @@ class FishingTask {
     }
 
     _CoordsNow() {
-        if Screen.IsIdentity()
+        if FishingTask.Native()
             return this._coords
         c := this._coords.Clone()
         c["fishing"] := this._Fc()
@@ -137,10 +173,15 @@ class FishingTask {
     ; A design point on the panel (or, a = CardAnchor, the card) -> the
     ; design point Screen maps onto where the game draws it now -> {x, y}
     static PanelPt(x, y, a := "") {
-        if Screen.IsIdentity()
+        if FishingTask.Native()
             return {x: x, y: y}
         a := IsObject(a) ? a : FishingTask.PanelAnchor
-        k := FishingTask.UiK(Screen.s)
+        k := FishingTask.KNow()
+        if FishingTask.FitOn() {
+            f := FishingTask.Fit, k := f.k
+            if (a == FishingTask.PanelAnchor)       ; the panel: where its bar was measured
+                return Screen.Inv(Round(Screen.cx + f.ox + k * (x - FishingTask.FitCx)), Round(Screen.cy + f.oy + k * (y - FishingTask.FitTop)))
+        }
         sx := Screen.cx + a[1] * Screen.cw + k * (x - a[1] * Screen.DesignW)
         sy := Screen.cy + a[2] * Screen.ch + k * (y - a[2] * Screen.DesignH)
         return Screen.Inv(Round(sx), Round(sy))
@@ -166,6 +207,25 @@ class FishingTask {
         return out
     }
 
+    ; Design rows ys (ascending) -> one design row per SCREEN row from the
+    ; first to the last. The bar's top border is 1 screen px tall off 1440p;
+    ; the 2 px steps of borderYs mapped one by one can step over it (1920x991,
+    ; live 2026-11-26: rows 159 and 161 read, the border on 160). At
+    ; 2560x1440 the rows stay as they are.
+    static EveryRow(ys) {
+        if (ys.Length < 2 || FishingTask.Native())
+            return ys
+        out := [], last := ""
+        y := ys[1]
+        while (y <= ys[ys.Length]) {
+            sy := Screen.Y(y)
+            if (sy != last)
+                out.Push(y), last := sy
+            y++
+        }
+        return out
+    }
+
     ; fishing section -> a copy with every panel and card coord moved (the
     ; other failsafe clicks keep the x0.75 mapping)
     static MapFishing(fc) {
@@ -182,7 +242,7 @@ class FishingTask {
         m["advanced"]["y"] := FishingTask.MapY(m["advanced"]["y"])
         r := m["reel"]
         r["arrowY"] := FishingTask.MapY(r["arrowY"]), r["barY"] := FishingTask.MapY(r["barY"])
-        r["borderYs"] := FishingTask.MapYs(r["borderYs"])
+        r["borderYs"] := FishingTask.EveryRow(FishingTask.MapYs(r["borderYs"]))
         m["panelTitle"]["rect"] := FishingTask.MapRect(m["panelTitle"]["rect"])
         m["fishButton"]["rect"] := FishingTask.MapRect(m["fishButton"]["rect"])
         card := FishingTask.CardAnchor
@@ -489,6 +549,8 @@ class FishingTask {
             return "stopped"
         if (this._CloseCard(ctx) < 0)
             return "stopped"
+        if IsObject(this.deps.trace)
+            try this.deps.trace.Outcome(res = "failed" ? "got away" : (res = "caught" ? "caught" : "card: " res))
         if (res = "failed") {
             FishLogic.Bump(this.state, "fishFailed")
             this.deps.log.Call("fishing: the fish got away")
@@ -833,11 +895,19 @@ class FishingTask {
     static SearchUp := 45, SearchDown := 45, PairTol := 3, PairNear := 12
     static ReelDy := 0
     _dimTried := false
+    _unseenTries := 0
+    static UnseenTries := 3
     _ReelUnseen() {
         this._dimTried := true
         rc := this._Fc()["reel"]
         io := this.deps.io
-        ref := rc["borderYs"][Min(3, rc["borderYs"].Length)]
+        ; where the top border should be: the border row as far above the bar
+        ; row as y 1030 is above 1044 (borderYs[3] at 2560x1440)
+        want := rc["barY"] - (FishingTask.MapY(1044) - FishingTask.MapY(1030))
+        ref := rc["borderYs"][1]
+        for y in rc["borderYs"]
+            if (Abs(y - want) < Abs(ref - want))
+                ref := y
         gap := Max(1, FishingTask.MapY(1055) - FishingTask.MapY(1030))
         ys := [], lv := []
         y := ref - FishingTask.SearchUp
@@ -881,8 +951,23 @@ class FishingTask {
             here " bright here, white needs over " FishLogic.WhiteMin
             . (bestI ? "; the bar's borders found " (dy = 0 ? "in place" : Abs(dy) " px " (dy > 0 ? "lower" : "higher")) ", " best " bright" : "; no bar border found near it")
             . ", " Screen.HdrText() (shot != "" ? "; screen saved to " shot : ""))
-        if !bestI
+        if !bestI {
+            ; nowhere near: the bar measured anywhere in the lower middle of
+            ; the client. Not found: tried again on a later reel (UnseenTries)
+            f := this._FitFind()
+            if !IsObject(f) {
+                this._dimTried := (++this._unseenTries >= FishingTask.UnseenTries)
+                this.deps.log.Call("fishing: no reel bar found anywhere in the lower middle of the screen either"
+                    . (this._dimTried ? "" : "; looking again on the next reel"))
+                return
+            }
+            k0 := FishingTask.KNow()
+            FishingTask.Fit := {k: f.k, ox: f.ox, oy: f.oy, cw: Screen.cw, ch: Screen.ch}
+            FishingTask.ReelDy := 0
+            this.deps.log.Call("fishing: the reel bar found on screen at " f.x1 ".." f.x2 ", y " f.y " (drawn x" Format("{:.3f}", f.k)
+                . ", the macro expected x" Format("{:.3f}", k0) "): the fishing panel follows it for this session")
             return
+        }
         if (best <= FishLogic.WhiteMin) {
             FishLogic.WhiteMin := best - FishingTask.DimMargin
             this.deps.log.Call("fishing: white lowered to " FishLogic.WhiteMin " for this session (a dimmer screen: HDR or colour settings?)")
@@ -891,6 +976,120 @@ class FishingTask {
             FishingTask.ReelDy += dy
             this.deps.log.Call("fishing: the reel rows moved " Abs(dy) " px " (dy > 0 ? "down" : "up") " for this session")
         }
+    }
+
+    ; The reel bar anywhere in the lower middle of the client (x 20..80 %,
+    ; y 45..98 %): two bright rows (min channel over DimFloor) through the
+    ; client's centre column whose bright runs end at the same x (FitEndTol
+    ; px) and are FitRatio times wider than they are apart (the bar's frame:
+    ; 475 x 25 design px, 19x; measured 406 x 21 at 1920x991), with the bar's
+    ; inside between them not one solid block. The panel's frame (500 x 144)
+    ; and the white progress bar under it (narrower) do not pass; nor does
+    ; scenery running out of the band. -> {k, ox, oy, x1, x2, y} (screen px
+    ; from the client's top left; ox, oy = the top border's centre) or "".
+    static FitEndTol := 4, FitRatio := [15.5, 23], FitGap := [8, 120], FitStride := 2, FitMinW := 0.12, FitGrey := 90
+    _FitFind() {
+        p := Screen.Inv(Screen.cx + Round(Screen.cw * 0.2), Screen.cy + Round(Screen.ch * 0.45))
+        q := Screen.Inv(Screen.cx + Round(Screen.cw * 0.8), Screen.cy + Round(Screen.ch * 0.98))
+        ys := [], sys := [], last := ""
+        y := p.y
+        while (y <= q.y) {
+            s := Screen.Y(y)
+            if (s != last)
+                ys.Push(y), sys.Push(s), last := s
+            y++
+        }
+        st := FishingTask.FitStride
+        rows := ""
+        try rows := this.deps.grab.Call(p.x, q.x, ys, st)
+        if !(IsObject(rows) && rows.Length = ys.Length && rows.Length && rows[1].Length >= 10)
+            return ""
+        n := rows[1].Length
+        sxOf := (i) => Screen.X(p.x + (i - 1) * st)
+        mid := Screen.cx + Screen.cw / 2, ic := 1
+        Loop n
+            if (Abs(sxOf(A_Index) - mid) < Abs(sxOf(ic) - mid))
+                ic := A_Index
+        ; lit: whitish (min channel over DimFloor, channels within FitGrey:
+        ; bright green hedges and grass are not; a dim HDR white is)
+        lit := (c) => FishingTask._FitLit(c)
+        runs := []
+        for i, row in rows {
+            if !lit(row[ic])
+                continue
+            a := ic, j := ic, miss := 0
+            while (j > 1 && miss <= 1) {
+                j--
+                if lit(row[j])
+                    a := j, miss := 0
+                else
+                    miss++
+            }
+            b := ic, j := ic, miss := 0
+            while (j < n && miss <= 1) {
+                j++
+                if lit(row[j])
+                    b := j, miss := 0
+                else
+                    miss++
+            }
+            if (a <= 2 || b >= n - 1)               ; runs out of the band: scenery
+                continue
+            runs.Push({i: i, l: sxOf(a), r: sxOf(b), a: a, b: b})
+        }
+        tol := FishingTask.FitEndTol
+        ; inner rows (ys[i1..i2]) lit within a few px of sample j: the frame's
+        ; 1 px side, read at every design px (the scan's stride can skip it)
+        sides := (i1, i2, j) => FishingTask._SideRows(this.deps.grab, p.x + (j - 1 - 3) * st, p.x + (j - 1 + 3) * st, ys, i1, i2, lit)
+        for u in runs {
+            w := u.r - u.l
+            if (w < Screen.cw * FishingTask.FitMinW)
+                continue
+            for v in runs {
+                g := sys[v.i] - sys[u.i]
+                if (g < FishingTask.FitGap[1] || g > FishingTask.FitGap[2])
+                    continue
+                if (Abs(u.l - v.l) > tol || Abs(u.r - v.r) > tol)
+                    continue
+                if (w / g < FishingTask.FitRatio[1] || w / g > FishingTask.FitRatio[2])
+                    continue
+                same := 0
+                for t in runs
+                    if (t.i > u.i + 1 && t.i < v.i - 1 && Abs(t.l - u.l) <= tol && Abs(t.r - u.r) <= tol)
+                        same++
+                if (same * 2 > Max(0, v.i - u.i - 3))   ; a solid block, not the bar's frame
+                    continue
+                inner := v.i - u.i - 1                  ; the frame's sides join the two rows
+                if (inner > 0 && (sides(u.i + 1, v.i - 1, u.a) * 10 < inner * 8 || sides(u.i + 1, v.i - 1, u.b) * 10 < inner * 8))
+                    continue
+                return {k: w / FishingTask.FitW, ox: (u.l + u.r) / 2 - Screen.cx, oy: sys[u.i] - Screen.cy
+                    , x1: u.l - Screen.cx, x2: u.r - Screen.cx, y: sys[u.i] - Screen.cy}
+            }
+        }
+        return ""
+    }
+
+    static _FitLit(c) {
+        r := (c >> 16) & 0xFF, g := (c >> 8) & 0xFF, b := c & 0xFF
+        lo := Min(r, g, b)
+        return lo > FishingTask.DimFloor && Max(r, g, b) - lo < FishingTask.FitGrey
+    }
+
+    ; how many of the rows ys[i1..i2] have a lit sample in design x1..x2
+    static _SideRows(grab, x1, x2, ys, i1, i2, lit) {
+        sub := []
+        Loop i2 - i1 + 1
+            sub.Push(ys[i1 + A_Index - 1])
+        n := 0
+        try {
+            for row in grab.Call(x1, x2, sub, 1)
+                for c in row
+                    if lit(c) {
+                        n++
+                        break
+                    }
+        }
+        return n
     }
 
     ; the level (min channel) 90 % of a row's pixels reach
@@ -1117,10 +1316,23 @@ class FishingTask {
     _Reel(ctx, opt) {
         outer := Input.InReel
         Input.InReel := true
+        tr := this.deps.trace
+        this._traceHow := ""
+        r := "error"
         try
-            return this._ReelLoop(ctx, opt)
-        finally
+            return r := this._ReelLoop(ctx, opt)
+        finally {
             Input.InReel := outer
+            if IsObject(tr)
+                try tr.End(r . (this._traceHow != "" ? "/" this._traceHow : ""))
+        }
+    }
+
+    ; ReelTrace's header: where the strip lands and what the controller uses
+    _TraceHead(rc) {
+        return "client " Screen.cw "x" Screen.ch " ui " Round(Screen.Ui, 2) " white " FishLogic.WhiteMin
+            . " dy " FishingTask.ReelDy " x1 " Screen.X(rc["x1"]) " x2 " Screen.X(rc["x2"])
+            . " aim " Round(rc["aim"], 3) " lead " rc["leadMs"]
     }
     ; The reel line ends with the slowest capture / work / wait of one pass:
     ; a long wait = something else ran meanwhile (the App's timers), a long
@@ -1141,6 +1353,9 @@ class FishingTask {
         ; the bar's frame: rows to read (narrowed to the one that shows it),
         ; passes in a row it read, steady this reel, last time it read
         bys := rc["borderYs"], frameRun := 0, frameSteady := false, lastFrame := 0
+        tr := this.deps.trace
+        if IsObject(tr)
+            tr.Begin(this._TraceHead(rc))
         ; one line per reel (fishing: reel ...): passes, gaps between them,
         ; clicks; to tell a slow PC (fewer passes) from a slow controller
         polls := 0, firstT := 0, prevT := 0, maxGap := 0, clicks := 0, how := "cap"
@@ -1208,6 +1423,8 @@ class FishingTask {
             }
             scan := (s.m && s.p2) ? s : ""
             if !IsObject(scan) {
+                if IsObject(tr)
+                    tr.Add(t - start, s, {}, false, false)
                 if (!seen && t - start >= FishLogic.ReelSeenMs) {
                     shot := HasMethod(io, "Shot") ? io.Shot() : ""
                     if (shot != "")
@@ -1216,11 +1433,15 @@ class FishingTask {
                 }
             } else {
                 seen := true
-                if (FishLogic.ReelDecide(scan, st, t, rc["leadMs"], rc["aim"]) && t - lastClick >= rc["clickGapMs"]) {
+                dec := FishLogic.ReelDecide(scan, st, t, rc["leadMs"], rc["aim"])
+                hit := dec && t - lastClick >= rc["clickGapMs"]
+                if hit {
                     io.ClickHere()
                     lastClick := t
                     clicks++
                 }
+                if IsObject(tr)
+                    tr.Add(t - start, scan, st, dec, hit)
             }
             tWait := now.Call()
             maxWork := Max(maxWork, tWait - t)
@@ -1229,6 +1450,7 @@ class FishingTask {
             maxWait := Max(maxWait, now.Call() - tWait)
         }
         ms := now.Call() - start
+        this._traceHow := how
         this.deps.log.Call(Format("fishing: reel {} ms ({}), polls {}, avg gap {} ms, max gap {} ms, clicks {}, empty up to {}{}, frame {}, slowest grab {} / work {} / wait {} ms"
             , ms, how, polls, polls > 1 ? Round((prevT - firstT) / (polls - 1)) : 0, maxGap, clicks
             , em, em ? (emOwn ? " (bar)" : " (short)") : "", frameSteady ? "seen" : "not seen"

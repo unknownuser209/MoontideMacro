@@ -436,7 +436,8 @@ class FishLogic {
             "now", () => A_TickCount,
             "grab", (x1, x2, ys, stride) => StripGrab.Rows(x1, x2, ys, stride),
             "log", (msg) => 0,
-            "webhook", ""
+            "webhook", "",
+            "trace", ""             ; a ReelTrace (App: logs\reel_trace.log), "" = none
         )
         for name, val in defaults
             if !d.HasOwnProp(name)
@@ -761,6 +762,7 @@ class FishLogic {
         st.w := w
         left := (scan.p1 <= scan.m + 6 && w > 0) ? scan.p2 - w : scan.p1
         target := left + (scan.p2 - left) * aim
+        st.tg := target                                 ; for ReelTrace
         ; arrow speed over the last ~80 ms (positions come in 2 px steps, so
         ; one 10 ms sample alone is far too noisy)
         if !st.HasProp("hist")

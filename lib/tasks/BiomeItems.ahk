@@ -4,6 +4,7 @@
 #Include %A_LineFile%\..\..\GameLists.ahk
 #Include %A_LineFile%\..\..\PotionSafety.ahk
 #Include %A_LineFile%\..\..\QuestMatch.ahk
+#Include %A_LineFile%\..\..\Plugins.ahk
 ; ---------------------------------------------------------------------------
 ; BiomeItemsTask: uses the biome-changing items from the inventory when their
 ; cooldowns allow: Biome Randomizer, Strange Controller, Biome Selector.
@@ -117,7 +118,7 @@ class BiomeItemsTask {
     static Drives := ["Radiant Star Drive", "Infernal Flame Drive", "Unknown Void Drive", "Corrupt Ruin Drive"
         , "Golden Dune Drive", "Chilling Frost Drive", "Abyss Curse Drive", "Raging Gale Drive", "Angelic Hymn Drive"]
     ; LIMITED (Halloween 2026, the user): ONE Cursed Rune Fragment when
-    ; GRAVEYARD or PUMPKIN MOON starts (Limited.cursedRune). The fragment
+    ; GRAVEYARD or PUMPKIN MOON starts (Hunting.cursedRune). The fragment
     ; starts Blood Rain and is used up, so it skips the one-time check and
     ; the server cooldown; after a use none is used again until a normal
     ; biome (the night is over): Blood Rain ending back into GRAVEYARD does
@@ -314,7 +315,7 @@ class BiomeItemsTask {
         return m
     }
 
-    ; A Cursed Rune Fragment is due: Limited.cursedRune on, GRAVEYARD or
+    ; A Cursed Rune Fragment is due: Hunting.cursedRune on, GRAVEYARD or
     ; PUMPKIN MOON up, none used this night, not held. A normal biome ends
     ; the night (the next GRAVEYARD / PUMPKIN MOON may use one again).
     _RuneDue(biome) {
@@ -324,7 +325,7 @@ class BiomeItemsTask {
             this._runeSpent := false
             this._Save()
         }
-        if !(IsObject(env.cfg) && env.cfg.Get("Limited.cursedRune", 0))
+        if !(IsObject(env.cfg) && env.cfg.Get("Hunting.cursedRune", 0) && Plugins.On(env.cfg, "hunting", 1))   ; the hunting plugin on (Plugins tab)
             return false
         ok := false
         for n in BiomeItemsTask.RuneBiomes

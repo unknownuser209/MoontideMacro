@@ -71,13 +71,51 @@ class Config {
     ; dropped on load, gone from the file at the next Save.
     static RetiredKeys := ["Minions.putBack", "General.joinButton", "General.joinDefaultOn"]
 
+    ; Settings that moved (old path -> new path), on load: the old value goes
+    ; to the new key unless the new key is already set, then the old key is
+    ; dropped (gone from the file at the next Save). 2026-11-26: the Limited
+    ; tab became the built-in "Orb & boss hunting" plugin (Plugins tab), its
+    ; keys moved from [Limited] to [Hunting].
+    static RenamedKeys := Map("Limited.bossAlert", "Hunting.bossAlert", "Limited.orbAlert", "Hunting.orbAlert"
+        , "Limited.cursedRune", "Hunting.cursedRune")
+
     _DropRetired() {
+        for old, new in Config.RenamedKeys {
+            o := Config._SplitPath(old), n := Config._SplitPath(new)
+            if !(this.sections.Has(o[1]) && this.sections[o[1]].Has(o[2]))
+                continue
+            if !this.sections.Has(n[1])
+                this.sections[n[1]] := Config._CIMap()
+            if !this.sections[n[1]].Has(n[2])
+                this.sections[n[1]][n[2]] := this.sections[o[1]][o[2]]
+            this.sections[o[1]].Delete(o[2])
+            if !this.sections[o[1]].Count
+                this.sections.Delete(o[1])
+        }
         for path in Config.RetiredKeys {
             p := Config._SplitPath(path)
             if (this.sections.Has(p[1]) && this.sections[p[1]].Has(p[2]))
                 this.sections[p[1]].Delete(p[2])
         }
+        ; sections whose missing keys get their defaults (see BackfillSections)
+        defs := ""
+        for sec in Config.BackfillSections {
+            if !IsObject(defs)
+                defs := Config.IniDefaults()
+            if !this.sections.Has(sec)
+                this.sections[sec] := Config._CIMap()
+            for k, v in defs[sec]
+                if !this.sections[sec].Has(k)
+                    this.sections[sec][k] := v
+        }
     }
+
+    ; A settings.ini from before the updater had no [Update], and a missing
+    ; repo hid the Home page's Updates box (Check for updates) and the start
+    ; check for good (the owner's PC, 2026-11-26). Its missing keys are filled
+    ; on load; a key that is there, even empty (repo= : never check), stays.
+    ; Other sections keep "absent = the caller's default".
+    static BackfillSections := ["Update"]
 
     ; Quests removed from the list (2026-11-23, nobody had seen them on the
     ; board). An older quests.json loses them on load (saved with the next
@@ -132,6 +170,7 @@ class Config {
         g["fishingFailsafeSec"] := "31"
         g["pathingFailsafeSec"] := "61"
         g["repathOnStart"] := "1"     ; 1 = each Start walks to the fisher and back (Sell) before fishing
+        g["awayRefocus"] := "1"       ; 1 = "Roblox lost focus" while nobody uses the PC (2 min): Roblox back in front, resumed (a few times an hour)
         g["questIntervalMin"] := "30"
         g["dryRun"] := "1"
         g["sound"] := "1"
@@ -178,14 +217,21 @@ class Config {
         bi["selectorDrive"] := ""     ; which Drive the Selector picks (BiomeItemsTask.Drives)
         bi["blacklist"] := ""         ; comma list of biomes: no items used while one is up (wait for the next biome)
         d["BiomeItems"] := bi
-        ; Limited (Halloween 2026): the bosses' Discord message from the chat
-        ; (hunting on or off) and one Cursed Rune Fragment per GRAVEYARD /
-        ; PUMPKIN MOON night.
+        ; Hunting (the built-in "Orb & boss hunting" plugin, lib\plugins\hunting;
+        ; [Limited] before 2026-11-26, RenamedKeys): the bosses' Discord message
+        ; from the chat (hunting on or off) and one Cursed Rune Fragment per
+        ; GRAVEYARD / PUMPKIN MOON night. All of it only while the plugin is on.
         lm := Config._CIMap()
         lm["bossAlert"] := "1"        ; 1 = a Sinister S. / P. line in the chat sends the "sinister" message
         lm["orbAlert"] := "0"         ; 1 = an orb line in the chat ("Typhoon Orb has spawned") sends the "sinister" message (2026-11-22; off: orbs come in most biomes)
         lm["cursedRune"] := "0"       ; 1 = use ONE Cursed Rune Fragment when GRAVEYARD or PUMPKIN MOON starts
-        d["Limited"] := lm
+        d["Hunting"] := lm
+        ; Plugins (lib\Plugins.ahk): <id> = 1 on / 0 off. The built-in ones;
+        ; a plugin dropped into plugins\ is off until switched on.
+        pl := Config._CIMap()
+        pl["hunting"] := "1"
+        pl["sniper"] := "0"
+        d["Plugins"] := pl
         ; Rare aura alert (2026-11-16): a new aura the player rolled, as rare
         ; as minRarity or rarer, goes to the Rare webhooks with a screenshot
         ; and pings userId.

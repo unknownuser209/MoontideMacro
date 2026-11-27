@@ -15,8 +15,9 @@
 ; region. Original code: raw RoGetActivationFactory + vtable ComCall.
 ;
 ;   Ocr.Read(x, y, w, h, scale := 1) -> String
-;     Screen coords. Lines joined with "`n". English recognizer (en-US, then
-;     en). Optional `scale` (1..4) upscales the region (HALFTONE) before
+;     Screen coords. Lines joined with "`n". English recognizer (any of
+;     Ocr.Langs; none installed: the Windows user's own language's, see
+;     Ocr._Engine). Optional `scale` (1..4) upscales the region (HALFTONE) before
 ;     OCR for very small text; 1 read 11pt Segoe UI cleanest in testing.
 ;     scale shrinks automatically to fit OcrEngine.MaxImageDimension.
 ;     Returns "" on ANY failure, never throws. ~20 ms per 400x80 read.
@@ -54,11 +55,12 @@
 ;   -> RecognizeAsync, poll IAsyncInfo.Status (Sleep 10) -> OcrResult.Lines
 ;
 ; Vtable slots: IUnknown 0-2, IInspectable 3-5, interface methods from 6.
-; Needs the English OCR language component (present on English Windows).
+; Best with an English OCR language component (any English Windows has one).
+;   Ocr.EngineInfo() -> {tag, english}   the recognizer in use (Check my setup)
 ; ---------------------------------------------------------------------------
 
 class Ocr {
-    static Langs := ["en-US", "en"]
+    static Langs := ["en-US", "en-GB", "en-AU", "en-CA", "en-IN", "en-IE", "en-NZ", "en-ZA", "en-PH", "en-SG", "en"]
     static MaxScale := 4
     static InkMaxScale := 8      ; ReadInk: no smoothing, a bigger upscale is cheap
     static WhiteInkMin := 200   ; ReadInk "w": every channel at least this
@@ -104,6 +106,14 @@ class Ocr {
     ; may sit behind other windows (not minimized: the read fails, ""). The
     ; rects stay the same: screen coords are moved by the client's origin.
     static Win := 0
+
+    ; PrintWindow waits on the window's own thread: a Roblox that is not
+    ; responding (loading, crashed) would freeze the macro inside the call,
+    ; F3 included. Such a window is not read (bug hunt 2026-11-26).
+    ; HungFn: (hwnd) -> true when not responding ("" = IsHungAppWindow; tests).
+    static HungFn := ""
+    static Hung(hwnd) => IsObject(Ocr.HungFn) ? (Ocr.HungFn.Call(hwnd) ? true : false)
+        : (DllCall("IsHungAppWindow", "Ptr", hwnd, "Int") ? true : false)
 
     ; Pure: a screen point -> the same point in a client whose top-left is
     ; at screen ox, oy (the window source's offset).
@@ -467,10 +477,34 @@ class Ocr {
         return IsObject(bw) ? bw : b
     }
 
-    ; English recognizer or 0. The engine pointer is added to objs.
+    ; Windows has a recognizer only for the languages it has installed: an
+    ; English Windows from the UK, Australia or India has en-GB / en-AU /
+    ; en-IN and no en-US one, and a Spanish or Brazilian Windows none in
+    ; English. Every read came back "" there (no fish, no quest, no merchant
+    ; seen). So any English one is taken, and with none the recognizer of
+    ; the Windows user's own language(s) (it reads the game's Latin letters,
+    ; worse than an English one; Check my setup says how to add English).
+    static Tag := ""            ; the recognizer reads use: an English tag, "user", "" = none found yet
+    ; Tags to try, the one that worked last first; [] when only the user's
+    ; own language worked (no 11 failing tries on every read).
+    static LangOrder(last) {
+        if (last = "user")
+            return []
+        out := []
+        for t in Ocr.Langs
+            if (t = last)
+                out.Push(t)
+        for t in Ocr.Langs
+            if (t != last)
+                out.Push(t)
+        return out
+    }
+
+    ; English recognizer, else the user's languages' one, or 0. The engine
+    ; pointer is added to objs; Ocr.Tag says which one it is.
     static _Engine(statics, objs, hstrs) {
         langFactory := Ocr._Factory("Windows.Globalization.Language", "LanguageFactory", objs, hstrs)
-        for tag in Ocr.Langs {
+        for tag in Ocr.LangOrder(Ocr.Tag) {
             try {
                 hTag := Ocr._HStr(tag, hstrs)
                 ComCall(6, langFactory, "Ptr", hTag, "Ptr*", &pLang := 0)   ; CreateLanguage
@@ -478,11 +512,57 @@ class Ocr {
                 ComCall(9, statics, "Ptr", pLang, "Ptr*", &pEng := 0)       ; TryCreateFromLanguage
                 if pEng {
                     objs.Push(pEng)
+                    Ocr.Tag := tag
                     return pEng
                 }
             }
         }
+        try {
+            ComCall(10, statics, "Ptr*", &pEng := 0)                        ; TryCreateFromUserProfileLanguages
+            if pEng {
+                objs.Push(pEng)
+                Ocr.Tag := "user"
+                return pEng
+            }
+        }
+        Ocr.Tag := ""
         return 0
+    }
+
+    ; The recognizer reads use -> {tag, english}: tag "" = none at all (no
+    ; read can work); english false = only the Windows language's own one
+    ; (tag = its language, e.g. "pt-BR").
+    static EngineInfo() {
+        objs := [], hstrs := []
+        try {
+            statics := Ocr._Factory("Windows.Media.Ocr.OcrEngine", "OcrEngineStatics", objs, hstrs)
+            eng := Ocr._Engine(statics, objs, hstrs)
+            if !eng
+                return {tag: "", english: false}
+            if (Ocr.Tag != "user")
+                return {tag: Ocr.Tag, english: true}
+            tag := "your Windows language"
+            try {
+                ComCall(7, eng, "Ptr*", &pLang := 0)                        ; IOcrEngine.get_RecognizerLanguage
+                objs.Push(pLang)
+                ComCall(6, pLang, "Ptr*", &hTag := 0)                       ; ILanguage.get_LanguageTag
+                hstrs.Push(hTag)
+                if (t := Ocr._HStrText(hTag)) != ""
+                    tag := t
+            }
+            return {tag: tag, english: RegExMatch(tag, "i)^en(-|$)") ? true : false}
+        } catch
+            return {tag: "", english: false}
+        finally {
+            Loop objs.Length {
+                p := objs[objs.Length - A_Index + 1]
+                if p
+                    ObjRelease(p)
+            }
+            for hs in hstrs
+                if hs
+                    DllCall("combase\WindowsDeleteString", "Ptr", hs)
+        }
     }
 
     static _Factory(className, iidName, objs, hstrs) {
@@ -838,6 +918,8 @@ class Ocr {
     static _LoadWin(g, hwnd) {
         if (!DllCall("IsWindow", "Ptr", hwnd, "Int") || DllCall("IsIconic", "Ptr", hwnd, "Int"))
             throw Error("Ocr: the window is gone or minimized")
+        if Ocr.Hung(hwnd)
+            throw Error("Ocr: the window is not responding")
         rc := Buffer(16, 0)
         if !DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rc, "Int")
             throw Error("Ocr: GetClientRect failed")

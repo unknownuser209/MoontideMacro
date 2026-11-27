@@ -78,11 +78,13 @@ class InputScreenIO {
     static Map(x, y) => Screen.Pt(x, y)
     static Unmap(x, y) => Screen.Inv(x, y)
     static OwnHiddenSettleMs := 80     ; our window hidden from under the cursor -> Roblox hover
+    ; Letters and digits go by scan code (Input.PhysKey): the key where it
+    ; sits on a US keyboard, whatever the Windows layout.
     Down(k) {
-        SendInput("{" k " down}")
+        SendInput("{" Input.PhysKey(k) " down}")
     }
     Up(k) {
-        SendInput("{" k " up}")
+        SendInput("{" Input.PhysKey(k) " up}")
     }
     MoveTo(x, y) {
         p := InputScreenIO.Map(x, y)
@@ -519,6 +521,23 @@ class Input {
             try (IsObject(io) ? io : e.io).Up(e.key)
         }
     }
+
+    ; A key name -> the name the real io sends. Roblox reads keys by where
+    ; they sit (Enum.KeyCode.W = the key right of Q on a US keyboard, the
+    ; one labelled Z on a French AZERTY one); AutoHotkey's "w" is the key
+    ; LABELLED W in the Windows layout. On AZERTY "w" walked as KeyCode Z,
+    ; "a" as Q and "1" came with Shift; on German QWERTZ "z" / "y" swapped.
+    ; So a-z and 0-9 (lower case; anything else as it is) go as the US
+    ; key's scan code: the very same key as before on a US / UK layout.
+    static ScanCodes := Input._ScanCodes()
+    static _ScanCodes() {
+        m := Map()
+        for row in [["1234567890", 0x02], ["qwertyuiop", 0x10], ["asdfghjkl", 0x1E], ["zxcvbnm", 0x2C]]
+            Loop Parse row[1]
+                m[A_LoopField] := Format("sc{:03X}", row[2] + A_Index - 1)
+        return m
+    }
+    static PhysKey(k) => (k is String && Input.ScanCodes.Has(k)) ? Input.ScanCodes[k] : k
 
     static _Press(k, io) {
         Input.Sent++

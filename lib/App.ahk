@@ -21,7 +21,9 @@
 #Include %A_LineFile%\..\tasks\BiomeItems.ahk
 #Include %A_LineFile%\..\tasks\InvFind.ahk
 #Include %A_LineFile%\..\tasks\Obby.ahk
-#Include %A_LineFile%\..\tasks\Minions.ahk
+#Include %A_LineFile%\..\Plugins.ahk
+#Include %A_LineFile%\..\plugins\hunting\Hunting.ahk
+#Include %A_LineFile%\..\plugins\sniper\Sniper.ahk
 #Include %A_LineFile%\..\tasks\MemoryMatch.ahk
 #Include %A_LineFile%\..\tasks\Limbo.ahk
 #Include %A_LineFile%\..\tasks\Merchant.ahk
@@ -33,7 +35,6 @@
 #Include %A_LineFile%\..\Schedule.ahk
 #Include %A_LineFile%\..\DailySummary.ahk
 #Include %A_LineFile%\..\Remote.ahk
-#Include %A_LineFile%\..\ClockWatch.ahk
 #Include %A_LineFile%\..\SetupCheck.ahk
 #Include %A_LineFile%\..\CalTest.ahk
 #Include %A_LineFile%\..\LogBundle.ahk
@@ -214,6 +215,14 @@ class App {
 
     static _Dep(d, k, def := "") => d.Has(k) ? d[k] : def
 
+    ; The built-in plugins (lib\plugins\), always loaded: [class name, manifest]
+    static BuiltinPlugins() {
+        b := [["HuntingPlugin", HuntingPlugin.Manifest]]
+        if SniperPlugin.Available                       ; the public build has a stand-in (not released)
+            b.Push(["SniperPlugin", SniperPlugin.Manifest])
+        return b
+    }
+
     __New(deps) {
         d := (deps is Map) ? deps : Map()
         if !d.Has("cfg")
@@ -227,6 +236,14 @@ class App {
         this.nowFn := App._Dep(d, "now", () => A_TickCount)
         this._frontFn := App._Dep(d, "front", "")     ; () -> exe in front (focus pause note); "" = the real one
         this._refocusAt := []                        ; _Refocus times (ms)
+        ; _PauseWatch: ms since the last keyboard / mouse use (the real one
+        ; only with the real Roblox: a test rig never looks away) and "a
+        ; fullscreen app or the lock screen is up" (never refocused then)
+        this._idleMsFn := App._Dep(d, "idleMs", (App._Dep(d, "roblox", Roblox) == Roblox) ? (() => A_TimeIdlePhysical) : (() => 0))
+        this._userBusyFn := App._Dep(d, "userBusy", () => App.UserBusy())
+        this._awayAt := []                           ; _AwayRefocus tries (ms)
+        this._stall := {key: "", since: "", at: 0, told: false, failTold: false}
+        this._handPause := false                     ; paused by F2 / a button / Discord
         this.fixit := FixIt()                        ; fix-it cards (idea 10): rules over the log
         this._fixOn := false                         ; cards only in the real app (Boot), never in tests
         this._fixCard := ""
@@ -304,6 +321,7 @@ class App {
         this._fakeRestore := ""      ; {biome, ts} after a fake rare biome
         this._lastChat := ""         ; ms of the last chat check
         this._joinKind := ""         ; the last join's kind (LogWatch): "private" / "other" / ""
+        this._ghostHoldUntil := 0    ; HoldGhost: ms until a non-private join is no ghost server (the sniper)
         this.wh := AppTagWh(this, d.Has("wh") ? d["wh"] : Webhook(this.cfg, this._logFn))
         ; LogWatch is re-created on every Start after the first, so a restart
         ; backfills silently (live=false) instead of alerting on old lines.
@@ -351,6 +369,13 @@ class App {
         this._snap := ""
         this._proxy := AppPotionsProxy(this)
         this._BuildPotions()
+        ; plugins (lib\Plugins.ahk): the built-in ones now (always loaded),
+        ; the ones in plugins\ at Boot (a real start only, never in tests)
+        this.plugins := d.Has("plugins") ? d["plugins"]
+            : PluginHost({cfg: this.cfg, root: this.root, log: this._logFn, app: this, builtins: App.BuiltinPlugins()})
+        try this.plugins.Boot()
+        catch Any as e
+            this._Error("Plugins: " App._ErrText(e))
         this._tasks := this._TaskList()
 
         ; log consumers
@@ -388,7 +413,7 @@ class App {
         ra := () => !(this.cfg.Get("General.fishing", 1) && this._taskMap.Has("sell"))
         try {
             switch name {
-                case "fishing": return FishingTask(cfg, this.state, {log: this._logFn, webhook: this.wh})
+                case "fishing": return FishingTask(cfg, this.state, {log: this._logFn, webhook: this.wh, trace: this._ReelTrace()})
                 case "sell": return SellTask(cfg, this.state, {log: this._logFn, afterSell: (ctx) => this._AfterSell(ctx)
                     , stuck: (msg) => this._Error("Stuck: " msg), cal: Calibrate})
                 case "craft": return CraftTask({cfg: cfg, webhook: this.wh, log: this._logFn})
@@ -444,6 +469,10 @@ class App {
             } else if this._taskMap.Has(name)
                 out.Push(this._taskMap[name])
         }
+        ; plugins' tasks: they ask for turns only while their plugin is on (PluginTask)
+        if (this.HasOwnProp("plugins") && IsObject(this.plugins) && HasMethod(this.plugins, "Tasks"))
+            for t in this.plugins.Tasks()
+                out.Push(t)
         return out
     }
 
@@ -575,6 +604,7 @@ class App {
         if IsObject(this.daily)
             try this.daily.StartSession()
         this._pauseReason := ""
+        this._handPause := false
         this._note := ""
         this._holdUntil := 0
         this._lastPoll := ""
@@ -638,8 +668,15 @@ class App {
         this._timerOn := true
         if IsObject(this.sched)
             try this.sched.NoteStart(this._schedStarting)
+        this._PluginCall("OnStart")
         this._Status()
         return true
+    }
+
+    ; a plugin hook on every plugin that is on (PluginHost guards each call)
+    _PluginCall(hook, args*) {
+        if (this.HasOwnProp("plugins") && IsObject(this.plugins))
+            try this.plugins.Call(hook, args*)
     }
 
     TogglePause() {
@@ -653,6 +690,7 @@ class App {
             return false
         this.ctx.Pause()
         this._pauseReason := ""          ; by hand: never resumed by the macro
+        this._handPause := true
         this._freshAt := Map()           ; the player may change the screen while paused
         this._lastTask := ""
         try this.input.ReleaseAll()
@@ -672,6 +710,7 @@ class App {
             return false
         }
         this._pauseReason := ""
+        this._handPause := false
         if this._problems.Has("tick")
             this._problems.Delete("tick")      ; a repeat of a tick error is reported again
         this.ctx.Resume()
@@ -705,6 +744,7 @@ class App {
                 try this.sched.NoteStop()
             this.Log("Stopped (" why ")")
             this._Send("startstop", "Macro stopped", "## Session summary`nStopped: " App._Cap(why), 0x0B2A5B, this._StopFields(this._uptime))
+            this._PluginCall("OnStop")
         }
         this._Status()
         return was
@@ -714,9 +754,11 @@ class App {
         if (kind = "unfocused" && this._Refocus())
             return
         m := App.Msg[kind]
-        if (this._pauseReason != m[1])
+        if (this._pauseReason != m[1]) {
             this.Log("Paused: " m[2] (kind = "unfocused" ? App.FrontNote(this._frontFn) : "")
                 . ((kind = "notfs" && Roblox.Problem != "") ? " (" Roblox.Problem ")" : ""))
+            this._pausedAt := this.Now()         ; _PauseWatch: how long it has lasted
+        }
         this._pauseReason := m[1]
         this.ctx.Pause()
         this._freshAt := Map()           ; what the last tidy saw is not proof after a pause
@@ -761,6 +803,110 @@ class App {
             return ""
         k := StrLower(exe)
         return " In front: " exe "." (App.FocusThieves.Has(k) ? " " App.FocusThieves[k] "." : "")
+    }
+
+    ; ---- pauses nobody hears about (2026-11-26) -------------------------------
+    ; A tester came back after an hour or two to a macro that had done
+    ; nothing, and only the log knew why: the window / focus pauses
+    ; (_PauseFor) and "Waiting for Roblox focus" sent no Discord message.
+    ; Now, PauseTellMs into one of them, ONE `errors` message says why and
+    ; what to do (once per pause; a quick alt-tab and back sends nothing).
+    ; And "Roblox lost focus" while nobody uses the PC (no key or mouse use
+    ; for AwayMs, no fullscreen app or lock screen in front:
+    ; General.awayRefocus, on by default) puts Roblox back in front and
+    ; resumes, at most AwayMax times per AwayWindowMs and AwayRetryMs apart;
+    ; logged and sent. F2 pauses are never touched.
+    static PauseTellMs := 60000
+    static AwayMs := 120000
+    static AwayMax := 3
+    static AwayWindowMs := 3600000
+    static AwayRetryMs := 60000
+    static StallNotes := Map("Waiting for Roblox focus", "Roblox would not come to the front, so no task can start. Close or minimize what is in front of it (a window that runs as administrator can block it), or click into Roblox.")
+
+    _PauseWatch(now, win) {
+        key := "", what := ""
+        if (this._started && !this.ctx.IsStopped()) {
+            if (this.ctx.IsPaused() && !this._handPause) {
+                for kind, m in App.Msg
+                    if (this._pauseReason = m[1])
+                        key := kind, what := m[2]
+            } else if (!this.ctx.IsPaused() && !IsObject(this._running) && App.StallNotes.Has(this._note))
+                key := this._note, what := App.StallNotes[this._note]
+        }
+        s := this._stall
+        since := (App.Msg.Has(key) && this.HasOwnProp("_pausedAt")) ? this._pausedAt : ""   ; a new pause = a new story
+        if (key != s.key || since != s.since)
+            s.key := key, s.since := since, s.failTold := false, s.told := false, s.at := (since != "") ? since : now
+        if (key = "")
+            return
+        if (key = "unfocused" && this._AwayRefocus(now, win))
+            return
+        if (s.told || now - s.at < App.PauseTellMs)
+            return
+        s.told := true
+        mins := Max(1, Round((now - s.at) / 60000))
+        desc := (this.ctx.IsPaused() ? "Paused" : "Nothing has run") " for " mins " min: " what
+        if (key = "unfocused") {
+            desc .= App.FrontNote(this._frontFn)
+            if (this._AwayOn() && this._awayAt.Length < App.AwayMax)
+                desc .= " It goes on by itself once nobody has used the PC for " App.AwayMs // 60000 " min (at most " App.AwayMax " times an hour)."
+        }
+        this.Log("Still " (this.ctx.IsPaused() ? "paused" : "waiting") " after " mins " min (" (this._pauseReason != "" ? this._pauseReason : this._note) "): told Discord (errors)")
+        this._Send("errors", this.ctx.IsPaused() ? "Macro paused" : "Macro waiting", desc, 0xE74C3C)
+    }
+
+    _AwayOn() {
+        try return this.cfg.Get("General.awayRefocus", 1) ? true : false
+        return true
+    }
+
+    ; "Roblox lost focus" and the player is away: Roblox back in front and
+    ; resumed. -> true when resumed.
+    _AwayRefocus(now, win) {
+        if (!this._AwayOn() || IsObject(this._running) || win != "ok")
+            return false
+        idle := 0, busy := true
+        try idle := this._idleMsFn.Call()
+        if (idle < App.AwayMs)
+            return false
+        try busy := this._userBusyFn.Call() ? true : false
+        if busy
+            return false
+        while (this._awayAt.Length && now - this._awayAt[1] > App.AwayWindowMs)
+            this._awayAt.RemoveAt(1)
+        if (this._awayAt.Length >= App.AwayMax || (this._awayAt.Length && now - this._awayAt[this._awayAt.Length] < App.AwayRetryMs))
+            return false
+        this._awayAt.Push(now)
+        front := App.FrontNote(this._frontFn)
+        try this.roblox.Focus(2)
+        if !this._Active() {
+            if !this._stall.failTold
+                this.Log("Roblox could not be put back in front (nobody used the PC for " idle // 60000 " min); still paused." front)
+            this._stall.failTold := true
+            return false
+        }
+        mins := idle // 60000
+        line := "Roblox lost focus and nobody used the PC for " mins " min, so Roblox was put back in front and the macro goes on." front
+            . " (" this._awayAt.Length " of " App.AwayMax " this hour; switch: Settings > Recovery > Bring Roblox back when I'm away)"
+        this.Log("Resumed: " line)
+        this._Send("errors", "Macro resumed", line, 0xF2A93B)
+        this._pauseReason := ""
+        this._freshAt := Map()
+        this._lastTask := ""
+        this.ctx.Resume()
+        return true
+    }
+
+    ; A fullscreen app, presentation mode, the lock screen or a screen saver
+    ; is up (SHQueryUserNotificationState): Roblox is never pulled over it.
+    static UserBusy() {
+        s := 0
+        try {
+            if (DllCall("shell32\SHQueryUserNotificationState", "Int*", &s, "Int") != 0)
+                return false
+        } catch
+            return false
+        return (s >= 1 && s <= 4) ? true : false
     }
 
     ; ---- idle mode ----------------------------------------------------------------
@@ -859,6 +1005,7 @@ class App {
     _TickError(e) {
         try this._Problem("tick", "Scheduler error: " App._ErrText(e) ". Macro paused; fix the cause, then press F2.")
         try this.Pause()
+        this._pauseReason := "Scheduler error: see the log"    ; the status says why, not a bare "Paused"
         try this.input.ReleaseAll()
         try this._Status()
     }
@@ -901,6 +1048,7 @@ class App {
         }
         win := this._Window()
         this._MaybeAutoResume(win)
+        this._PauseWatch(now, win)
         if IsObject(this._running) {
             this._Monitor(now, win)
             this._Status()
@@ -1164,11 +1312,20 @@ class App {
                     && !this.ctx.ShouldStop() && this.recovery.RequestUnlock()) {
                     this._holdUntil := this.Now()
                     this.Log("still locked after " this._skipStreak " skips: rejoining to clear the game's windows")
+                } else if (this._skipStreak >= App.SkipRejoinAt && !(this._RecoveryOn() && HasMethod(this.recovery, "RequestUnlock"))
+                    && !this.ctx.ShouldStop() && !(this.HasOwnProp("_skipTold") && this._skipTold)) {
+                    ; nothing can rejoin (auto-rejoin off): every task is skipped
+                    ; for as long as it lasts; said once, to Discord too (2026-11-26)
+                    this._skipTold := true
+                    this._Error("Every task is skipped: shift lock may be on or a game window keeps the mouse locked, and auto-rejoin is off, so nothing clears it."
+                        . " Press Shift in Roblox or close the game's windows (or rejoin): the macro goes on by itself.")
                 }
                 return
             }
-            if !unlocking                           ; the rejoin skipped the check: not proof the lock is gone
+            if !unlocking {                         ; the rejoin skipped the check: not proof the lock is gone
                 this._skipStreak := 0
+                this._skipTold := false
+            }
             Prof.on := this.cfg.Get("General.timing", 0) = 1     ; where the time goes (speed work)
             if (Prof.on && this.HasOwnProp("_endedAt")) {          ; the gap since the last task ended
                 this._gapMs := (this.HasOwnProp("_gapMs") ? this._gapMs : 0) + Prof.Now() - this._endedAt
@@ -1186,6 +1343,10 @@ class App {
             this._Error(StrTitle(task.name) ": error: " App._ErrText(e) App._ErrWhere(e))
         } finally {
             how := this._EndHow(failed)
+            ; the task paused the macro itself (Sell's stuck pause, Limbo
+            ; off): the status says so, not a bare "Paused" (2026-11-26)
+            if (how = "paused" && this._pauseReason = "" && !this._handPause)
+                this._pauseReason := StrTitle(task.name) " paused the macro: see the log"
             this._lastTask := (skipped || how != "") ? "" : task.name     ; returned on its own (a pause from here on clears it)
             pt := Prof.Text(), Prof.Stop()
             if (pt != "")
@@ -1432,8 +1593,8 @@ class App {
     }
 
     ; the chat is read for the merchants and for the bosses' and orbs' lines
-    _ChatOn() => (this.cfg.Get("merchant.enabled", 1) || this.cfg.Get("Limited.bossAlert", 1)
-        || this.cfg.Get("Limited.orbAlert", 0)) ? true : false
+    ; (the bosses' and orbs' only while the hunting plugin is on)
+    _ChatOn() => (this.cfg.Get("merchant.enabled", 1) || HuntingPlugin.ChatWanted(this.cfg)) ? true : false
 
     _ChatPollMs() {
         s := this.cfg.Get("merchant.chatPollSec", ChatWatch.DefaultPollSec)
@@ -1450,10 +1611,10 @@ class App {
     }
 
     ; A boss named in the chat: its Discord message (the "sinister" event),
-    ; whether hunting is on or not (the user, 2026-11-15). Limited.bossAlert 0
+    ; whether hunting is on or not (the user, 2026-11-15). Hunting.bossAlert 0
     ; turns it off.
     _OnChatBoss(boss) {
-        if !this.cfg.Get("Limited.bossAlert", 1)
+        if !HuntingPlugin.BossOn(this.cfg)       ; the hunting plugin on, too
             return
         if IsObject(this.sinister)
             try this.sinister.Spawn("chat:" boss ":" this.Now(), boss)
@@ -1461,9 +1622,9 @@ class App {
 
     ; An orb named in the chat (2026-11-22, a tester): "<Name> orb has
     ; spawned" on the same "sinister" (Boss) event. Off by default
-    ; (Limited.orbAlert): orbs come in most weather biomes.
+    ; (Hunting.orbAlert): orbs come in most weather biomes.
     _OnChatOrb(name) {
-        if !this.cfg.Get("Limited.orbAlert", 0)
+        if !HuntingPlugin.OrbOn(this.cfg)
             return
         if IsObject(this.sinister)
             try this.sinister.Spawn("chat:orb:" name ":" this.Now(), "orb:" name)
@@ -1643,7 +1804,10 @@ class App {
         try {
             type := ev["type"]
             if (type = "biome" || type = "aura" || type = "roll") {
+                prev := this.state.biome
                 this.be.Handle(ev)
+                if (type = "biome" && this.state.biome != prev)
+                    this._PluginCall("OnBiome", this.state.biome, prev)
             } else if (type = "merchant") {
                 live := ev.Has("live") && ev["live"] is Integer && ev["live"] = 1
                 if (live && IsObject(this.merchant))
@@ -1654,6 +1818,14 @@ class App {
         } catch Any as e {
             this._Problem("route", "Event handling failed: " App._ErrText(e))
         }
+    }
+
+    ; The biome sniper (lib\plugins\sniper) joined someone's server: for ms the
+    ; join is not a ghost server (no auto-rejoin of the private one). 0 ends it.
+    HoldGhost(ms) {
+        this._ghostHoldUntil := ms > 0 ? this.Now() + ms : 0
+        if (ms > 0)
+            this.state.ghost := false
     }
 
     ; The aura equipped now, from the Roblox log (ObbyTask's Sailor swap).
@@ -1680,6 +1852,11 @@ class App {
         this._joinKind := ev["name"]
         this._LimboJoin(ev)
         d := RecoveryTask.GhostDecision(ev["name"], this.state, this.cfg)
+        ; a server the biome sniper joined (HoldGhost): no rejoin until the hold ends
+        if (d = "ghost" && this.Now() < this._ghostHoldUntil) {
+            this.Log("In a server the sniper joined: no rejoin of the private server for now")
+            d := ""
+        }
         if (d = "clear") {
             this.state.ghost := false
         } else if (d = "ghost" && !this.state.ghost) {
@@ -1707,6 +1884,14 @@ class App {
     ; LimboTask rejoins Sol's Island first, only limbo / recovery run until
     ; then). Any new join is a fresh server on Sol's Island: cleared.
     _LimboFlag() => this._limboFlagPath != "" ? this._limboFlagPath : this.root "\logs\limbo_session.flag"
+
+    ; One ReelTrace for the run (the last reels survive the fishing task being
+    ; rebuilt): logs\reel_trace.log, packed into the support zip.
+    _ReelTrace() {
+        if !this.HasOwnProp("_reelTraceObj")
+            this._reelTraceObj := ReelTrace(this.root "\logs\reel_trace.log")
+        return this._reelTraceObj
+    }
 
     ; the Roblox session now: "<log file name>|<ts of its last join>" or ""
     _LimboKey() {
@@ -2053,8 +2238,8 @@ class App {
         if (!UiStuck.Due() || this.ctx.IsStopped() || this.ctx.IsPaused())
             return
         if !(this._RecoveryOn() && HasMethod(this.recovery, "RequestUnlock")) {
-            if !(this.HasOwnProp("_uiStuckTold") && this._uiStuckTold)
-                this.Log("the game's windows look stuck (" UiStuck.Text() "); auto-rejoin is off, so nothing clears them: close them in Roblox or rejoin")
+            if !(this.HasOwnProp("_uiStuckTold") && this._uiStuckTold)       ; to Discord too (2026-11-26)
+                this._Error("the game's windows look stuck (" UiStuck.Text() "); auto-rejoin is off, so nothing clears them: close them in Roblox or rejoin")
             this._uiStuckTold := true
             UiStuck.Reset()
             return
@@ -2297,6 +2482,7 @@ class App {
             }
         }
         try arr.Push(this.cfg.Get("Remote.token", ""))
+        try arr.Push(SniperVault.Unprotect(this.cfg.Get("Sniper.token", "")))   ; the biome sniper's Discord token
         try {
             for w in this.cfg.Webhooks()
                 arr.Push(w["url"])
@@ -2736,6 +2922,14 @@ class App {
         if (this.calibrate == Calibrate)
             Calibrate.Logger := this._logFn
         this._UseCalibration()
+        ; plugins in plugins\ (a normal start only): before the dashboard
+        ; builds its Plugins tab from them
+        if (mode = "normal" && IsObject(this.plugins) && HasMethod(this.plugins, "BootExternal")) {
+            try this.plugins.BootExternal()
+            catch Any as e
+                this._Error("Plugins: " App._ErrText(e))
+            this._tasks := this._TaskList()
+        }
         if !this._uiGiven
             this._BuildUi()
         this.FlushEarly()
@@ -2747,8 +2941,10 @@ class App {
             A_IconTip := Brand.Name " " Chr(0xB7) " " Credits.ByLine()
             A_TrayMenu.Add("Show " Brand.Name, (*) => this.dash.Show())
             A_TrayMenu.Default := "Show " Brand.Name
+            A_TrayMenu.Add("Show the small window", (*) => this.overlay.ResetPos())
             this.dash.Show()
             this.overlay.Show()
+            this.Log("Small window: " this.overlay.Where())
         } else if (mode = "offscreen" && IsObject(this.dash)) {
             x := SysGet(76) + SysGet(78) + 200        ; right of the virtual desktop
             sz := this.dash.ShownSize()
@@ -2806,12 +3002,15 @@ class App {
         now := A_TickCount
         if (IsObject(this.remote) && !Input.InRoute)
             this._ServiceStep("remote", () => this.remote.Tick())
+        ; plugins' OnTick (not mid-reel or mid-walk, like the remote)
+        if (IsObject(this.plugins) && !Input.InRoute)
+            this._ServiceStep("plugins", () => this.plugins.Call("OnTick"))
         ; PUMPKIN MOON / GRAVEYARD: a stopped clock = a Sinister boss (no
         ; chat needed); never mid-walk (a read there stretches a key hold).
         ; Only while started: stopped, the log is not polled, so the biome is
         ; the last run's and a frozen clock (a disconnect, the title screen)
         ; would ping a boss that is not there
-        if (IsObject(this.clock) && this._started && !Input.InRoute && this.cfg.Get("Limited.bossAlert", 1) && (this._Active() || (this._idle && Ocr.Win)))
+        if (IsObject(this.clock) && this._started && !Input.InRoute && HuntingPlugin.BossOn(this.cfg) && (this._Active() || (this._idle && Ocr.Win)))
             this._ServiceStep("clock", () => this.clock.Tick(this.state.biome))
         ; the run's tick sends Discord messages, but it only runs while the
         ; macro is started: stopped, Dev tools' fake alerts (and the dashboard's
@@ -2873,9 +3072,22 @@ class App {
             try this.Start()
             this._schedStarting := false
         } else if (act = "stop") {
-            this.Log("Schedule: stop time")
-            this.Stop("schedule")
+            ; which rule stopped it: "stop time" read wrong after Schedule's
+            ; "stop after N h" ended a manual run (2026-11-26)
+            why := App.SchedStopWhy(this.cfg, IsObject(this.daily) ? this.daily.RunMs() : 0)
+            this.Log("Schedule: " why "; stopping")
+            this.Stop("schedule: " why)
         }
+    }
+
+    ; "ran 2 h, its Stop after limit" | "its Stop at time"
+    static SchedStopWhy(cfg, runMs) {
+        v := 0
+        try v := cfg.Get("Schedule.maxHours", 0)
+        mh := IsNumber(v) ? Max(0, v + 0) : 0
+        if (mh > 0 && runMs >= mh * 3600000)
+            return "ran " ((mh = Integer(mh)) ? Integer(mh) : Round(mh, 1)) " h, its Stop after limit"
+        return "its Stop at time"
     }
 
     ; Roblox to the front before a start that no key press made (schedule,
@@ -3069,6 +3281,22 @@ class App {
         return true
     }
 
+    ; Plugins tab "Restart": loads (or unloads) plugins switched on / off in
+    ; plugins\. Only while stopped, like OnRestart. -> true when restarting
+    OnPluginRestart() {
+        if (this._started || IsObject(this._running)) {
+            this.Log("Plugins: stop the macro first (F3), then press Restart")
+            return false
+        }
+        if this._toolBusy {
+            this.Log("Plugins: finish the route record / test first, then press Restart")
+            return false
+        }
+        this.Log("Plugins: restarting to load the plugins")
+        this._restartFn.Call()
+        return true
+    }
+
     ; Settings > Profiles "Move to another PC" (lib\Backup.ahk). An import
     ; is refused while the macro runs or a route record / test / calibration
     ; is on: "busy", else "".
@@ -3187,6 +3415,8 @@ class App {
         u := this.Updater()
         if !(u.last is Map && u.last["status"] = "available")
             return
+        if IsObject(this.dash)              ; the download can take a while: said, Install hidden
+            try this.dash.SetUpdate("", I18n.T("Installing the update..."))
         res := u.Install(u.last)
         if (!res["ok"] && IsObject(this.dash))
             this.dash.SetUpdate("", res["msg"])
@@ -3317,6 +3547,8 @@ class App {
             "sendSummary", () => this.SendSummary(),
             "testRemote", () => this.OnTestRemote(),
             "restart", () => this.OnRestart(),
+            "plugins", () => this.plugins,
+            "pluginRestart", () => this.OnPluginRestart(),
             "backupBusy", () => this.BackupBusy(),
             "backupFlush", () => this.OnBackupFlush(),
             "backupImported", () => this.OnBackupImported(),

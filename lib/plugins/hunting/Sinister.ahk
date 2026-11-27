@@ -1,5 +1,5 @@
 #Requires AutoHotkey v2.0
-#Include %A_LineFile%\..\..\Webhook.ahk
+#Include %A_LineFile%\..\..\..\Webhook.ahk
 ; ---------------------------------------------------------------------------
 ; SinisterReport: ONE Discord message per natural spawn of the GRAVEYARD boss
 ; "Sinister S." that MinionsTask fights (boss mode), edited when it dies.

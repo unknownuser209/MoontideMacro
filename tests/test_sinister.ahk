@@ -1,9 +1,9 @@
 #Requires AutoHotkey v2.0
 ; Tests for the GRAVEYARD boss's Discord message: Webhook.PostText /
 ; EditText (fake WinHttp from test_webhook.ahk, no network) and
-; SinisterReport (lib\tasks\Sinister.ahk), and its wiring in MinionsTask
+; SinisterReport (lib\plugins\hunting\Sinister.ahk), and its wiring in MinionsTask
 ; (MnBoss from test_minions.ahk).
-#Include ..\lib\tasks\Sinister.ahk
+#Include ..\lib\plugins\hunting\Sinister.ahk
 
 SnLink() => "https://www.roblox.com/share?code=abc123def&type=Server"
 

@@ -838,7 +838,7 @@ Test_Reel_FrozenRaisedCardIsClosedNotRepathed() {
     }
 }
 
-RlRunCard(card, &logs) {
+RlRunCard(card, &logs, trace := "") {
     t := FsMakeCfg()
     t.cfg.Set("General.legacyReel", 0)
     FsScreen.Install()
@@ -848,7 +848,10 @@ RlRunCard(card, &logs) {
         logs := []
         sim := RlSim(io)
         FsScreen.fn := (x, y) => sim.Pixel(x, y)
-        r := FishingTask(t.cfg, st, FsDeps(io, "", true, logs)).CatchOnce(SchedCtx())
+        d := FsDeps(io, "", true, logs)
+        if IsObject(trace)
+            d.trace := trace
+        r := FishingTask(t.cfg, st, d).CatchOnce(SchedCtx())
         return {r: r, st: st}
     } finally {
         FsScreen.Restore()
@@ -1430,4 +1433,85 @@ Test_Reel_HopsGiveUpThenRepath() {
         FsScreen.Restore()
         FsClean(t.dir)
     }
+}
+
+; ---- reel trace (logs\reel_trace.log, in the support zip) -----------------
+; A tester lost 56 of 84 fish (2026-11-26): his video showed the arrow held
+; just past the fish, but the reel line only has totals. The trace keeps
+; every pass of the last reels (arrow, fish, click bar, empty level, the
+; controller's target, decide / click) and each catch's result.
+
+RlTraceTmp() => A_Temp "\vesper_trace_" A_TickCount "_" Random(1000, 9999) "\reel_trace.log"
+
+RlTraceClean(p) {
+    try DirDelete(RegExReplace(p, "\\[^\\]+$"), 1)
+}
+
+Test_Reel_TraceKeepsTheLastReels() {
+    p := RlTraceTmp()
+    try {
+        tr := ReelTrace(p, 3)
+        tr.Add(1, {m: 1, p1: 1, p2: 1, fill: "", empty: 0}, {}, false, false)   ; before Begin: ignored
+        tr.Outcome("caught")                                                   ; no reel yet: ignored
+        Loop 5 {
+            tr.Begin("n" A_Index)
+            tr.Add(10, {m: 1100, p1: 1200, p2: 1276, fill: 0x2C96AB, empty: 63}, {tg: 1211.4, w: 76}, true, false)
+            tr.Add(20, {m: 0, p1: 0, p2: 0, fill: "", empty: 0}, {}, false, false)
+            tr.Add(30, {m: 1150, p1: 1200, p2: 1276, fill: 0x2C96AB, empty: 63}, {tg: 1211.4, w: 76}, true, true)
+            tr.End("ok/ended")
+            tr.Outcome(A_Index = 5 ? "got away" : "caught")
+        }
+        x := FileRead(p, "UTF-8")
+        n := 0, pos := 1
+        while (pos := InStr(x, "=== reel ", , pos))
+            n++, pos++
+        AssertEq(n, 3, "only the last 3 reels kept")
+        AssertTrue(!InStr(x, "| n2 |") && InStr(x, "| n3 |") && InStr(x, "| n5 |"), "the oldest dropped: " SubStr(x, 1, 300))
+        AssertTrue(RegExMatch(x, "\| n5 \| end ok/ended \| got away"), "header: head, end, result")
+        AssertTrue(RegExMatch(x, "\| n4 \| end ok/ended \| caught"), "the earlier result kept")
+        AssertTrue(InStr(x, "t m p1-p2 fill empty target w dc"), "column names")
+        AssertTrue(InStr(x, "`n10 1100 1200-1276 2C96AB 63 1211 76 10"), "a pass: decided, not clicked")
+        AssertTrue(InStr(x, "`n20 0 0-0 - 0 - 0 00"), "a pass with nothing read")
+        AssertTrue(InStr(x, "`n30 1150 1200-1276 2C96AB 63 1211 76 11"), "a pass: clicked")
+    } finally
+        RlTraceClean(p)
+}
+
+Test_Reel_TraceNeverThrows() {
+    tr := ReelTrace("Z:\no\such\drive\" A_TickCount "\reel_trace.log")
+    tr.Begin("x")
+    tr.Add(1, {m: 1, p1: 0, p2: 0, fill: "", empty: 0}, {}, false, false)
+    tr.End("ok/ended")
+    tr.Outcome("caught")
+    AssertTrue(InStr(tr.Text(), "| x | end ok/ended | caught"), "kept in memory when the file cannot be written")
+}
+
+; The controller's target is kept on its state (the trace prints it)
+Test_Reel_DecideKeepsItsTarget() {
+    st := {}
+    FishLogic.ReelDecide({m: 1100, p1: 1200, p2: 1276}, st, 0, 100, 0.15)
+    AssertTrue(st.HasProp("tg") && Abs(st.tg - 1211.4) < 0.01, "target 1200 + 76 x 0.15")
+}
+
+; The whole catch: every pass of the reel and the card's result
+Test_Reel_TraceRecordsTheReelAndItsResult() {
+    p := RlTraceTmp()
+    try {
+        logs := ""
+        tr := ReelTrace(p)
+        RlRunCard("Fishing Failed / The fish is gone...", &logs, tr)
+        x := FileRead(p, "UTF-8")
+        AssertTrue(RegExMatch(x, "=== reel \d{4}-\d\d-\d\d \d\d:\d\d:\d\d \| client \d+x\d+ ui [\d.]+ white 220 dy -?\d+ x1 \d+ x2 \d+ aim [\d.]+ lead \d+ \| end ok/(ended|cap) \| got away"), "header: " SubStr(x, 1, 300))
+        passes := 0, clicked := 0
+        Loop Parse, x, "`n", "`r" {
+            if RegExMatch(A_LoopField, "^\d+ \d+ \d+-\d+ (\w+|-) \d+ (\d+|-) \d+ [01]([01])$", &m)
+                passes++, clicked += m[3]
+        }
+        AssertTrue(passes > 50, "every pass recorded (" passes ")")
+        AssertTrue(clicked > 5, "the clicks marked (" clicked ")")
+        logs := ""
+        RlRunCard("Fishing Success / Emberfin", &logs, tr)
+        AssertTrue(RegExMatch(FileRead(p, "UTF-8"), "\| end ok/(ended|cap) \| caught"), "a caught fish")
+    } finally
+        RlTraceClean(p)
 }

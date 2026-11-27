@@ -89,13 +89,68 @@ class Overlay {
         }
         x := this.cfg.Get("Overlay.x", -99999)
         y := this.cfg.Get("Overlay.y", -99999)
-        vx := SysGet(76), vy := SysGet(77), vw := SysGet(78), vh := SysGet(79)   ; virtual screen
-        if (x < vx || y < vy || x > vx + vw - 40 || y > vy + vh - 40) {
+        ; on a real screen, not only inside the box around all of them (a
+        ; second screen of another size, or one switched off, leaves parts of
+        ; that box nobody sees: a player never saw it, 2026-11-26)
+        if !(IsNumber(x) && IsNumber(y) && Overlay.OnScreen(x, y, Theme.Dpi(Overlay.W), Theme.Dpi(Overlay.H), Overlay.Monitors())) {
             p := Overlay.DefaultPos(A_ScreenWidth)
             x := p.x, y := p.y
         }
         this._gui.Show("x" x " y" y " w" Overlay.W " h" Overlay.H " NoActivate")
         this._shown := true
+    }
+
+    ; Tray "Show the small window": back at the top right of the main screen,
+    ; shown and saved there (a lost window: off screen, hidden by Win+D).
+    ResetPos() {
+        p := Overlay.DefaultPos(A_ScreenWidth)
+        this._gui.Show("x" p.x " y" p.y " w" Overlay.W " h" Overlay.H " NoActivate")
+        this._shown := true
+        WinSetAlwaysOnTop(1, "ahk_id " this._gui.Hwnd)
+        this.cfg.Set("Overlay.x", p.x)
+        this.cfg.Set("Overlay.y", p.y)
+        try this.cfg.Save()
+    }
+
+    ; For the log at launch: "x,y WxH on screen N" or why it cannot be seen.
+    Where() {
+        try {
+            WinGetPos(&x, &y, &w, &h, "ahk_id " this._gui.Hwnd)
+            vis := DllCall("IsWindowVisible", "Ptr", this._gui.Hwnd) ? "" : ", NOT visible"
+            n := Overlay.MonitorAt(x + w // 2, y + h // 2, Overlay.Monitors())
+            return x "," y " " w "x" h (n ? " on screen " n : ", off every screen") vis
+        }
+        return "unknown"
+    }
+
+    ; The work areas of the screens: Array of {l, t, r, b} (screen px).
+    static Monitors() {
+        out := []
+        try {
+            Loop MonitorGetCount() {
+                MonitorGetWorkArea(A_Index, &l, &t, &r, &b)
+                out.Push({l: l, t: t, r: r, b: b})
+            }
+        }
+        return out
+    }
+
+    ; Pure: the screen (1-based) whose work area holds the point, or 0.
+    static MonitorAt(px, py, mons) {
+        for i, m in mons
+            if (px >= m.l && px < m.r && py >= m.t && py < m.b)
+                return i
+        return 0
+    }
+
+    ; Pure: a w x h window at x, y can be seen: its centre and its top band
+    ; (where it is dragged) lie on a screen's work area. No screens known
+    ; (the call failed): true, as before.
+    static OnScreen(x, y, w, h, mons) {
+        if !(mons is Array && mons.Length)
+            return true
+        return Overlay.MonitorAt(x + w // 2, y + h // 2, mons) > 0
+            && Overlay.MonitorAt(x + w // 2, y + 10, mons) > 0
     }
 
     ; top right of a screen screenW px wide, its width in screen px at the
@@ -114,14 +169,22 @@ class Overlay {
         if !this._shown
             return
         WinGetPos(&x, &y, &w, &h, "ahk_id " this._gui.Hwnd)
-        p := Overlay.Avoid(x, y, w, h, rx, ry, rw, rh, SysGet(76), SysGet(77), SysGet(78), SysGet(79))
+        ; within the screen Roblox is on (the box around all screens could
+        ; put it on one switched off, or between two of different sizes)
+        mons := Overlay.Monitors()
+        n := Overlay.MonitorAt(rx + rw // 2, ry + rh // 2, mons)
+        if n {
+            m := mons[n]
+            p := Overlay.Avoid(x, y, w, h, rx, ry, rw, rh, m.l, m.t, m.r - m.l, m.b - m.t)
+        } else
+            p := Overlay.Avoid(x, y, w, h, rx, ry, rw, rh, SysGet(76), SysGet(77), SysGet(78), SysGet(79))
         if (p.x != x || p.y != y)
             this._gui.Move(p.x, p.y)
     }
 
     ; Pure: where a w x h box at x, y goes so it does not cover the r rect,
     ; inside the virtual screen v -> {x, y} (unchanged when it does not
-    ; overlap or nothing fits).
+    ; overlap or nothing fits). v = the work area of Roblox's screen.
     static Avoid(x, y, w, h, rx, ry, rw, rh, vx, vy, vw, vh) {
         if (x >= rx + rw || x + w <= rx || y >= ry + rh || y + h <= ry)
             return {x: x, y: y}

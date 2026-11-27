@@ -50,7 +50,7 @@ class InvFindTask {
     static CloseTries := 3
     static FailsAt := 2            ; UiStuck "inventory" failures in a row
     ; the features that use the inventory (SetupCheck.InvNeeds; tested equal)
-    static Needs := [["merchant.enabled", 1], ["Limbo.enabled", 0], ["BiomeItems.enabled", 0], ["Limited.cursedRune", 0], ["DailyQuests.usePotions", 0]]
+    static Needs := [["merchant.enabled", 1], ["Limbo.enabled", 0], ["BiomeItems.enabled", 0], ["Hunting.cursedRune", 0], ["DailyQuests.usePotions", 0]]
 
     name := "autocal"
     priority := 5

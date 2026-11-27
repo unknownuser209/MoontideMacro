@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #Include %A_LineFile%\..\Json.ahk
 #Include %A_LineFile%\..\Brand.ahk
+#Include %A_LineFile%\..\Proc.ahk
 ; ---------------------------------------------------------------------------
 ; Updater: new versions from GitHub Releases. The version lives in ONE place,
 ; Brand.Version (lib\Brand.ahk); tools\make_release.ps1 reads it too.
@@ -53,7 +54,8 @@ class Updater {
         , "data\update_skip.txt", "data\aura_hints.json"]
     static WhatsNewFile := "data\whatsnew.json"
     static NotesMax := 8000
-    static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\", "imported\"]
+    ; plugins\: the player's own plugins (lib\Plugins.ahk), never replaced or deleted
+    static ProtectedDirs := ["logs\", "backup\", "update_tmp\", "exports\", "imported\", "plugins\"]
 
     static ParseVersion(tag) {
         if !RegExMatch(Trim(String(tag)), "^[vV]?(\d{1,9})(?:\.(\d{1,9}))?(?:\.(\d{1,9}))?$", &m)
@@ -191,7 +193,7 @@ class Updater {
         this.checkOnStart := g("check", 1) ? true : false
         this.auto := g("auto", 0) ? true : false
         this._http := g("http", (url) => Updater._Http(url))
-        this._download := g("download", (url, dest) => Download(url, dest))
+        this._download := g("download", (url, dest) => Updater._Download(url, dest))
         this._unzip := g("unzip", (zip, dest) => Updater._Unzip(zip, dest))
         this._copy := g("copyFile", (s, t) => FileCopy(s, t, 1))
         this._log := g("log", (t) => "")
@@ -270,7 +272,19 @@ class Updater {
         this._errLogged := true
     }
 
+    ; the download and unzip wait without freezing the GUI, so a second
+    ; Install click or F1 can come while one runs (bug hunt 2026-11-26)
+    _busy := false
+
     Install(info) {
+        if this._busy
+            return this._Fail("Update: already installing")
+        this._busy := true
+        try return this._Install(info)
+        finally this._busy := false
+    }
+
+    _Install(info) {
         if !(info is Map && info.Has("url") && info["url"] != "")
             return this._Fail("Update: no download for this release")
         if !this._stopped.Call()
@@ -292,6 +306,8 @@ class Updater {
             src := Updater._FindRoot(ex)
             if (src = "")
                 throw Error("the download has no Vesper.ahk")
+            if !this._stopped.Call()           ; F1 while it downloaded: nothing replaced
+                throw Error("the macro was started while the update downloaded")
             rels := []
             for rel in Updater._List(src) {
                 ; MoontideMacro.exe (AutoHotkey itself) cannot be replaced while
@@ -566,24 +582,97 @@ class Updater {
 
     ; ---- real implementations of the injectable pieces ------------------------
 
+    ; Every web call and helper program has a time cap (bug hunt 2026-11-26:
+    ; a PowerShell that never returned kept "Making the zip..." up for 20+
+    ; minutes on a player's PC; AHK's Download() and RunWait have no cap).
+    static HttpCapMs := 20000         ; update check / download counts
+    static DownloadCapMs := 300000    ; the release zip
+    static UnzipCapMs := 120000       ; each unzip try (tar, then PowerShell)
+
     static _Http(url) {
-        r := ComObject("WinHttp.WinHttpRequest.5.1")
-        r.SetTimeouts(5000, 5000, 8000, 8000)
-        r.Open("GET", url, false)
-        r.SetRequestHeader("User-Agent", Updater.UserAgent)
-        r.SetRequestHeader("Accept", "application/vnd.github+json")
-        r.Send()
-        if (r.Status != 200)
-            throw Error("HTTP " r.Status)
-        return r.ResponseText
+        return Updater._Get(url, "application/vnd.github+json", Updater.HttpCapMs).ResponseText
     }
 
-    static _Unzip(zip, dest) {
-        q := (s) => "'" StrReplace(s, "'", "''") "'"
-        cmd := 'powershell.exe -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath ' q(zip)
-            . ' -DestinationPath ' q(dest) ' -Force"'
-        if (RunWait(cmd, , "Hide") != 0)
-            throw Error("could not unzip the download")
+    ; The release zip -> destFile. Replaces AHK's Download(), which has no
+    ; time cap and freezes the dashboard while it waits.
+    static _Download(url, dest, capMs := "", newReq := "") {
+        r := Updater._Get(url, "*/*", capMs = "" ? Updater.DownloadCapMs : capMs, newReq)
+        body := r.ResponseBody                                  ; VT_ARRAY | VT_UI1
+        size := IsObject(body) ? body.MaxIndex() + 1 : 0
+        if (size <= 0)
+            throw Error("the download was empty")
+        f := FileOpen(dest, "w")
+        if !IsObject(f)
+            throw Error("cannot write " RegExReplace(dest, "^.*\\"))
+        try f.RawWrite(NumGet(ComObjValue(body), 8 + A_PtrSize, "Ptr"), size)   ; SAFEARRAY.pvData
+        finally f.Close()
+    }
+
+    ; GET url without blocking for good: async WinHttp, checked every 50 ms
+    ; (the GUI and hotkeys keep running), aborted after capMs. -> the
+    ; request (status 200), else throws. newReq: () -> request (tests).
+    static _Get(url, accept, capMs, newReq := "") {
+        r := IsObject(newReq) ? newReq.Call() : ComObject("WinHttp.WinHttpRequest.5.1")
+        r.SetTimeouts(10000, 10000, 30000, 30000)       ; resolve, connect, send, receive (ms)
+        r.Open("GET", url, true)
+        r.SetRequestHeader("User-Agent", Updater.UserAgent)
+        r.SetRequestHeader("Accept", accept)
+        r.Send()
+        t0 := A_TickCount
+        while !r.WaitForResponse(0) {
+            if (A_TickCount - t0 >= capMs) {
+                try r.Abort()
+                throw Error("no answer from GitHub in " Round(capMs / 1000) " s (stopped waiting)")
+            }
+            Sleep(50)
+        }
+        if (r.Status != 200)
+            throw Error("HTTP " r.Status)
+        return r
+    }
+
+    ; Unzip with Windows' own tar.exe (Windows 10 1803+; no PowerShell), else
+    ; PowerShell Expand-Archive. Each try is capped at UnzipCapMs and killed
+    ; when it runs past it, so an update can never hang on the unzip.
+    ; run: (cmd, capMs) -> {code, timedOut} (tests); default Proc.RunCapped.
+    static _Unzip(zip, dest, run := "") {
+        if !IsObject(run)
+            run := (cmd, capMs) => Proc.RunCapped(cmd, "", capMs)
+        why := []
+        for t in Updater._UnzipCmds(zip, dest) {
+            r := ""
+            try r := run.Call(t.cmd, Updater.UnzipCapMs)
+            catch Any as e {
+                why.Push(t.name " " (e is Error ? e.Message : "failed"))
+                continue
+            }
+            if (!r.timedOut && r.code = 0)
+                return t.name
+            why.Push(r.timedOut ? t.name " took longer than " Round(Updater.UnzipCapMs / 1000) " s and was stopped"
+                : t.name " failed (code " r.code ")")
+        }
+        s := ""
+        for w in why
+            s .= (s = "" ? "" : "; ") w
+        throw Error("could not unzip the download (" s ")")
+    }
+
+    ; PowerShell quotes: ' doubled, and so are the curly quotes it also
+    ; takes as quotes (a folder named Bob, U+2019, s broke the command).
+    static PsQuote(s) => "'" RegExReplace(String(s), "['\x{2018}\x{2019}\x{201A}\x{201B}]", "$0$0") "'"
+
+    ; -> [{name, cmd}] in the order they are tried. PowerShell gets
+    ; ErrorAction Stop: without it a broken zip still exited 0.
+    static _UnzipCmds(zip, dest) {
+        out := []
+        sys := A_WinDir "\" ((A_Is64bitOS && A_PtrSize = 4) ? "Sysnative" : "System32")
+        if FileExist(sys "\tar.exe")
+            out.Push({name: "tar", cmd: '"' sys '\tar.exe" -xf "' zip '" -C "' dest '"'})
+        q := (s) => Updater.PsQuote(s)
+        out.Push({name: "PowerShell", cmd: 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "'
+            . "$ProgressPreference='SilentlyContinue'; $ErrorActionPreference='Stop'; Expand-Archive -LiteralPath " q(zip)
+            . ' -DestinationPath ' q(dest) ' -Force"'})
+        return out
     }
 
     static _Restart(root) {

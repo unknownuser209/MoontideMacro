@@ -137,7 +137,7 @@
 ; No polling.
 ;
 ; Config keys written (Section.key, default):
-;   General: fishing 1 (0 = never fish), sellEvery 15 (min 1), sellAll 1, advancedFishing 0, advancedThreshold 20,
+;   General: fishing 1 (0 = never fish), sellEvery 15 (min 1), sellAll 1,
 ;     fishingFailsafeSec 31, pathingFailsafeSec 61, vip 1, questIntervalMin 30,
 ;     sound 1, everyonePing 1, everyoneBiomes "DREAMSPACE,GLITCHED,CYBERSPACE",
 ;     dryRun 1 (saved immediately; turning it off asks first),
@@ -194,9 +194,11 @@ class Dashboard {
     static H := 680
     ; Internal page names (SavePage / tests); the user sees TabLabel(name).
     static Pages := ["Run", "Fishing", "Craft", "Quests", "Merchants", "Biomes & Potions", "Biome items", "Obby & Memory", "Webhooks", "Calibrate", "Settings", "Tools", "Limbo", "Clips", "Dev tools"
-        , "Stats", "Hunting", "Summary", "Remote", "Check", "Schedule", "Credits", "Log", "Profiles", "Potions", "Look"]
+        , "Stats", "Hunting", "Summary", "Remote", "Check", "Schedule", "Credits", "Log", "Profiles", "Potions", "Look"
+        , "Plugins", "Sniper", "Plugin settings"]
     static Builders := ["_PageRun", "_PageFishing", "_PageCraft", "_PageQuests", "_PageMerchants", "_PageBiomes", "_PageBiomeItems", "_PageObbyMemory", "_PageWebhooks", "_PageCalibrate", "_PageSettings", "_PageTools", "_PageLimbo", "_PageClips", "_PageDevTools"
-        , "_PageStats", "_PageHunting", "_PageSummary", "_PageRemote", "_PageCheck", "_PageSchedule", "_PageCredits", "_PageLog", "_PageProfiles", "_PagePotions", "_PageLook"]
+        , "_PageStats", "_PageHunting", "_PageSummary", "_PageRemote", "_PageCheck", "_PageSchedule", "_PageCredits", "_PageLog", "_PageProfiles", "_PagePotions", "_PageLook"
+        , "_PagePlugins", "_PageSniper", "_PagePluginSettings"]
     static Subtitles := [
         "Status at a glance. F1 start  " Chr(0xB7) "  F2 pause / resume  " Chr(0xB7) "  F3 stop",
         "Selling rhythm, minigame mode and failsafes.",
@@ -214,7 +216,7 @@ class Dashboard {
         "Clips of rare biomes and rare auras.",
         "Send fake events through the running macro (dry run only).",
         "Today, this run and the last 7 days.",
-        "Limited-time game features. They leave the macro when the game removes them.",
+        "Orb & boss hunting, a built-in plugin (the Limited tab before).",
         "One Discord message a day with what the macro did.",
         "Control the macro from Discord with your own bot.",
         "Check what the macro can see on your PC, and make a log zip for support.",
@@ -223,21 +225,54 @@ class Dashboard {
         "The newest 200 lines. Links and webhook URLs are always hidden.",
         "One-click setups, and your settings in a file to share (no webhooks or links).",
         "Every potion: unlock or re-lock it, and its safety caps.",
-        "The theme, the animations and the language of this window."
+        "The theme, the animations and the language of this window.",
+        "Extra features: built in, or files you drop into the plugins folder.",
+        "Biome sniper, a built-in plugin: joins biome links posted on Discord.",
+        "A plugin's own settings."
     ]
     ; Sidebar hubs, each a tab strip of pages (every page is in exactly one).
     ; icon: a glyph name (not drawn yet).
     static Hubs := [
         {name: "Home", icon: "home", pages: ["Run", "Stats", "Log"]},
         {name: "Farming", icon: "bolt", pages: ["Fishing", "Craft", "Merchants", "Limbo"]},
-        {name: "Quests & events", icon: "star", pages: ["Quests", "Obby & Memory", "Biome items", "Hunting"]},
+        {name: "Quests & events", icon: "star", pages: ["Quests", "Obby & Memory", "Biome items", "Plugins", "Hunting", "Sniper", "Plugin settings"]},
         {name: "Biomes & Potions", icon: "moon", pages: ["Biomes & Potions", "Potions"]},
         {name: "Discord & Clips", icon: "bell", pages: ["Webhooks", "Clips", "Summary", "Remote"]},
         {name: "Settings", icon: "gear", pages: ["Settings", "Look", "Schedule", "Profiles"]},
         {name: "Help", icon: "info", pages: ["Check", "Calibrate", "Tools", "Dev tools", "Credits"]}
     ]
     static TabLabels := Map("Run", "Overview", "Craft", "Crafting", "Biomes & Potions", "Biomes", "Webhooks", "Discord", "Tools", "Routes"
-        , "Summary", "Daily summary", "Check", "Check & help", "Settings", "General", "Hunting", "Limited")
+        , "Summary", "Daily summary", "Check", "Check & help", "Settings", "General", "Hunting", "Orb & boss hunting", "Sniper", "Biome sniper")
+    ; Plugin pages: opened from the Plugins tab (Settings), no tab of their
+    ; own (the Plugins tab stays lit), found by search like any page
+    static SubPages := Map("Hunting", "Plugins", "Sniper", "Plugins", "Plugin settings", "Plugins")
+
+    ; The public build has no biome sniper (a stand-in with Available false,
+    ; lib\plugins\sniper_stub): its page leaves every list, so no tab, hub
+    ; or search finds it.
+    static __New() {
+        if (this != Dashboard)
+            return
+        if !SniperPlugin.Available
+            Dashboard.DropPage("Sniper")
+    }
+
+    ; name out of Pages / Builders / Subtitles (same index), the hubs and SubPages
+    static DropPage(name) {
+        for i, p in Dashboard.Pages
+            if (p = name) {
+                Dashboard.Pages.RemoveAt(i), Dashboard.Builders.RemoveAt(i), Dashboard.Subtitles.RemoveAt(i)
+                break
+            }
+        for h in Dashboard.Hubs
+            for i, p in h.pages
+                if (p = name) {
+                    h.pages.RemoveAt(i)
+                    break
+                }
+        if Dashboard.SubPages.Has(name)
+            Dashboard.SubPages.Delete(name)
+    }
     static MaxHooks := 8
     static Events := ["biome", "rare", "merchant", "quests", "craft", "errors", "startstop", "potions", "clips", "obby", "memorymatch", "sinister"]
     static EventCaps := ["Biome", "Rare", "Merchant", "Quests", "Craft", "Errors", "Stop", "Potions", "Clips", "Obby", "Memory", "Boss"]
@@ -245,7 +280,7 @@ class Dashboard {
     ; at 38 px the obby / memorymatch boxes (added later, without captions)
     ; sat on top of Test and X and took their clicks (review 2026-10-27).
     ; "Boss" = sinister: the bosses' messages (MinionsTask, the chat) and,
-    ; since 2026-11-22, the orbs' from the chat (Limited.orbAlert)
+    ; since 2026-11-22, the orbs' from the chat (Hunting.orbAlert)
     ; Captions (translated, 2026-11-19): two rows, odd columns above, even
     ; below, each EventCapW wide and centred on its column, so neighbours in
     ; a row are two columns apart and never touch (28 px captions ran into
@@ -888,6 +923,28 @@ class Dashboard {
         this.SelectPage((last && this.PageShown(Dashboard.Pages[last])) ? last : Dashboard.PageIndex(this._ShownIn(i)[1]))
     }
 
+    ; a tab in its hub's strip (plugin pages have none: Dashboard.SubPages)
+    TabShown(name) => this.PageShown(name) && !Dashboard.SubPages.Has(name)
+    ; the tab lit for page `name`: its own, or the Plugins tab for a plugin page
+    static TabFor(name) => Dashboard.SubPages.Has(name) ? Dashboard.SubPages[name] : name
+
+    ; Plugins > Settings of a plugin: its page (built-in ones) or the
+    ; Plugin settings page filled with its manifest's settings
+    OpenPluginPage(id) {
+        host := this._Host()
+        e := IsObject(host) ? host.Find(id) : ""
+        if !IsObject(e)
+            return false
+        if (e["builtin"] && e["page"] != "") {
+            this.SelectPage(Dashboard.PageIndex(e["page"]))
+            return true
+        }
+        this._psId := id
+        this._LoadPage(this._PageByName("Plugin settings"))
+        this.SelectPage(Dashboard.PageIndex("Plugin settings"))
+        return true
+    }
+
     ; Dev tools only in the owner's dev copy (Updater.IsDevCopy); every other
     ; page shows (simple mode was removed 2026-11-22)
     PageShown(name) => (name != "Dev tools" || this._IsDev())
@@ -902,7 +959,7 @@ class Dashboard {
     _ShownIn(h) {
         out := []
         for p in Dashboard.Hubs[h].pages
-            if this.PageShown(p)
+            if this.TabShown(p)
                 out.Push(p)
         return out
     }
@@ -1435,7 +1492,7 @@ class Dashboard {
             return
         dot := this._dots[page.idx]
         h := Dashboard.HubOf(page.name)
-        want := (h = this._hub && this._ShownIn(h).Length > 1 && this.PageShown(page.name) && this._PageDirty(page)) ? true : false
+        want := (h = this._hub && this._ShownIn(h).Length > 1 && this.TabShown(page.name) && this._PageDirty(page)) ? true : false
         if (dot.Visible != want) {
             dot.Visible := want
             if !want
@@ -1845,7 +1902,7 @@ class Dashboard {
             x += tw + 28
         }
         for i, name in Dashboard.Pages {
-            on := multi && Dashboard.HubOf(name) = h && this.PageShown(name)
+            on := multi && Dashboard.HubOf(name) = h && this.TabShown(name)
             if (this._tabs[i].Visible != on)
                 this._tabs[i].Visible := on
         }
@@ -1865,11 +1922,12 @@ class Dashboard {
     _PaintTabs() {
         for name in this._ShownIn(this._hub)
             this._PaintTab(Dashboard.PageIndex(name), false)
-        on := this._ShownIn(this._hub).Length > 1 && this.PageShown(this.ActivePage)
+        lit := Dashboard.PageIndex(Dashboard.TabFor(this.ActivePage))
+        on := this._ShownIn(this._hub).Length > 1 && lit && this.TabShown(Dashboard.Pages[lit])
         if (this._underline.Visible != on)
             this._underline.Visible := on
         if on {
-            tp := Theme.Pos(this._tabs[this._active])
+            tp := Theme.Pos(this._tabs[lit])
             up := Theme.Pos(this._underline)
             tx := tp.x, tw := tp.w, ux := up.x, uw := up.w
             u := this._underline
@@ -2002,7 +2060,8 @@ class Dashboard {
 
     _PaintTab(i, hot, *) {
         c := this._tabs[i]
-        c.SetFont("c" (i = this._active ? Theme.Accent : hot ? Theme.Text : Theme.Muted))
+        lit := this._active && Dashboard.PageIndex(Dashboard.TabFor(Dashboard.Pages[this._active])) = i
+        c.SetFont("c" (lit ? Theme.Accent : hot ? Theme.Text : Theme.Muted))
         Theme.RepaintCtrl(c)
     }
 
@@ -2210,6 +2269,7 @@ class Dashboard {
             link := this.cfg.Get("General.privateServer", "")
             arr.Push(link)
             arr.Push(this.cfg.Get("Remote.token", ""))
+            try arr.Push(SniperVault.Unprotect(this.cfg.Get("Sniper.token", "")))
             ; the share / link code alone is as secret as the whole link
             pos := 1
             while (pos := RegExMatch(link, "i)(?:code|privateServerLinkCode|linkCode)=([^&\s]+)", &m, pos)) {
@@ -2424,13 +2484,12 @@ class Dashboard {
         ; 0 made every cast give up at once and walk to the shop (review)
         this._IntField(220, 318, "Fishing failsafe", "General.fishingFailsafeSec", 31, "seconds", , 5)
         this._IntField(220, 356, "Pathing failsafe", "General.pathingFailsafeSec", 61, "seconds", , 10)
-        this._Panel(616, 152, 396, 116, "Minigame")
-        this._BoolField(632, 188, "Advanced mode (track bar width)", "General.advancedFishing", 0)
-        this._IntField(632, 222, "Advanced threshold", "General.advancedThreshold", 20, "px")
-        this._Panel(616, 284, 396, 120, "Fishing", "Click spots, colours and timings come from data\coords.json (2560x1440). "
+        ; Advanced mode / threshold left the page (2026-11-26): they only feed the
+        ; legacy FishSol reel (General.legacyReel, no switch), so they did nothing.
+        this._Panel(616, 152, 396, 120, "Fishing", "Click spots, colours and timings come from data\coords.json (2560x1440). "
             . "The VIP route switch is under Settings > General.")
-        this._BoolField(632, 318, "Fish when nothing else is due", "General.fishing", 1)
-        Theme.Label(g, "x632 y348 w364 h40", "Off = no fishing; the rest still runs. With Fish shop on, the Start trip still sells fish.", "muted")
+        this._BoolField(632, 186, "Fish when nothing else is due", "General.fishing", 1)
+        Theme.Label(g, "x632 y216 w364 h40", "Off = no fishing; the rest still runs. With Fish shop on, the Start trip still sells fish.", "muted")
         this._SaveBar(p)
     }
 
@@ -3657,10 +3716,11 @@ class Dashboard {
         this._IntField(220, 344, "Stuck reset after", "recovery.stuckMin", 10, "min", 170)
         this._IntField(220, 377, "Merchant chat check", "merchant.chatPollSec", 5, "s", 170)
 
-        this._Panel(204, 428, 396, 134, "Recovery")
+        this._Panel(204, 428, 396, 164, "Recovery")
         this._BoolField(220, 460, "Auto-rejoin and anti-AFK", "recovery.enabled", 1)
         this._IntField(220, 490, "Load wait", "recovery.loadSec", 20, "s", 160)
         this._BoolField(220, 526, "Anti ghost server (rejoin if moved out of it)", "recovery.antiGhost", 1, 360)
+        this._BoolField(220, 556, "Bring Roblox back when I'm away", "General.awayRefocus", 1, 360)
 
         this._Panel(616, 152, 396, 164, "Alerts")
         this._BoolField(632, 186, "Sound on rare biome", "General.sound", 1)
@@ -5862,7 +5922,7 @@ class Dashboard {
         this._Panel(204, 388, 808, 100, "Aura swaps")
         this._BoolField(220, 422, "Equip the first search result", "Auras.equipFirst", 0, , "Equip the first search result (no name reading): use this if aura swaps fail at your resolution. "
             . "Make sure the search finds only the aura you want. Used for every aura swap: Sailor for the obby, the combat aura, and putting your aura back.")
-        Theme.Label(this._gui, "x220 y454 w776 h20", "For aura swaps that fail at your resolution (the obby and Quests & events > Limited too).", "muted")
+        Theme.Label(this._gui, "x220 y454 w776 h20", "For aura swaps that fail at your resolution (the obby and the hunting plugin too).", "muted")
         p.load := ObjBindMethod(this, "_ObbyMemoryLoad")
         p.validate := ObjBindMethod(this, "_ObbyMemoryCheck")
         this._SaveBar(p)
@@ -6250,14 +6310,15 @@ class Dashboard {
         return ""
     }
 
-    ; ---- page: Hunting (tab Limited, Quests & events) ---------------------------
+    ; ---- page: Hunting (the "Orb & boss hunting" plugin's page) -----------------
 
-    ; Halloween minion / orb hunting: the game removes it later in November,
-    ; then this page (the Limited tab) goes.
+    ; Halloween minion / orb hunting, the built-in plugin HuntingPlugin
+    ; (lib\plugins\hunting; the Limited tab until 2026-11-26). Opened from
+    ; Plugins > Settings; the plugin's switch is on the Plugins tab.
     _PageHunting(p) {
         g := this._gui
-        this._Panel(204, 152, 808, 64, "Limited time")
-        this._ids["limitedNote"] := Theme.Label(g, "x220 y184 w776 h20", "Halloween event: the game removes hunting later in November.", "muted")
+        this._Panel(204, 152, 808, 64, "Orb & boss hunting (plugin)")
+        this._ids["limitedNote"] := Theme.Label(g, "x220 y184 w776 h20", "A built-in plugin: switched off on the Plugins tab, none of this page runs.", "muted")
         this._Panel(204, 232, 808, 220, "Hunting (Halloween)", "In every weather biome (not rare, not event): puts on the combat aura, respawns, finds the orbs' and minions' health bars, "
             . "walks up and uses the aura's skills (any aura with skills; never the number keys), then respawns. Once per biome. "
             . "NORMAL has shown no orbs: it is not hunted unless Hunt in NORMAL too is on, only the aura and a respawn are made ready there. "
@@ -6277,10 +6338,11 @@ class Dashboard {
             . "whether hunting is on or off. Orb message (off by default): the same for a biome orb the chat names, as 'Typhoon orb has spawned'. "
             . "Cursed Rune Fragment: one is used from your inventory when GRAVEYARD or PUMPKIN MOON starts (it starts Blood Rain), "
             . "then none until the next Graveyard / Pumpkin Moon night. Needs the inventory calibration steps.")
-        this._BoolField(220, 502, "Send the boss message (Sinister S. / P.)", "Limited.bossAlert", 1, 420)
-        this._BoolField(220, 540, "Send the orb message (e.g. Typhoon orb)", "Limited.orbAlert", 0, 420)
-        this._BoolField(220, 578, "Use ONE Cursed Rune Fragment per Graveyard / Pumpkin Moon", "Limited.cursedRune", 0, 520)
+        this._BoolField(220, 502, "Send the boss message (Sinister S. / P.)", "Hunting.bossAlert", 1, 420)
+        this._BoolField(220, 540, "Send the orb message (e.g. Typhoon orb)", "Hunting.orbAlert", 0, 420)
+        this._BoolField(220, 578, "Use ONE Cursed Rune Fragment per Graveyard / Pumpkin Moon", "Hunting.cursedRune", 0, 520)
         p.validate := ObjBindMethod(this, "_HuntingCheck")
+        this._BackBar()
         this._SaveBar(p)
     }
 
@@ -6292,6 +6354,380 @@ class Dashboard {
         if (Trim(this.Ctrl("Minions.aura").Value) = "")
             return "hunting: name the combat aura"
         return ""
+    }
+
+    ; ---- page: Plugins (Quests & events) ------------------------------------------
+    ; The built-in plugins and every file / folder in plugins\ (lib\Plugins.ahk,
+    ; the host from the "plugins" callback). A row per plugin, broken files
+    ; too (Status: Error: why). The switch acts at once (no Save); Settings
+    ; opens the plugin's page. Ids: "pluginList", "pluginOn", "pluginSettings",
+    ; "pluginName", "pluginDesc", "pluginStatus", "pluginRestart",
+    ; "pluginRescan", "pluginFolder", "pluginEmpty".
+
+    _Host() {
+        if !this._cb.Has("plugins")
+            return ""
+        try return this._cb["plugins"].Call()
+        return ""
+    }
+
+    _PagePlugins(p) {
+        g := this._gui
+        this._plRows := []
+        this._Panel(204, 152, 808, 300, "Plugins", "Drop a plugin (a .ahk file, or a folder with plugin.ahk) into the plugins folder next to MoontideMacro.exe, then press Rescan. "
+            . "A new plugin is off: switch it on and restart the macro to load it. Before it loads it is checked in a separate process, so a broken file only shows an error here. "
+            . "Updates never touch the plugins folder. How to write one: the README, Plugins.")
+        cw := [230, 80, 90, 376]
+        Theme.ListHeader(g, 220, 184, cw, ["Plugin", "Version", "Type", "Status"])
+        this._lvPl := Theme.ListView(g, 220, 202, 776, 196, ["Plugin", "Version", "Type", "Status"], cw, "", ObjBindMethod(this, "_PluginColor"))
+        this._lvPl.OnEvent("ItemSelect", ObjBindMethod(this, "_PluginSelect"))
+        this._ids["pluginList"] := this._lvPl
+        this._ids["pluginFolder"] := Theme.Button(g, "x220 y410 w170 h30", "Open plugins folder", (*) => this.OpenPluginsFolder(), "quiet")
+        this._ids["pluginRescan"] := Theme.Button(g, "x398 y410 w100 h30", "Rescan", (*) => this.PluginsRescan())
+        this._ids["pluginRestart"] := Theme.Button(g, "x506 y410 w170 h30", "Restart to load", (*) => this._PluginRestart(), "primary")
+        this._ids["pluginTop"] := Theme.Label(g, "x686 y416 w310 h20 Right", "", "muted")
+        this._Panel(204, 468, 808, 148, "Selected plugin")
+        this._ids["pluginName"] := Theme.Label(g, "x220 y500 w776 h20", "", "body")
+        this._ids["pluginDesc"] := Theme.Label(g, "x220 y522 w776 h40", "", "muted")
+        r := this._Grab(() => Theme.Check(g, 220, 574, "Use this plugin", 0, ObjBindMethod(this, "_PluginFlip"), "pill", 200))
+        this._ids["pluginOn"] := r.ctl, this._plOnParts := r.parts
+        r := this._Grab(() => Theme.Button(g, "x484 y570 w110 h30", "Settings", (*) => this._PluginSettingsBtn()))
+        this._ids["pluginSettings"] := r.ctl, this._plSetParts := r.parts
+        this._ids["pluginStatus"] := Theme.Label(g, "x604 y576 w392 h20", "", "muted")
+        p.load := ObjBindMethod(this, "_PluginsLoad")
+        p.onShow := ObjBindMethod(this, "_PluginsLoad")
+    }
+
+    _PluginColor(row) {
+        e := (row >= 1 && row <= this._plRows.Length) ? this._plRows[row] : ""
+        return (IsObject(e) && !e["ok"]) ? Theme.Accent : ""
+    }
+
+    ; fills the list (the selection is kept by id)
+    _PluginsLoad() {
+        host := this._Host()
+        lv := this._lvPl
+        keep := this._PluginSel()
+        lv.Delete()
+        this._plRows := []
+        if IsObject(host) {
+            for e in host.Entries {
+                this._plRows.Push(e)
+                type := e["builtin"] ? I18n.T("Built-in") : e["folder"] ? I18n.T("Folder") : I18n.T("File")
+                lv.Add("", I18n.T(e["name"]), e["version"], type, PluginHost.StatusText(host.Status(e)))
+            }
+        }
+        Theme.FitLastCol(lv)
+        sel := 0
+        for i, e in this._plRows
+            if (IsObject(keep) && e["file"] = keep["file"] && e["id"] = keep["id"])
+                sel := i
+        if (!sel && this._plRows.Length)
+            sel := 1
+        if sel
+            lv.Modify(sel, "Select Focus Vis")
+        this._PluginShow()
+        this._SetHidden(this.Ctrl("pluginRestart"), !(IsObject(host) && host.RestartWanted))
+        n := 0
+        for e in this._plRows
+            n += !e["builtin"]
+        Theme.SetText(this.Ctrl("pluginTop"), I18n.F("{1} in the plugins folder", n))
+    }
+
+    _PluginSel() {
+        r := this._lvPl.GetNext(0)
+        return (r >= 1 && r <= this._plRows.Length) ? this._plRows[r] : ""
+    }
+
+    _PluginSelect(lv, item, selected) {
+        if selected
+            this._PluginShow()
+    }
+
+    _PluginShow() {
+        e := this._PluginSel()
+        host := this._Host()
+        on := this.Ctrl("pluginOn")
+        if !IsObject(e) {
+            Theme.SetText(this.Ctrl("pluginName"), I18n.T("No plugin selected"))
+            Theme.SetText(this.Ctrl("pluginDesc"), "")
+            Theme.SetText(this.Ctrl("pluginStatus"), "")
+            this._HideParts(this._plOnParts, true)
+            this._HideParts(this._plSetParts, true)
+            return
+        }
+        name := I18n.T(e["name"]) (e["version"] != "" ? "  v" e["version"] : "") (e["author"] != "" ? "  " Chr(0xB7) "  " e["author"] : "")
+        Theme.SetText(this.Ctrl("pluginName"), name)
+        desc := e["ok"] ? I18n.T(e["description"]) : I18n.T("This file is not loaded:") " " e["reason"]
+        if !e["builtin"]
+            desc := e["file"] ":  " desc
+        Theme.SetText(this.Ctrl("pluginDesc"), desc)
+        can := e["ok"] || e["builtin"]
+        this._HideParts(this._plOnParts, !can)
+        on.Value := (can && Plugins.On(this.cfg, e["id"], e["def"])) ? 1 : 0
+        hasSet := can && ((e["builtin"] && e["page"] != "") || e["settings"].Length > 0)
+        this._HideParts(this._plSetParts, !hasSet)
+        Theme.SetText(this.Ctrl("pluginStatus"), IsObject(host) ? PluginHost.StatusText(host.Status(e)) : "")
+    }
+
+    _PluginFlip(ctl) {
+        e := this._PluginSel()
+        host := this._Host()
+        if !(IsObject(e) && IsObject(host))
+            return
+        if (ctl.Value && e.Has("warn") && e["warn"] != "" && this._confirmBuggy.Call(I18n.T(e["name"]), I18n.T(e["warn"])) != true) {
+            ctl.Value := 0
+            return
+        }
+        msg := host.SetOn(e["id"], ctl.Value ? 1 : 0)
+        this.Log("Plugins: " msg)
+        this._PluginsLoad()
+        Theme.SetText(this.Ctrl("pluginStatus"), msg)
+    }
+
+    _PluginSettingsBtn() {
+        e := this._PluginSel()
+        if IsObject(e)
+            this.OpenPluginPage(e["id"])
+    }
+
+    ; Rescan: new / changed / removed files in plugins\
+    PluginsRescan() {
+        host := this._Host()
+        if !IsObject(host)
+            return
+        try host.Rescan()
+        catch Any as e
+            this.Log("Plugins: rescan failed: " e.Message)
+        this._PluginsLoad()
+        Theme.SetText(this.Ctrl("pluginStatus"), I18n.T("Rescanned the plugins folder"))
+    }
+
+    OpenPluginsFolder() {
+        dir := Plugins.Dir(this.cfg.dir)
+        try {
+            if !DirExist(dir)
+                DirCreate(dir)
+            Run('explorer.exe "' dir '"')
+        }
+    }
+
+    _PluginRestart() {
+        if !this._cb.Has("pluginRestart")
+            return
+        if !this._cb["pluginRestart"].Call()
+            Theme.SetText(this.Ctrl("pluginStatus"), I18n.T("Stop the macro first (F3), then press Restart"))
+    }
+
+    ; fn() makes controls: -> {ctl: what fn returned, parts: every control it made}
+    _Grab(fn) {
+        n0 := (Theme.Sink is Array) ? Theme.Sink.Length : 0
+        r := fn.Call()
+        out := []
+        if (Theme.Sink is Array)
+            Loop Theme.Sink.Length - n0
+                out.Push(Theme.Sink[n0 + A_Index])
+        return {ctl: r, parts: out}
+    }
+
+    _HideParts(parts, hide) {
+        for c in parts
+            this._SetHidden(c, hide)
+    }
+
+    ; "Back to Plugins" in a plugin page's bottom bar (fixed, left of the save bar)
+    _BackBar() {
+        n0 := this._FixedBar()
+        Theme.Button(this._gui, "x204 y628 w118 h30", Chr(0x2039) " " I18n.T("Plugins"), (*) => this.SelectPage(Dashboard.PageIndex("Plugins")), "quiet")
+        this._FixedBar(n0)
+    }
+
+    ; ---- page: Plugin settings (a plugin from plugins\) ----------------------------
+    ; Up to Plugins.MaxSettings rows from the plugin's manifest (setting:
+    ; lines): a switch (bool) or a field (int, text; secret = hidden, kept
+    ; when left empty). Filled by OpenPluginPage(id). Ids "psTitle",
+    ; "psLabel:<i>", "psEdit:<i>", "psCheck:<i>".
+
+    _PagePluginSettings(p) {
+        g := this._gui
+        this._psId := ""
+
+        this._Panel(204, 152, 808, 464, "Plugin settings")
+        this._ids["psTitle"] := Theme.Label(g, "x220 y184 w776 h20", "", "body")
+        this._psParts := []
+        Loop Plugins.MaxSettings {
+            y := 222 + (A_Index - 1) * 46
+            lb := this._Grab(() => Theme.Label(g, "x220 y" y + 4 " w300 h20", ""))
+            ed := this._Grab(() => Theme.Edit(g, 530, y, 300, 28))
+            ed.ctl.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+            sec := this._Grab(() => Theme.Edit(g, 530, y, 300, 28, "", "Password"))
+            sec.ctl.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+            ck := this._Grab(() => Theme.Check(g, 530, y + 4, "", 0, ObjBindMethod(this, "_MarkDirty", p), "pill"))
+            this._ids["psLabel:" A_Index] := lb.ctl, this._ids["psEdit:" A_Index] := ed.ctl
+            this._ids["psSecret:" A_Index] := sec.ctl, this._ids["psCheck:" A_Index] := ck.ctl
+            this._psParts.Push({label: lb.parts, edit: ed.parts, secret: sec.parts, check: ck.parts})
+        }
+        this._ids["psNone"] := Theme.Label(g, "x220 y222 w776 h20", "", "muted")
+        p.load := ObjBindMethod(this, "_PsLoad")
+        p.save := ObjBindMethod(this, "_PsSave")
+        p.validate := ObjBindMethod(this, "_PsCheck")
+        this._BackBar()
+        this._SaveBar(p)
+    }
+
+    _PsEntry() {
+        host := this._Host()
+        return (IsObject(host) && this._psId != "") ? host.Find(this._psId) : ""
+    }
+
+    _PsLoad() {
+        e := this._PsEntry()
+        sets := IsObject(e) ? e["settings"] : []
+        Theme.SetText(this.Ctrl("psTitle"), IsObject(e) ? e["name"] (e["version"] != "" ? "  v" e["version"] : "") : "")
+        Theme.SetText(this.Ctrl("psNone"), IsObject(e) && !sets.Length ? I18n.T("This plugin has no settings.") : "")
+        Loop Plugins.MaxSettings {
+            s := A_Index <= sets.Length ? sets[A_Index] : ""
+            t := IsObject(s) ? s["type"] : ""
+            pp := this._psParts[A_Index]
+            this._HideParts(pp.label, t = "")
+            this._HideParts(pp.edit, !(t = "int" || t = "text"))
+            this._HideParts(pp.secret, t != "secret")
+            this._HideParts(pp.check, t != "bool")
+            if (t = "")
+                continue
+            Theme.SetText(this.Ctrl("psLabel:" A_Index), s["label"])
+            v := this.cfg.Get(PluginHost.SettingPath(e, s), t = "int" ? Integer(s["def"]) : s["def"])
+            if (t = "bool")
+                this.Ctrl("psCheck:" A_Index).Value := v ? 1 : 0
+            else if (t = "secret")
+                this.Ctrl("psSecret:" A_Index).Value := ""
+            else
+                this.Ctrl("psEdit:" A_Index).Value := String(v)
+        }
+    }
+
+    _PsCheck() {
+        e := this._PsEntry()
+        if !IsObject(e)
+            return ""
+        for i, s in e["settings"]
+            if (s["type"] = "int" && !RegExMatch(Trim(this.Ctrl("psEdit:" i).Value), "^-?\d{1,9}$"))
+                return s["label"] ": " I18n.T("a whole number")
+        return ""
+    }
+
+    _PsSave() {
+        e := this._PsEntry()
+        if !IsObject(e)
+            return ""
+        for i, s in e["settings"] {
+            path := PluginHost.SettingPath(e, s)
+            switch s["type"] {
+                case "bool": this.cfg.Set(path, this.Ctrl("psCheck:" i).Value ? 1 : 0)
+                case "int": this.cfg.Set(path, Integer(Trim(this.Ctrl("psEdit:" i).Value)))
+                case "secret":
+                    v := Trim(this.Ctrl("psSecret:" i).Value)
+                    if (v != "")
+                        this.cfg.Set(path, v)
+                    this.Ctrl("psSecret:" i).Value := ""
+                default: this.cfg.Set(path, Trim(this.Ctrl("psEdit:" i).Value))
+            }
+        }
+        return ""
+    }
+
+    ; ---- page: Sniper (the "Biome sniper" plugin's page) ----------------------------
+    ; SniperPlugin (lib\plugins\sniper). The token is secret: kept encrypted
+    ; for this Windows user (SniperVault), never shown or logged; a typed one
+    ; replaces it on Save, Clear removes it. Ids "sniperToken",
+    ; "sniperTokenMask", "sniperStatus", "sniperTest" + the Sniper.* keys.
+
+    _PageSniper(p) {
+        g := this._gui
+        this._snWipe := false
+        this._Panel(204, 152, 808, 178, "Discord", "Reads the channels below with your Discord account's token and joins the private server links posted there. "
+            . "A user token logs in as you: using it from a program is against Discord's terms and can get the account banned (an alt account is safer). "
+            . "It only reads: it never sends, reacts or changes anything. The token is stored encrypted for this Windows user, never shown, logged or shared.")
+        Theme.Label(g, "x220 y188 w150 h20", "Discord token")
+        this._snEdit := Theme.Edit(g, 370, 184, 250, 28, "", "Password")
+        this._snEdit.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
+        this._ids["sniperToken"] := this._snEdit
+        Theme.Button(g, "x628 y184 w60 h28", "Clear", (*) => this._SnClear(), "quiet")
+        this._snMask := Theme.Label(g, "x698 y188 w298 h20", "", "small")
+        this._ids["sniperTokenMask"] := this._snMask
+        Theme.Label(g, "x220 y228 w150 h20", "Channels")
+        ch := Theme.Edit(g, 370, 224, 626, 28)
+        this._Bind("str", "Sniper.channels", "", ch)
+        this._ids["sniperStatus"] := Theme.Label(g, "x220 y262 w776 h20", "", "muted")
+        Theme.Label(g, "x220 y286 w776 h36", "Channel ids or links (right-click a channel: Copy Link), separated by commas. Only links from these channels are joined.", "small")
+        this._Panel(204, 342, 808, 118, "What to join", "A message is joined when it has a Roblox private server or share link, names one of the biomes or keywords, and has none of the blocked words. "
+            . "Keywords: whole words; end one with * for 'starts with'. Join every link: any link in these channels, no keywords needed (blocked words still count).")
+        this._StrField(220, 374, "Biomes", "Sniper.biomes", SniperPlugin.DefBiomes, 256, 120)
+        this._StrField(612, 374, "Keywords", "Sniper.keywords", "", 254, 130)
+        this._StrField(220, 412, "Blocked words", "Sniper.blocked", SniperPlugin.DefBlocked, 626, 150)
+        this._Panel(204, 472, 808, 144, "Joining", "A link stops the macro's task (keys let go), Roblox opens the server straight away, then the macro carries on in the new server. "
+            . "Go back after: the private server is joined again after that many minutes (0 = stay). Links seen within the cooldown of a join are skipped.")
+        this._IntField(220, 504, "Cooldown", "Sniper.cooldownSec", 30, "seconds", 150, 0, 3600)
+        this._IntField(612, 504, "Go back after", "Sniper.stayMin", 20, "minutes", 170, 0, 240)
+        this._BoolField(220, 546, "Join every link (no keywords)", "Sniper.everyLink", 0, 330)
+        this._BoolField(612, 546, "Sol's RNG links only", "Sniper.solsOnly", 1, 330)
+        this._BoolField(220, 582, "Also while the macro is stopped", "Sniper.whileStopped", 1, 330)
+        this._BoolField(612, 582, "Pause the macro after a join", "Sniper.pauseAfter", 0, 330)
+        p.load := ObjBindMethod(this, "_SniperLoad")
+        p.save := ObjBindMethod(this, "_SniperSave")
+        p.validate := ObjBindMethod(this, "_SniperCheck")
+        p.onShow := ObjBindMethod(this, "SniperStatus")
+        this._BackBar()
+        this._SaveBar(p)
+    }
+
+    _SniperLoad() {
+        this._snWipe := false
+        this._snEdit.Value := ""
+        Theme.SetText(this._snMask, this.cfg.Get("Sniper.token", "") = "" ? I18n.T("(not set)") : I18n.T("(saved, encrypted)"))
+        this.SniperStatus()
+    }
+
+    _SnClear() {
+        this._snWipe := true
+        this._snEdit.Value := ""
+        Theme.SetText(this._snMask, I18n.T("(clear on Save)"))
+        this._MarkDirty("Sniper")
+    }
+
+    _SniperSave() {
+        typed := Trim(this._snEdit.Value)
+        if this._snWipe
+            this.cfg.Set("Sniper.token", "")
+        else if (typed != "")
+            this.cfg.Set("Sniper.token", SniperVault.Protect(SniperPlugin.CleanToken(typed)))
+        this._snWipe := false
+        this._snEdit.Value := ""
+        Theme.SetText(this._snMask, this.cfg.Get("Sniper.token", "") = "" ? I18n.T("(not set)") : I18n.T("(saved, encrypted)"))
+        host := this._Host()
+        if IsObject(host)
+            try (o := host.Obj("sniper")) && o.Restart()
+        return ""
+    }
+
+    _SniperCheck() {
+        bad := SniperPlugin.BadChannels(this.Ctrl("Sniper.channels").Value)
+        if (bad != "")
+            return "sniper: " bad
+        typed := Trim(this._snEdit.Value)
+        if (typed != "" && !SniperPlugin.TokenLooksOk(typed))
+            return "sniper: that does not look like a Discord token"
+        return ""
+    }
+
+    ; the watcher's state on the page (SniperPlugin calls it too)
+    SniperStatus(text := "") {
+        if (text = "") {
+            host := this._Host()
+            o := IsObject(host) ? host.Obj("sniper") : ""
+            text := IsObject(o) ? o.StatusLine() : ""
+        }
+        try Theme.SetText(this.Ctrl("sniperStatus"), text)
     }
 
     ; ---- page: Tools ------------------------------------------------------------

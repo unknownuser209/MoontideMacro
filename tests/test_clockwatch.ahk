@@ -1,7 +1,7 @@
 #Requires AutoHotkey v2.0
-; Tests for ClockWatch (lib\ClockWatch.ahk): a Sinister boss seen from the
+; Tests for ClockWatch (lib\plugins\hunting\ClockWatch.ahk): a Sinister boss seen from the
 ; stopped biome clock (2026-11-17, the owner).
-#Include ..\lib\ClockWatch.ahk
+#Include ..\lib\plugins\hunting\ClockWatch.ahk
 
 class CwRep {
     __New() {

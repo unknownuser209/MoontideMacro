@@ -51,7 +51,11 @@ ScProbes(over := "") {
         "ahkVersion", () => "2.0.19",
         "front", () => 1,
         "rollText", () => "Roll",
-        "reelPause", () => "")
+        "reelPause", () => "",
+        "ocr", () => {tag: "en-US", english: true},
+        "root", () => "C:\Games\MoontideMacro",
+        "temp", () => "C:\Users\Player\AppData\Local\Temp",
+        "writable", (dir) => true)
     if IsObject(over)
         for k, v in over
             p[k] := v
@@ -78,10 +82,10 @@ Test_SetupCheck_HealthyPc() {
     res := SetupCheck.Run(ScGoodCfg(), ScProbes())
     for r in res
         AssertTrue(r.level = "ok" || r.level = "info", "no warning or problem: " r.id " " r.level " " r.detail)
-    for id in ["roblox", "size", "scale", "hdr", "logs", "private", "webhooks", "calibration", "focus", "ahk", "live"]
+    for id in ["roblox", "size", "scale", "hdr", "ocr", "folder", "logs", "private", "webhooks", "calibration", "focus", "ahk", "live"]
         AssertTrue(IsObject(ScFind(res, id)), "row " id)
     AssertEq(ScFind(res, "live").level, "ok", "live read ok")
-    AssertEq(SetupCheck.Summary(res), "11 ok, 0 warnings, 0 problems", "summary")
+    AssertEq(SetupCheck.Summary(res), "13 ok, 0 warnings, 0 problems", "summary")
     for r in res {
         AssertTrue(r.name != "" && r.detail != "", "plain text on " r.id)
         AssertTrue(HasProp(r, "fix"), "fix field on " r.id)
@@ -102,7 +106,7 @@ Test_SetupCheck_WindowedIsAProblem() {
     AssertEq(r.level, "fail", "an unusable window fails")
     AssertTrue(InStr(r.detail, "window can't be used"), "says the window can't be used")
     AssertTrue(r.fix != "", "has a fix")
-    AssertEq(SetupCheck.Summary(res), "10 ok, 0 warnings, 1 problem", "summary with a problem")
+    AssertEq(SetupCheck.Summary(res), "12 ok, 0 warnings, 1 problem", "summary with a problem")
 }
 
 Test_SetupCheck_UntestedSizeWarns() {
@@ -183,7 +187,7 @@ Test_SetupCheck_Calibration() {
     r := ScFind(SetupCheck.Run(cfg, ScProbes(Map("calMissing", () => miss))), "calibration")
     AssertTrue(InStr(r.detail, "5 calibration points"), "BiomeItems and Obby add theirs: " r.detail)
     ; everything needed is there: the rest is only counted
-    cfg := ScCfg(ScLink(), [], Map("Craft.enabled", 0, "quests.enabled", 0, "merchant.enabled", 0, "Limited.bossAlert", 0))
+    cfg := ScCfg(ScLink(), [], Map("Craft.enabled", 0, "quests.enabled", 0, "merchant.enabled", 0, "Hunting.bossAlert", 0))
     r := ScFind(SetupCheck.Run(cfg, ScProbes(Map("calMissing", () => miss))), "calibration")
     AssertEq(r.level, "info", "nothing needed missing is info")
     AssertTrue(InStr(r.detail, "6 calibration points"), "counts all: " r.detail)
@@ -196,12 +200,12 @@ Test_SetupCheck_Calibration() {
 ; audit 2026-11-20: the inventory (Limbo, merchants, potions, biome items,
 ; Cursed Rune), aura storage (obby, hunting) and chat steps count as needed
 Test_SetupCheck_InventoryAuraChatNeeded() {
-    off := Map("Craft.enabled", 0, "quests.enabled", 0, "merchant.enabled", 0, "Limited.bossAlert", 0)
+    off := Map("Craft.enabled", 0, "quests.enabled", 0, "merchant.enabled", 0, "Hunting.bossAlert", 0)
     miss := ["inv_open", "inv_desc_rect", "aura_equip", "chat_rect", "inv_tile2_rect", "inv_count_rect"]
     lvl := (extra) => ScFind(SetupCheck.Run(ScCfg(ScLink(), [], ScMerge(off, extra)), ScProbes(Map("calMissing", () => miss))), "calibration")
     r := lvl(Map())
     AssertEq(r.level, "info", "every feature off: only counted (" r.detail ")")
-    for k in ["Limbo.enabled", "BiomeItems.enabled", "Limited.cursedRune", "merchant.enabled", "DailyQuests.usePotions"] {
+    for k in ["Limbo.enabled", "BiomeItems.enabled", "Hunting.cursedRune", "merchant.enabled", "DailyQuests.usePotions"] {
         r := lvl(Map(k, 1))
         AssertEq(r.level, "warn", k ": the inventory steps are needed")
         AssertTrue(InStr(r.detail, "inv_open") && InStr(r.detail, "inv_desc_rect") && !InStr(r.detail, "inv_tile2_rect"), k ": " r.detail)
@@ -210,7 +214,7 @@ Test_SetupCheck_InventoryAuraChatNeeded() {
         r := lvl(Map(k, 1))
         AssertTrue(r.level = "warn" && InStr(r.detail, "aura_equip"), k ": the aura storage steps (" r.detail ")")
     }
-    r := lvl(Map("Limited.bossAlert", 1))
+    r := lvl(Map("Hunting.bossAlert", 1))
     AssertTrue(r.level = "warn" && InStr(r.detail, "chat_rect") && !InStr(r.detail, "inv_open"), "boss alert: the chat only (" r.detail ")")
     ; defaults (merchants and the boss alert on): inventory + chat
     r := ScFind(SetupCheck.Run(ScCfg(ScLink()), ScProbes(Map("calMissing", () => miss))), "calibration")
@@ -326,4 +330,56 @@ Test_SetupCheck_WalksVipRow() {
     r := ScFind(SetupCheck.Run(ScRouteCfg(ScLink()), ScProbes()), "walks")
     AssertEq(r.level, "ok", "own recordings")
     AssertTrue(InStr(r.detail, "own recorded"), "names the own walks")
+}
+
+; Bug hunt 2026-11-26: a Spanish / Brazilian Windows has no English text
+; recognizer (every read came back empty); the check says how to add one.
+Test_SetupCheck_OcrRow() {
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes()), "ocr")
+    AssertEq(r.level, "ok", "English recognizer: ok")
+    AssertTrue(InStr(r.detail, "en-US"), "names it: " r.detail)
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("ocr", () => {tag: "en-GB", english: true}))), "ocr")
+    AssertEq(r.level, "ok", "UK English is English")
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("ocr", () => {tag: "pt-BR", english: false}))), "ocr")
+    AssertEq(r.level, "warn", "only the Windows language's recognizer: warn")
+    AssertTrue(InStr(r.detail, "pt-BR") && InStr(r.fix, "English (United States)"), "says which and how to add English: " r.fix)
+    r := ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("ocr", () => {tag: "", english: false}))), "ocr")
+    AssertEq(r.level, "fail", "no recognizer at all: a problem")
+    AssertEq(ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("ocr", () => ScThrow()))), "ocr").level, "info", "a throwing probe: info")
+}
+
+; Run from a zip opened in Explorer (Windows unpacks it to Temp) or from a
+; folder Windows will not let it write: settings and calibration are lost.
+Test_SetupCheck_FolderRow() {
+    tmp := "C:\Users\Player\AppData\Local\Temp"
+    lvl := (root, writable := true) => ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("root", () => root, "writable", (d) => writable))), "folder")
+    AssertEq(lvl("C:\Games\MoontideMacro").level, "ok", "a normal folder")
+    r := lvl(tmp "\Temp1_MoontideMacro-v2.1.7.zip\MoontideMacro")
+    AssertEq(r.level, "fail", "inside a zip opened in Explorer")
+    AssertTrue(InStr(r.fix, "Extract All"), "says to extract it")
+    AssertEq(lvl(tmp "\7zO4A1B2C3D").level, "fail", "a 7-Zip temp folder")
+    AssertEq(lvl("D:\stuff\MoontideMacro.zip\MoontideMacro").level, "fail", "a .zip folder in the path")
+    AssertEq(lvl("c:\users\player\appdata\local\temp\x").level, "fail", "case does not matter")
+    r := lvl("C:\Program Files\MoontideMacro", false)
+    AssertEq(r.level, "fail", "a folder it cannot write")
+    AssertTrue(InStr(r.fix, "Program Files") && InStr(r.fix, "Controlled folder access"), "says where to move it: " r.fix)
+    AssertEq(lvl("C:\Program Files\MoontideMacro", "").level, "ok", "writable unknown: not a problem")
+    AssertEq(lvl("C:\Users\Player\OneDrive\Documents\MoontideMacro").level, "info", "OneDrive: a hint")
+    AssertEq(lvl("C:\Users\Player\AppData\Local\TempStuff\Moontide").level, "ok", "a folder that only starts like Temp is fine")
+    AssertEq(ScFind(SetupCheck.Run(ScGoodCfg(), ScProbes(Map("root", () => ScThrow()))), "folder").level, "info", "a throwing probe: info")
+}
+
+; the real write check: a folder that exists can be written, one that does
+; not cannot, and the check file is never left behind
+Test_SetupCheck_WritableProbe() {
+    d := A_Temp "\vesper_sc_w_" A_TickCount
+    DirCreate(d)
+    try {
+        AssertEq(SetupCheck._Writable(d), true, "a temp folder is writable")
+        AssertEq(FileExist(d "\.moontide_write_check"), "", "no check file left")
+        AssertEq(SetupCheck._Writable(d "\no\such\dir"), false, "a missing folder is not")
+        AssertEq(SetupCheck._Writable(""), "", "no folder: unknown")
+    } finally {
+        DirDelete(d, true)
+    }
 }

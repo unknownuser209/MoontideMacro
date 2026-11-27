@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 ; Offline tests for lib\LogBundle.ahk: temp folders under A_Temp, a fake zip
-; step (one test runs the real PowerShell zip). Helpers are prefixed Lb.
+; step (the RealZip tests write a real zip and open it with Expand-Archive).
+; Helpers are prefixed Lb.
 #Include ..\lib\LogBundle.ahk
 
 LbHook() => "https://discord.com/api/webhooks/987654321/ZzYyXxTokenSECRET"
@@ -279,4 +280,75 @@ Test_LogBundle_DiscordIdsScrubbed() {
     AssertTrue(!InStr(t, "123456789012345678") && !InStr(t, "98765432109876543"), "ids gone: " t)
     AssertTrue(InStr(t, "[id]"), "marked")
     AssertTrue(InStr(LogBundle.ScrubText("rolls 1234567 coins 2,345,667"), "1234567"), "short numbers kept")
+}
+
+; 2026-11-26: the zip is written by LogBundle.WriteZip (a tester's PowerShell
+; Compress-Archive never returned). A text, an empty and a binary file come
+; back byte for byte through Expand-Archive; the stored CRC is the standard
+; CRC-32 ("123456789" -> 0xCBF43926).
+Test_LogBundle_WriteZipRoundTrip() {
+    base := A_Temp "\vesper_lbzip_" A_TickCount "_" Random(1000, 9999)
+    DirCreate(base "\in")
+    try {
+        FileAppend("123456789", base "\in\check.txt")
+        FileAppend("", base "\in\empty.txt")
+        bin := Buffer(300)
+        Loop 300
+            NumPut("UChar", Mod(A_Index * 37, 256), bin, A_Index - 1)
+        f := FileOpen(base "\in\pic.png", "w"), f.RawWrite(bin), f.Close()
+        zip := base "\t.zip"
+        LogBundle.WriteZip([base "\in\check.txt", base "\in\empty.txt", base "\in\pic.png"], zip)
+        z := FileRead(zip, "RAW")
+        AssertEq(NumGet(z, 0, "UInt"), 0x04034B50, "a zip local header first")
+        AssertEq(NumGet(z, 14, "UInt"), 0xCBF43926, "CRC-32 of 123456789")
+        AssertEq(NumGet(z, z.Size - 22, "UInt"), 0x06054B50, "the end record last")
+        AssertEq(NumGet(z, z.Size - 12, "UShort"), 3, "three entries")
+        q := (s) => "'" StrReplace(s, "'", "''") "'"
+        rc := RunWait('powershell.exe -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath ' q(zip)
+            . ' -DestinationPath ' q(base "\out") ' -Force"', , "Hide")
+        AssertEq(rc, 0, "the zip opens")
+        AssertEq(FileRead(base "\out\check.txt"), "123456789", "text back")
+        AssertEq(FileGetSize(base "\out\empty.txt"), 0, "empty file back")
+        got := FileRead(base "\out\pic.png", "RAW")
+        same := got.Size = 300
+        Loop 300
+            if (same && NumGet(got, A_Index - 1, "UChar") != Mod(A_Index * 37, 256))
+                same := false
+        AssertTrue(same, "binary file back byte for byte")
+    } finally {
+        try DirDelete(base, 1)
+    }
+}
+
+; a file that cannot be read: an error, and no half-written zip left behind
+Test_LogBundle_WriteZipMissingFile() {
+    base := A_Temp "\vesper_lbzip_" A_TickCount "_" Random(1000, 9999)
+    DirCreate(base)
+    try {
+        threw := false
+        try LogBundle.WriteZip([base "\nope.txt"], base "\t.zip")
+        catch Any
+            threw := true
+        AssertTrue(threw, "threw")
+        AssertTrue(!FileExist(base "\t.zip"), "no zip left")
+    } finally {
+        try DirDelete(base, 1)
+    }
+}
+
+; logs\reel_trace.log (numbers only: arrow, fish, clicks) goes in the zip
+Test_LogBundle_ReelTraceIncluded() {
+    rig := LbRig()
+    try {
+        r := LogBundle.Make(rig.root, rig.opts)
+        AssertEq(r.ok, 1, "no trace yet: still ok")
+        AssertTrue(!FileExist(rig.cap "\reel_trace.log"), "no trace file, none in the zip")
+        FileAppend("=== reel 2026-11-26 23:40:01 | client 1920x1080`n10 1100 1200-1276 2C96AB 63 1211 76 10`n", rig.root "\logs\reel_trace.log", "UTF-8")
+        rig.opts["now"] := "20261126234002"
+        r := LogBundle.Make(rig.root, rig.opts)
+        AssertEq(r.ok, 1, "ok: " r.msg)
+        AssertTrue(InStr(LbRead(rig, "reel_trace.log"), "10 1100 1200-1276 2C96AB 63 1211 76 10"), "the trace is in the zip")
+    } finally {
+        LbClean(rig)
+    }
 }
