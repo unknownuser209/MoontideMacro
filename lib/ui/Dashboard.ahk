@@ -195,10 +195,10 @@ class Dashboard {
     ; Internal page names (SavePage / tests); the user sees TabLabel(name).
     static Pages := ["Run", "Fishing", "Craft", "Quests", "Merchants", "Biomes & Potions", "Biome items", "Obby & Memory", "Webhooks", "Calibrate", "Settings", "Tools", "Limbo", "Clips", "Dev tools"
         , "Stats", "Hunting", "Summary", "Remote", "Check", "Schedule", "Credits", "Log", "Profiles", "Potions", "Look"
-        , "Plugins", "Sniper", "Plugin settings"]
+        , "Plugins", "Plugin settings", "Plugin page"]
     static Builders := ["_PageRun", "_PageFishing", "_PageCraft", "_PageQuests", "_PageMerchants", "_PageBiomes", "_PageBiomeItems", "_PageObbyMemory", "_PageWebhooks", "_PageCalibrate", "_PageSettings", "_PageTools", "_PageLimbo", "_PageClips", "_PageDevTools"
         , "_PageStats", "_PageHunting", "_PageSummary", "_PageRemote", "_PageCheck", "_PageSchedule", "_PageCredits", "_PageLog", "_PageProfiles", "_PagePotions", "_PageLook"
-        , "_PagePlugins", "_PageSniper", "_PagePluginSettings"]
+        , "_PagePlugins", "_PagePluginSettings", "_PagePluginPage"]
     static Subtitles := [
         "Status at a glance. F1 start  " Chr(0xB7) "  F2 pause / resume  " Chr(0xB7) "  F3 stop",
         "Selling rhythm, minigame mode and failsafes.",
@@ -227,52 +227,26 @@ class Dashboard {
         "Every potion: unlock or re-lock it, and its safety caps.",
         "The theme, the animations and the language of this window.",
         "Extra features: built in, or files you drop into the plugins folder.",
-        "Biome sniper, a built-in plugin: joins biome links posted on Discord.",
-        "A plugin's own settings."
+        "A plugin's own settings.",
+        "A plugin's own page."
     ]
     ; Sidebar hubs, each a tab strip of pages (every page is in exactly one).
     ; icon: a glyph name (not drawn yet).
     static Hubs := [
         {name: "Home", icon: "home", pages: ["Run", "Stats", "Log"]},
         {name: "Farming", icon: "bolt", pages: ["Fishing", "Craft", "Merchants", "Limbo"]},
-        {name: "Quests & events", icon: "star", pages: ["Quests", "Obby & Memory", "Biome items", "Plugins", "Hunting", "Sniper", "Plugin settings"]},
+        {name: "Quests & events", icon: "star", pages: ["Quests", "Obby & Memory", "Biome items"]},
         {name: "Biomes & Potions", icon: "moon", pages: ["Biomes & Potions", "Potions"]},
         {name: "Discord & Clips", icon: "bell", pages: ["Webhooks", "Clips", "Summary", "Remote"]},
+        {name: "Plugins", icon: "puzzle", pages: ["Plugins", "Hunting", "Plugin settings", "Plugin page"]},
         {name: "Settings", icon: "gear", pages: ["Settings", "Look", "Schedule", "Profiles"]},
         {name: "Help", icon: "info", pages: ["Check", "Calibrate", "Tools", "Dev tools", "Credits"]}
     ]
     static TabLabels := Map("Run", "Overview", "Craft", "Crafting", "Biomes & Potions", "Biomes", "Webhooks", "Discord", "Tools", "Routes"
-        , "Summary", "Daily summary", "Check", "Check & help", "Settings", "General", "Hunting", "Orb & boss hunting", "Sniper", "Biome sniper")
+        , "Summary", "Daily summary", "Check", "Check & help", "Settings", "General", "Hunting", "Orb & boss hunting")
     ; Plugin pages: opened from the Plugins tab (Settings), no tab of their
     ; own (the Plugins tab stays lit), found by search like any page
-    static SubPages := Map("Hunting", "Plugins", "Sniper", "Plugins", "Plugin settings", "Plugins")
-
-    ; The public build has no biome sniper (a stand-in with Available false,
-    ; lib\plugins\sniper_stub): its page leaves every list, so no tab, hub
-    ; or search finds it.
-    static __New() {
-        if (this != Dashboard)
-            return
-        if !SniperPlugin.Available
-            Dashboard.DropPage("Sniper")
-    }
-
-    ; name out of Pages / Builders / Subtitles (same index), the hubs and SubPages
-    static DropPage(name) {
-        for i, p in Dashboard.Pages
-            if (p = name) {
-                Dashboard.Pages.RemoveAt(i), Dashboard.Builders.RemoveAt(i), Dashboard.Subtitles.RemoveAt(i)
-                break
-            }
-        for h in Dashboard.Hubs
-            for i, p in h.pages
-                if (p = name) {
-                    h.pages.RemoveAt(i)
-                    break
-                }
-        if Dashboard.SubPages.Has(name)
-            Dashboard.SubPages.Delete(name)
-    }
+    static SubPages := Map("Hunting", "Plugins", "Plugin settings", "Plugins", "Plugin page", "Plugins")
     static MaxHooks := 8
     static Events := ["biome", "rare", "merchant", "quests", "craft", "errors", "startstop", "potions", "clips", "obby", "memorymatch", "sinister"]
     static EventCaps := ["Biome", "Rare", "Merchant", "Quests", "Craft", "Errors", "Stop", "Potions", "Clips", "Obby", "Memory", "Boss"]
@@ -301,9 +275,9 @@ class Dashboard {
     static StarC := "F7F1E8"
     ; [x, y, period ms]: header stars clear of the brand, credits banner
     ; (x 372..612, y 17..43), status pill and buttons (y 16..44); sidebar
-    ; stars between the hub list (7 hubs, ends y 382) and the chip (y 622).
+    ; stars between the hub list (8 hubs, ends y 422) and the chip (y 622).
     static Stars := [[392, 3, 2300], [548, 45, 2700], [700, 3, 2000], [902, 45, 3100]
-        , [34, 410, 2500], [140, 450, 2900], [70, 510, 2150], [150, 566, 2650]]
+        , [34, 448, 2500], [140, 486, 2900], [70, 534, 2150], [150, 580, 2650]]
     ; first hub of the left / right sidebar (the search box sits above it)
     static HubTop := 108
     static StatTiles := [["stat:loops", "LOOPS"], ["stat:fish", "FISH CAUGHT"], ["stat:biomes", "BIOMES SEEN"], ["stat:rare", "RARE BIOMES"]]
@@ -937,6 +911,15 @@ class Dashboard {
             return false
         if (e["builtin"] && e["page"] != "") {
             this.SelectPage(Dashboard.PageIndex(e["page"]))
+            return true
+        }
+        if this.HasOwnProp("_ppGroups") && this._ppGroups.Has(id) {
+            this._ppId := id
+            for gid, grp in this._ppGroups
+                this._HideParts(grp.parts, gid != id)
+            pg := this._PageByName("Plugin page")
+            this._LoadPage(pg)
+            this.SelectPage(Dashboard.PageIndex("Plugin page"))
             return true
         }
         this._psId := id
@@ -2269,7 +2252,10 @@ class Dashboard {
             link := this.cfg.Get("General.privateServer", "")
             arr.Push(link)
             arr.Push(this.cfg.Get("Remote.token", ""))
-            try arr.Push(SniperVault.Unprotect(this.cfg.Get("Sniper.token", "")))
+            host := this._Host()                        ; secrets plugins handed in (PluginApi.Secret)
+            if IsObject(host)
+                for s in host.Secrets()
+                    arr.Push(s)
             ; the share / link code alone is as secret as the whole link
             pos := 1
             while (pos := RegExMatch(link, "i)(?:code|privateServerLinkCode|linkCode)=([^&\s]+)", &m, pos)) {
@@ -6548,6 +6534,56 @@ class Dashboard {
     ; when left empty). Filled by OpenPluginPage(id). Ids "psTitle",
     ; "psLabel:<i>", "psEdit:<i>", "psCheck:<i>".
 
+    ; ---- page: Plugin page (a plugin that draws its own page) -----------------------
+    ; A loaded plugin with BuildPage(dash, page, hooks) draws its page here,
+    ; with the dashboard's own helpers (_Panel, _StrField, _IntField,
+    ; _BoolField, Theme..., _MarkDirty(page) for its own controls), so it
+    ; looks like every other page. Every such plugin is built once, at start
+    ; (plugins load before the dashboard); OpenPluginPage(id) shows only that
+    ; plugin's controls. hooks: the plugin sets load / save / validate /
+    ; onShow (as a page's) -> called for the plugin shown. Its bound fields
+    ; are saved by the page's Save like any other.
+    _PagePluginPage(p) {
+        this._ppId := ""
+        this._ppGroups := Map()
+        host := this._Host()
+        if IsObject(host) {
+            for e in host.Entries {
+                o := host.Obj(e["id"])
+                if !IsObject(o) || !HasMethod(o, "BuildPage")
+                    continue
+                hooks := {load: "", save: "", validate: "", onShow: ""}
+                try {
+                    r := this._Grab(() => o.BuildPage(this, p, hooks))
+                    this._ppGroups[e["id"]] := {parts: r.parts, hooks: hooks}
+                } catch Any as err
+                    host.Log("Plugins: " e["name"] " could not draw its page: " host._ErrText(err))
+            }
+        }
+        p.load := () => this._PpCall("load")
+        p.save := () => this._PpCall("save")
+        p.validate := () => this._PpCall("validate")
+        p.onShow := () => this._PpCall("onShow")
+        this._BackBar()
+        this._SaveBar(p)
+    }
+
+    ; the shown plugin's page hook ("" when it has none)
+    _PpCall(kind) {
+        if (this._ppId = "" || !this._ppGroups.Has(this._ppId))
+            return ""
+        fn := this._ppGroups[this._ppId].hooks.%kind%
+        if !IsObject(fn)
+            return ""
+        try return fn.Call()
+        catch Any as err {
+            host := this._Host()
+            if IsObject(host)
+                host.Log("Plugins: " this._ppId " page " kind ": " host._ErrText(err))
+            return kind = "validate" ? this._ppId ": " host._ErrText(err) : ""
+        }
+    }
+
     _PagePluginSettings(p) {
         g := this._gui
         this._psId := ""
@@ -6634,100 +6670,6 @@ class Dashboard {
             }
         }
         return ""
-    }
-
-    ; ---- page: Sniper (the "Biome sniper" plugin's page) ----------------------------
-    ; SniperPlugin (lib\plugins\sniper). The token is secret: kept encrypted
-    ; for this Windows user (SniperVault), never shown or logged; a typed one
-    ; replaces it on Save, Clear removes it. Ids "sniperToken",
-    ; "sniperTokenMask", "sniperStatus", "sniperTest" + the Sniper.* keys.
-
-    _PageSniper(p) {
-        g := this._gui
-        this._snWipe := false
-        this._Panel(204, 152, 808, 178, "Discord", "Reads the channels below with your Discord account's token and joins the private server links posted there. "
-            . "A user token logs in as you: using it from a program is against Discord's terms and can get the account banned (an alt account is safer). "
-            . "It only reads: it never sends, reacts or changes anything. The token is stored encrypted for this Windows user, never shown, logged or shared.")
-        Theme.Label(g, "x220 y188 w150 h20", "Discord token")
-        this._snEdit := Theme.Edit(g, 370, 184, 250, 28, "", "Password")
-        this._snEdit.OnEvent("Change", ObjBindMethod(this, "_MarkDirty", p))
-        this._ids["sniperToken"] := this._snEdit
-        Theme.Button(g, "x628 y184 w60 h28", "Clear", (*) => this._SnClear(), "quiet")
-        this._snMask := Theme.Label(g, "x698 y188 w298 h20", "", "small")
-        this._ids["sniperTokenMask"] := this._snMask
-        Theme.Label(g, "x220 y228 w150 h20", "Channels")
-        ch := Theme.Edit(g, 370, 224, 626, 28)
-        this._Bind("str", "Sniper.channels", "", ch)
-        this._ids["sniperStatus"] := Theme.Label(g, "x220 y262 w776 h20", "", "muted")
-        Theme.Label(g, "x220 y286 w776 h36", "Channel ids or links (right-click a channel: Copy Link), separated by commas. Only links from these channels are joined.", "small")
-        this._Panel(204, 342, 808, 118, "What to join", "A message is joined when it has a Roblox private server or share link, names one of the biomes or keywords, and has none of the blocked words. "
-            . "Keywords: whole words; end one with * for 'starts with'. Join every link: any link in these channels, no keywords needed (blocked words still count).")
-        this._StrField(220, 374, "Biomes", "Sniper.biomes", SniperPlugin.DefBiomes, 256, 120)
-        this._StrField(612, 374, "Keywords", "Sniper.keywords", "", 254, 130)
-        this._StrField(220, 412, "Blocked words", "Sniper.blocked", SniperPlugin.DefBlocked, 626, 150)
-        this._Panel(204, 472, 808, 144, "Joining", "A link stops the macro's task (keys let go), Roblox opens the server straight away, then the macro carries on in the new server. "
-            . "Go back after: the private server is joined again after that many minutes (0 = stay). Links seen within the cooldown of a join are skipped.")
-        this._IntField(220, 504, "Cooldown", "Sniper.cooldownSec", 30, "seconds", 150, 0, 3600)
-        this._IntField(612, 504, "Go back after", "Sniper.stayMin", 20, "minutes", 170, 0, 240)
-        this._BoolField(220, 546, "Join every link (no keywords)", "Sniper.everyLink", 0, 330)
-        this._BoolField(612, 546, "Sol's RNG links only", "Sniper.solsOnly", 1, 330)
-        this._BoolField(220, 582, "Also while the macro is stopped", "Sniper.whileStopped", 1, 330)
-        this._BoolField(612, 582, "Pause the macro after a join", "Sniper.pauseAfter", 0, 330)
-        p.load := ObjBindMethod(this, "_SniperLoad")
-        p.save := ObjBindMethod(this, "_SniperSave")
-        p.validate := ObjBindMethod(this, "_SniperCheck")
-        p.onShow := ObjBindMethod(this, "SniperStatus")
-        this._BackBar()
-        this._SaveBar(p)
-    }
-
-    _SniperLoad() {
-        this._snWipe := false
-        this._snEdit.Value := ""
-        Theme.SetText(this._snMask, this.cfg.Get("Sniper.token", "") = "" ? I18n.T("(not set)") : I18n.T("(saved, encrypted)"))
-        this.SniperStatus()
-    }
-
-    _SnClear() {
-        this._snWipe := true
-        this._snEdit.Value := ""
-        Theme.SetText(this._snMask, I18n.T("(clear on Save)"))
-        this._MarkDirty("Sniper")
-    }
-
-    _SniperSave() {
-        typed := Trim(this._snEdit.Value)
-        if this._snWipe
-            this.cfg.Set("Sniper.token", "")
-        else if (typed != "")
-            this.cfg.Set("Sniper.token", SniperVault.Protect(SniperPlugin.CleanToken(typed)))
-        this._snWipe := false
-        this._snEdit.Value := ""
-        Theme.SetText(this._snMask, this.cfg.Get("Sniper.token", "") = "" ? I18n.T("(not set)") : I18n.T("(saved, encrypted)"))
-        host := this._Host()
-        if IsObject(host)
-            try (o := host.Obj("sniper")) && o.Restart()
-        return ""
-    }
-
-    _SniperCheck() {
-        bad := SniperPlugin.BadChannels(this.Ctrl("Sniper.channels").Value)
-        if (bad != "")
-            return "sniper: " bad
-        typed := Trim(this._snEdit.Value)
-        if (typed != "" && !SniperPlugin.TokenLooksOk(typed))
-            return "sniper: that does not look like a Discord token"
-        return ""
-    }
-
-    ; the watcher's state on the page (SniperPlugin calls it too)
-    SniperStatus(text := "") {
-        if (text = "") {
-            host := this._Host()
-            o := IsObject(host) ? host.Obj("sniper") : ""
-            text := IsObject(o) ? o.StatusLine() : ""
-        }
-        try Theme.SetText(this.Ctrl("sniperStatus"), text)
     }
 
     ; ---- page: Tools ------------------------------------------------------------

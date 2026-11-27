@@ -23,7 +23,6 @@
 #Include %A_LineFile%\..\tasks\Obby.ahk
 #Include %A_LineFile%\..\Plugins.ahk
 #Include %A_LineFile%\..\plugins\hunting\Hunting.ahk
-#Include %A_LineFile%\..\plugins\sniper\Sniper.ahk
 #Include %A_LineFile%\..\tasks\MemoryMatch.ahk
 #Include %A_LineFile%\..\tasks\Limbo.ahk
 #Include %A_LineFile%\..\tasks\Merchant.ahk
@@ -216,12 +215,7 @@ class App {
     static _Dep(d, k, def := "") => d.Has(k) ? d[k] : def
 
     ; The built-in plugins (lib\plugins\), always loaded: [class name, manifest]
-    static BuiltinPlugins() {
-        b := [["HuntingPlugin", HuntingPlugin.Manifest]]
-        if SniperPlugin.Available                       ; the public build has a stand-in (not released)
-            b.Push(["SniperPlugin", SniperPlugin.Manifest])
-        return b
-    }
+    static BuiltinPlugins() => [["HuntingPlugin", HuntingPlugin.Manifest]]
 
     __New(deps) {
         d := (deps is Map) ? deps : Map()
@@ -321,7 +315,7 @@ class App {
         this._fakeRestore := ""      ; {biome, ts} after a fake rare biome
         this._lastChat := ""         ; ms of the last chat check
         this._joinKind := ""         ; the last join's kind (LogWatch): "private" / "other" / ""
-        this._ghostHoldUntil := 0    ; HoldGhost: ms until a non-private join is no ghost server (the sniper)
+        this._ghostHoldUntil := 0    ; HoldGhost: ms until a non-private join is no ghost server (PluginApi.HoldRejoin)
         this.wh := AppTagWh(this, d.Has("wh") ? d["wh"] : Webhook(this.cfg, this._logFn))
         ; LogWatch is re-created on every Start after the first, so a restart
         ; backfills silently (live=false) instead of alerting on old lines.
@@ -897,8 +891,14 @@ class App {
         return true
     }
 
-    ; A fullscreen app, presentation mode, the lock screen or a screen saver
-    ; is up (SHQueryUserNotificationState): Roblox is never pulled over it.
+    ; Someone else's fullscreen app, presentation mode, the lock screen or a
+    ; screen saver is up: Roblox is never pulled over it.
+    ; SHQueryUserNotificationState says "a fullscreen app runs" (2, 3) for
+    ; Roblox itself (it runs fullscreen) and for the screen dim, the macro's
+    ; own fullscreen window: that blocked every away refocus all night
+    ; (2026-11-27 02:50: an iCUE crash dialog took the focus, the macro sat
+    ; paused 44 min). So for 2 / 3 only the window in front counts, and only
+    ; when it is someone else's and covers its monitor.
     static UserBusy() {
         s := 0
         try {
@@ -906,7 +906,42 @@ class App {
                 return false
         } catch
             return false
-        return (s >= 1 && s <= 4) ? true : false
+        return App.BusyFrom(s, (s = 2 || s = 3) ? App.FrontInfo() : "")
+    }
+
+    ; state: SHQueryUserNotificationState; front: {mine, roblox, full} of the
+    ; window in front ("" = not looked at). -> true = leave the PC alone
+    static BusyFrom(state, front) {
+        if (state = 1 || state = 4)                     ; locked / screen saver, presentation mode
+            return true
+        if (state != 2 && state != 3)
+            return false
+        if !IsObject(front)
+            return true
+        return (!front.mine && !front.roblox && front.full) ? true : false
+    }
+
+    ; the window in front: the macro's own, Roblox, covering its monitor
+    static FrontInfo() {
+        r := {mine: false, roblox: false, full: false}
+        try {
+            hwnd := DllCall("GetForegroundWindow", "Ptr")
+            if !hwnd
+                return r
+            DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "UInt*", &pid := 0)
+            r.mine := (pid = DllCall("GetCurrentProcessId", "UInt"))
+            try r.roblox := (WinGetProcessName(hwnd) = Roblox.Exe)
+            rc := Buffer(16, 0), mi := Buffer(40, 0)
+            NumPut("UInt", 40, mi, 0)
+            if !DllCall("GetWindowRect", "Ptr", hwnd, "Ptr", rc)
+                return r
+            mon := DllCall("MonitorFromWindow", "Ptr", hwnd, "UInt", 2, "Ptr")
+            if !(mon && DllCall("GetMonitorInfoW", "Ptr", mon, "Ptr", mi))
+                return r
+            r.full := NumGet(rc, 0, "Int") <= NumGet(mi, 4, "Int") && NumGet(rc, 4, "Int") <= NumGet(mi, 8, "Int")
+                && NumGet(rc, 8, "Int") >= NumGet(mi, 12, "Int") && NumGet(rc, 12, "Int") >= NumGet(mi, 16, "Int")
+        }
+        return r
     }
 
     ; ---- idle mode ----------------------------------------------------------------
@@ -1820,13 +1855,39 @@ class App {
         }
     }
 
-    ; The biome sniper (lib\plugins\sniper) joined someone's server: for ms the
-    ; join is not a ghost server (no auto-rejoin of the private one). 0 ends it.
+    ; A plugin (PluginApi.HoldRejoin, e.g. a biome sniper) joined someone's
+    ; server: for ms the join is not a ghost server (no auto-rejoin of the
+    ; private one). 0 ends it.
     HoldGhost(ms) {
         this._ghostHoldUntil := ms > 0 ? this.Now() + ms : 0
         if (ms > 0)
             this.state.ghost := false
     }
+
+    ; ---- PluginApi's calls into the macro (PluginHost.AppCall) ----------------
+
+    ; StopTask: the running task halts at its next checkpoint, held keys go up
+    ; (when the macro is started; a stopped macro has no task to stop)
+    PluginStopTask() {
+        if !this.IsStarted()
+            return false
+        try this.ctx.RequestPreempt(true)
+        try this.input.ReleaseAll()
+        return true
+    }
+    ; BackToPrivate: in someone else's server now -> recovery joins the private one
+    PluginBackToPrivate() {
+        this.HoldGhost(0)
+        if (this._joinKind != "other")
+            return false
+        this.state.ghost := true
+        return true
+    }
+    PluginRepath() {
+        this.state.needRepath := true
+        return true
+    }
+    PluginRareHere() => (this.state.rareActive && !this.state.ghost) ? true : false
 
     ; The aura equipped now, from the Roblox log (ObbyTask's Sailor swap).
     _AuraNow() {
@@ -1852,9 +1913,9 @@ class App {
         this._joinKind := ev["name"]
         this._LimboJoin(ev)
         d := RecoveryTask.GhostDecision(ev["name"], this.state, this.cfg)
-        ; a server the biome sniper joined (HoldGhost): no rejoin until the hold ends
+        ; a server a plugin joined (HoldGhost): no rejoin until the hold ends
         if (d = "ghost" && this.Now() < this._ghostHoldUntil) {
-            this.Log("In a server the sniper joined: no rejoin of the private server for now")
+            this.Log("In a server a plugin joined: no rejoin of the private server for now")
             d := ""
         }
         if (d = "clear") {
@@ -2482,7 +2543,11 @@ class App {
             }
         }
         try arr.Push(this.cfg.Get("Remote.token", ""))
-        try arr.Push(SniperVault.Unprotect(this.cfg.Get("Sniper.token", "")))   ; the biome sniper's Discord token
+        try {                                           ; secrets plugins handed in (PluginApi.Secret)
+            if (this.HasOwnProp("plugins") && IsObject(this.plugins) && HasMethod(this.plugins, "Secrets"))
+                for s in this.plugins.Secrets()
+                    arr.Push(s)
+        }
         try {
             for w in this.cfg.Webhooks()
                 arr.Push(w["url"])

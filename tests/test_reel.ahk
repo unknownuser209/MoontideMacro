@@ -1486,6 +1486,34 @@ Test_Reel_TraceNeverThrows() {
     AssertTrue(InStr(tr.Text(), "| x | end ok/ended | caught"), "kept in memory when the file cannot be written")
 }
 
+; Live 2026-11-27 09:46 (reel trace): a stray 32 px box while the fish was
+; clear set the width; the bar then stayed over the 74 px fish, so the width
+; never grew and the aim sat at the fish's right end (target 1109 for a fish
+; at 1062..1136). A box under the bar still shows the fish is that wide.
+Test_Reel_DecideWidthGrowsWhileTheBarCoversTheFish() {
+    st := {}
+    FishLogic.ReelDecide({m: 1159, p1: 1264, p2: 1296}, st, 0, 100, 0.15)
+    AssertEq(st.w, 32, "the stray box")
+    FishLogic.ReelDecide({m: 1165, p1: 1062, p2: 1136}, st, 50, 100, 0.15)
+    AssertEq(st.w, 74, "the fish under the bar is 74 px wide")
+    AssertTrue(Abs(st.tg - (1062 + 74 * 0.15)) < 0.01, "aim near the fish's left end, not its right (" st.tg ")")
+}
+
+; Live 2026-11-27 11:32: under the bar the box read 84..104 px for a 76 px
+; fish; growing the width with those aimed too far left and the arrow
+; drifted off the fish to the bar's empty end.
+Test_Reel_DecideWidthDoesNotCreepUnderTheBar() {
+    st := {}
+    FishLogic.ReelDecide({m: 1200, p1: 1242, p2: 1318}, st, 0, 100, 0.15)
+    AssertEq(st.w, 76, "the fish while clear of the bar")
+    for i, p in [[1212, 1296], [1206, 1296], [1178, 1274], [1184, 1288]]
+        FishLogic.ReelDecide({m: 1245, p1: p[1], p2: p[2]}, st, i * 20, 100, 0.15)
+    AssertEq(st.w, 76, "wider boxes under the bar leave the width alone")
+    st := {}
+    FishLogic.ReelDecide({m: 1279, p1: 1242, p2: 1318}, st, 0, 100, 0.15)
+    AssertEq(st.w, 0, "first reading under the bar: no width yet (aim from the box's left)")
+}
+
 ; The controller's target is kept on its state (the trace prints it)
 Test_Reel_DecideKeepsItsTarget() {
     st := {}

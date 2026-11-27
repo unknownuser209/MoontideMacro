@@ -153,10 +153,11 @@ The sidebar hubs:
 - **Home**: Overview (status, Start / Pause / Stop, potion dry run, updates),
   **Stats** (today, this run and the last 7 days) and the **Log**.
 - **Farming**: Fishing, Crafting, Merchants, Limbo.
-- **Quests & events**: Quests, Obby & Memory, Biome items and **Plugins**
-  (below). The Limited tab is now the built-in plugin **Orb & boss hunting**
-  (Plugins > Orb & boss hunting > Settings): Halloween orbs, minions and the
-  Graveyard boss, all your old settings kept. Also there: the **boss
+- **Quests & events**: Quests, Obby & Memory, Biome items.
+- **Plugins** (its own hub, below): the Limited tab is now the built-in plugin
+  **Orb & boss hunting** (Plugins > Orb & boss hunting > Settings): Halloween
+  orbs, minions and the Graveyard boss, all your old settings kept. Also
+  there: the **boss
   message** (when the chat names Sinister S. or Sinister P., your Boss webhook
   gets a "Sinister S. / P. has spawned" card with a Join Server button for
   your private server, even with hunting off; it changes to "Sinister S. is
@@ -177,9 +178,10 @@ The sidebar hubs:
 
 ## Plugins
 
-Quests & events > **Plugins** lists every plugin: the built-in ones and each
+The **Plugins** tab (its own hub in the sidebar) lists every plugin: the built-in ones and each
 file or folder in the `plugins` folder next to `MoontideMacro.exe`. A plugin
-is switched on and off there, and **Settings** opens its own settings. A file
+is switched on and off there, and **Settings** opens its own settings (or
+its own window, for a plugin that has one). A file
 that is not a working plugin gets a row too, with the reason (no header, an
 error in its code, a name the macro already uses...). It never stops the
 macro.
@@ -247,8 +249,13 @@ folder gets priority 3 to 97 (fishing is 99).
 `Notify(event, title, text [, color])` (a card to the webhooks with `event`
 ticked: biome, rare, merchant, quests, craft, errors, startstop, potions,
 clips, obby, memorymatch, sinister), `Biome()`, `IsStarted()`, `Dir`, `Id`,
-`Name`. The example above ships as `plugins\example_plugin.ahk.txt`: rename it
-to `.ahk` to try it.
+`Name`. For a plugin that sends you to another server: `StopTask()` (the
+running task stops, keys let go), `HoldRejoin(ms)` (auto-rejoin leaves that
+server alone), `BackToPrivate()`, `Repath()`, `RareHere()`, `Pause()`.
+`Secret(text)` keeps a value (a token) out of the log and the support zip.
+A plugin with a `BuildPage(dash, page, hooks)` method draws its own page
+(opened by **Settings**) with the dashboard's helpers. The example above ships as
+`plugins\example_plugin.ahk.txt`: rename it to `.ahk` to try it.
 
 ## Move to another PC
 

@@ -1001,3 +1001,55 @@ Test_Reset_ExitPlacedFromTheTitleWhenSqueezed() {
         AssertTrue(IsObject(p) && p.x = 300 + Input.ExitFromCommon && p.y = 177, "right of Common by the list's fixed offset, on the title's row: " (IsObject(p) ? p.x "," p.y : "none"))
     } finally Screen.Reset()
 }
+
+; ---- Windows at 150 % on a 2560x1440 client (live 2026-11-27) -------------
+; The maths is the identity, but the client shows the 1706x960 layout x1.5:
+; Roblox's top bar is 87 px, the Collections screen hangs 28 px lower, so the
+; calibrated close (525, 158) missed its [Exit] and every respawn failed.
+; Screen.Native() is false there: the off-1440p fallbacks run.
+
+Test_Reset_At150PercentTheFallbacksRun() {
+    old := Screen.dpi
+    try {
+        Screen.Reset()
+        Screen.dpi := 144
+        AssertTrue(Screen.IsIdentity() && !Screen.Native(), "2560x1440 at 150 %: identity maths, not native")
+        w := Input.ResetChecks["prompt"].wide
+        AssertEq(Input._Has(RcWideIO(w), "prompt"), true, "the respawn prompt's wide box is read")
+        io := RcExitIO()
+        p := Input._ExitAt(io)
+        AssertTrue(io.calls = 1 && IsObject(p), "[Exit] looked for by its text")
+        Screen.dpi := 96
+        AssertTrue(Screen.Native(), "100 %: native again")
+        AssertEq(Input._ExitAt(RcExitIO()), "", "native: the calibrated point")
+    } finally {
+        Screen.dpi := old
+        Screen.Reset()
+    }
+}
+
+; the real 150 % frame: [Exit] found by its text, below the calibrated point
+class RcFileWordIO {
+    __New(path) => this.path := path
+    FindWord(x, y, w, h, re, wordRe, scale := 1) {
+        Ocr._srcFile := this.path
+        try
+            return Ocr.FindWord(x, y, w, h, re, wordRe, scale)
+        finally
+            Ocr._srcFile := ""
+    }
+}
+Test_Reset_ExitFoundOnTheReal150Frame() {
+    old := Screen.dpi
+    try {
+        Screen.Reset()
+        Screen.dpi := 144
+        p := Input._ExitAt(RcFileWordIO(A_ScriptDir "\screens\collections_150_open.jpg"))
+        AssertTrue(IsObject(p), "[Exit] found")
+        AssertTrue(p.x >= 480 && p.x <= 570 && p.y >= 166 && p.y <= 196, "on the [Exit] word (x 490..560, y 170..191): " p.x "," p.y)
+        AssertTrue(Input.ResetCoords["menuClose"][2] < 166, "the calibrated close (y 158) is above it: why it missed")
+    } finally {
+        Screen.dpi := old
+        Screen.Reset()
+    }
+}

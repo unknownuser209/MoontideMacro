@@ -822,6 +822,8 @@
   "Plugins": "Plugins",
   "Orb & boss hunting": "Chasse aux orbes et boss",
   "Plugin settings": "Réglages du plugin",
+  "A plugin's own page.": "La page propre d'un plugin.",
+  "Plugin page": "Page du plugin",
   "Orb & boss hunting (plugin)": "Chasse aux orbes et boss (plugin)",
   "A built-in plugin: switched off on the Plugins tab, none of this page runs.": "Un plugin intégré : coupé dans l'onglet Plugins, rien de cette page ne tourne.",
   "Orb & boss hunting (Plugins tab) and the obby stay off here: turn them on in the dashboard when you want them.": "La chasse aux orbes et boss (onglet Plugins) et l'obby restent coupés ici : activez-les dans le tableau de bord.",

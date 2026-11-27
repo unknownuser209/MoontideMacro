@@ -579,12 +579,13 @@ UiDashPos(c) {
 Test_Hubs_EveryPageOnce() {
     want := [["Home", "home", "Run,Stats,Log"]
         , ["Farming", "bolt", "Fishing,Craft,Merchants,Limbo"]
-        , ["Quests & events", "star", "Quests,Obby & Memory,Biome items,Plugins,Hunting,Sniper,Plugin settings"]
+        , ["Quests & events", "star", "Quests,Obby & Memory,Biome items"]
         , ["Biomes & Potions", "moon", "Biomes & Potions,Potions"]
         , ["Discord & Clips", "bell", "Webhooks,Clips,Summary,Remote"]
+        , ["Plugins", "puzzle", "Plugins,Hunting,Plugin settings,Plugin page"]
         , ["Settings", "gear", "Settings,Look,Schedule,Profiles"]
         , ["Help", "info", "Check,Calibrate,Tools,Dev tools,Credits"]]
-    AssertEq(Dashboard.Hubs.Length, want.Length, "seven hubs")
+    AssertEq(Dashboard.Hubs.Length, want.Length, "eight hubs")
     for i, w in want {
         h := Dashboard.Hubs[i]
         AssertEq(h.name, w[1], "hub " i " name")

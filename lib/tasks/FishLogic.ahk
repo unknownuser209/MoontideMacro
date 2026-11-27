@@ -750,6 +750,9 @@ class FishLogic {
     ; so one such reading moved the aim for the rest of the reel (HEAVEN:
     ; box over 120 px in half the frames).
     static FishMaxW := 110
+    ; A remembered width under this share of a box seen under the bar was a
+    ; stray reading (ReelDecide).
+    static StrayW := 0.6
 
     ; Click now? st keeps the fish width and the last arrow sample between
     ; calls (start with {}). leadMs: aim with the arrow's predicted position.
@@ -757,8 +760,18 @@ class FishLogic {
         if (!scan.p2 || !scan.m)
             return false
         w := st.HasProp("w") ? st.w : 0
+        box := Min(scan.p2 - scan.p1, FishLogic.FishMaxW)
         if (scan.p1 > scan.m + 6)                       ; fish fully visible
-            w := Max(w, Min(scan.p2 - scan.p1, FishLogic.FishMaxW))
+            w := Max(w, box)
+        ; Under the bar a box can read wider than the fish (84..104 px for a
+        ; 76 px fish, live 2026-11-27 11:32: letting those grow w aimed too
+        ; far left and the arrow drifted off the fish), so it only replaces
+        ; a width far too small for it: a stray reading. Live 09:46 one
+        ; stray 32 px box set w, the bar then stayed over the 74 px fish so
+        ; it was never fully visible again; the aim sat at the fish's right
+        ; end, each click threw the arrow past it and the fish got away.
+        else if (w > 0 && w < box * FishLogic.StrayW)
+            w := box
         st.w := w
         left := (scan.p1 <= scan.m + 6 && w > 0) ? scan.p2 - w : scan.p1
         target := left + (scan.p2 - left) * aim

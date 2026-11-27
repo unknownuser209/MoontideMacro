@@ -17,7 +17,7 @@ $version = $Matches[1]
 # user's own copy (Updater.Protected).
 $exclude = @(
     '^settings\.ini$', '^logs/', '^exports/', '^imported/', '^backup/', '^dist/', '^update_tmp/',
-    '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/',
+    '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/', '^private/',
     '^\.gitattributes$', '^\.gitignore$',
     # only the plugins readme and example ship: never a player's plugins or plugins/.loaded
     '^plugins/(?!README\.txt$|example_plugin\.ahk\.txt$)',
@@ -43,7 +43,7 @@ if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
 if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
 Remove-Item $tar
 
-# What is not released (the biome sniper) comes out, as in the public repo
+# What is not released (private\, the owner's file plugins) comes out, as in the public repo
 # (tools\strip_private.py); only files still there are packed.
 & python -I (Join-Path $root 'tools\strip_private.py') $src
 if ($LASTEXITCODE -ne 0) { throw 'strip_private.py failed' }

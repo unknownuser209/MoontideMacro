@@ -1,8 +1,8 @@
 #Requires AutoHotkey v2.0
 ; ---------------------------------------------------------------------------
 ; Plugins (2026-11-26): extra features dropped into the plugins\ folder next
-; to MoontideMacro.exe, plus the built-in ones (lib\plugins\). Shown on
-; Quests & events > Plugins, switched on and off there.
+; to MoontideMacro.exe, plus the built-in ones (lib\plugins\). Shown on the
+; Plugins tab (its own sidebar hub), switched on and off there.
 ;
 ; WHY IN-PROCESS + A GENERATED INCLUDE + A RESTART
 ;   AutoHotkey v2 resolves #Include while it loads the script: code cannot be
@@ -56,6 +56,13 @@
 ;   title, text [, color]) (a Discord card to the webhooks that have `event`
 ;   ticked: biome, rare, merchant, ... see Config.EventTypes), Biome(),
 ;   IsStarted(), Dir (the plugin's folder), Id, Name.
+;   For a plugin that sends the player to another server: StopTask() (the
+;   running task halts, keys up), HoldRejoin(ms) (auto-rejoin leaves the
+;   other server alone), BackToPrivate(), Repath(), RareHere(), Pause().
+;   Secret(text): kept out of the log, the log view and the support zip.
+;   BuildPage(dash, page, hooks) on the plugin: its own page on the Plugins
+;   tab (Settings opens it), drawn with the dashboard's helpers so it looks
+;   like the others (Dashboard._PagePluginPage).
 ;
 ;   Plugins.ReadManifest(text)   -> Map, or throws ValueError(reason)
 ;   Plugins.Scan(dir [, taken])  -> Array of entries (below); taken: ids in
@@ -95,7 +102,7 @@ class Plugins {
     static ExternalMinPri := 3
     static ExternalMaxPri := 97
     ; ids a plugin may not take (sections and pages of the macro itself)
-    static Reserved := ["plugins", "plugin", "general", "hotkeys", "webhook", "minions", "hunting", "sniper", "limited"]
+    static Reserved := ["plugins", "plugin", "general", "hotkeys", "webhook", "minions", "hunting", "limited"]
     ; files in plugins\ that are not plugins and get no row
     static Quiet := "i)^(readme.*|.*\.(md|txt|ini|json|png|jpg|ico|wav|log|bak))$"
 
@@ -435,6 +442,21 @@ class PluginApi {
     Notify(event, title, text := "", color := 0x8FD3FF) => this._host.Notify(this._e, event, title, text, color)
     Biome() => this._host.Biome()
     IsStarted() => this._host.IsStarted()
+    ; ---- for plugins that move the player to another server (2026-11-27) ----
+    ; StopTask(): the running task stops at once (halted, held keys let go)
+    StopTask() => this._host.AppCall("PluginStopTask")
+    ; HoldRejoin(ms): auto-rejoin leaves a non-private server alone for ms (0 = end the hold)
+    HoldRejoin(ms) => this._host.AppCall("HoldGhost", Max(0, Integer(ms)))
+    ; BackToPrivate(): in another server now -> recovery joins the private server again
+    BackToPrivate() => this._host.AppCall("PluginBackToPrivate")
+    ; Repath(): the next task walks to the fishing spot again (a new server)
+    Repath() => this._host.AppCall("PluginRepath")
+    ; RareHere(): the player's own server has a rare biome now
+    RareHere() => this._host.AppCall("PluginRareHere") ? true : false
+    ; Pause(): the macro pauses (F2)
+    Pause() => this._host.AppCall("Pause")
+    ; Secret(text): kept out of the log, the log view and the support zip
+    Secret(text) => this._host.AddSecret(this.Id, text)
     ; the macro itself (built-in plugins only; not part of the public API)
     App => this._e["builtin"] ? this._host.app : ""
 }
@@ -951,5 +973,34 @@ class PluginHost {
     IsStarted() {
         try return this.app.IsStarted() ? true : false
         return false
+    }
+
+    ; app.<name>(args*) when the macro has it ("" otherwise, never throws)
+    AppCall(name, args*) {
+        app := this.app
+        if (!IsObject(app) || !HasMethod(app, name))
+            return ""
+        try return app.%name%(args*)
+        return ""
+    }
+
+    ; Secrets plugins handed in (PluginApi.Secret): one current value per
+    ; plugin (a new one replaces the old); "" removes it.
+    AddSecret(id, text) {
+        if !this.HasOwnProp("_secrets")
+            this._secrets := Map()
+        text := String(text)
+        if (text = "")
+            this._secrets.Delete(id)
+        else
+            this._secrets[id] := text
+        return true
+    }
+    Secrets() {
+        out := []
+        if this.HasOwnProp("_secrets")
+            for id, s in this._secrets
+                out.Push(s)
+        return out
     }
 }

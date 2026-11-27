@@ -726,7 +726,7 @@ class FishingTask {
     ; At 2560x1440: arrowY alone, as before.
     static ArrowTries := [0, 2, 4, 6, 8, 10, -2, -4]
     _arrowRow := ""
-    _ArrowY(rc) => (this._arrowRow != "" && !Screen.IsIdentity()) ? this._arrowRow : rc["arrowY"]
+    _ArrowY(rc) => (this._arrowRow != "" && !Screen.Native()) ? this._arrowRow : rc["arrowY"]
 
     ; The reel's [arrow row, bar row, border rows...] (borderYs: rows of the
     ; bar's top border to read, [] = none). They sit inside the same copy of
@@ -737,7 +737,7 @@ class FishingTask {
     ; it settled.
     _ReelRows(rc, borderYs := "") {
         bys := IsObject(borderYs) ? borderYs : []
-        if Screen.IsIdentity() {
+        if Screen.Native() {
             ys := [rc["arrowY"], rc["barY"]]
             for y in bys
                 ys.Push(y)
@@ -766,7 +766,7 @@ class FishingTask {
 
     _ReelUp() {
         rc := this._Fc()["reel"]
-        tries := Screen.IsIdentity() ? [0] : FishingTask.ArrowTries
+        tries := Screen.Native() ? [0] : FishingTask.ArrowTries
         nt := tries.Length
         ys := []
         for d in tries

@@ -203,7 +203,7 @@ Test_Profiles_DashboardPage() {
         AssertEq(Dashboard.Pages[24], "Profiles", "Profiles keeps its index (later pages are appended after it)")
         AssertEq(Dashboard.Builders[Dashboard.PageIndex("Profiles")], "_PageProfiles", "its builder")
         AssertEq(Dashboard.Pages[Dashboard.LogPage], "Log", "LogPage unchanged")
-        AssertEq(Dashboard.HubOf("Profiles"), 6, "in the Settings hub")
+        AssertEq(Dashboard.Hubs[Dashboard.HubOf("Profiles")].name, "Settings", "in the Settings hub")
         saved := [0]
         d := Dashboard(cfg, Map("saved", (page) => saved[1]++))
         for name in Profiles.Names
@@ -211,7 +211,7 @@ Test_Profiles_DashboardPage() {
         AssertEq(d.PageOf(d.Ctrl("profile:AFK fishing")), "Profiles", "buttons on the page")
         AssertTrue(IsObject(d.Ctrl("export")) && IsObject(d.Ctrl("import")), "export and import buttons")
         d.SelectPage(Dashboard.PageIndex("Profiles"))
-        AssertEq(d.ActiveHub, 6, "Settings hub")
+        AssertEq(d.ActiveHub, Dashboard.HubOf("Profiles"), "Settings hub")
         AssertTrue(d.Ctrl("tab:Profiles").Visible, "Profiles tab shown")
         AssertEq(d.Ctrl("exportShow").Visible, false, "Show it hidden before an export")
 

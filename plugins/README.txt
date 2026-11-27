@@ -2,7 +2,7 @@ Moontide Macro plugins
 ======================
 
 Put a plugin here: a .ahk file, or a folder with a plugin.ahk inside.
-Then open the dashboard: Quests & events > Plugins, press Rescan, switch it
+Then open the dashboard: the Plugins tab, press Rescan, switch it
 on and press "Restart to load".
 
 - A new plugin is off until you switch it on.

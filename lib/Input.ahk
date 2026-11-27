@@ -1173,7 +1173,7 @@ class Input {
         io := Input._Backend(io)
         if (!IsObject(ocr) && !HasMethod(io, "Ocr"))
             return false
-        scales := Screen.IsIdentity() ? [Input.TitleScale] : Input.TitleScalesOff
+        scales := Screen.Native() ? [Input.TitleScale] : Input.TitleScalesOff
         return Input._ReadsAny(io, Input.TitlePlayBox, ocr, scales, Input.TitlePlayRe)
             && Input._ReadsAny(io, Input.TitleLogsBox, ocr, scales, Input.TitleLogsRe)
     }
@@ -1279,7 +1279,7 @@ class Input {
             return true
         if (c.HasOwnProp("alt") && InStr(StrLower(Input._Read(io, c.alt, ocr)), c.text))
             return true
-        if (c.HasOwnProp("wide") && !Screen.IsIdentity() && InStr(StrLower(Input._Read(io, c.wide, ocr)), c.text))
+        if (c.HasOwnProp("wide") && !Screen.Native() && InStr(StrLower(Input._Read(io, c.wide, ocr)), c.text))
             return true
         if c.HasOwnProp("marks")
             for m in c.marks
@@ -1310,7 +1310,7 @@ class Input {
     static ExitFromCommon := 206      ; design px, [Exit]'s centre right of "Common"'s
     static TitleAboveCommon := 123    ; design px, the title row above "Common"
     static _ExitAt(io) {
-        if (Screen.IsIdentity() || !HasMethod(io, "FindWord"))
+        if (Screen.Native() || !HasMethod(io, "FindWord"))
             return ""
         b := Input.ExitWide
         r := ""

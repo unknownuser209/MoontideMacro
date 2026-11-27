@@ -109,6 +109,16 @@ class Screen {
 
     static IsIdentity() => (Screen.cx = 0 && Screen.cy = 0 && Screen.cw = Screen.DesignW && Screen.ch = Screen.DesignH)
 
+    ; Real 1440p: the identity AND Windows at 100 %. IsIdentity() is only the
+    ; maths (a 2560x1440 client maps 1:1 at any scale); at 150 % the same
+    ; client shows the 1706x960 layout x1.5, Roblox's own top bar is 87 px
+    ; instead of 58 and the game's screens hang 28 px lower (live
+    ; 2026-11-27: the Aura Collections [Exit] at y 170..191, not 142..163,
+    ; so its calibrated close missed and every respawn failed). The "off
+    ; 1440p" fallbacks (find [Exit] by its text, the respawn prompt's wide
+    ; box, more OCR scales, more reel rows) go by this, not by IsIdentity().
+    static Native() => Screen.IsIdentity() && Screen.Ui = 1
+
     ; Sizes checked in game (live, windowed at that client size, 2026-11-11):
     ; fishing, sell, aura swaps, quests, the chat moved out of the way
     static Tested := ["2560x1440", "1920x1080", "1920x1200", "1680x1050", "1600x900"

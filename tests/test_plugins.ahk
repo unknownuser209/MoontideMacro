@@ -316,7 +316,7 @@ Test_Plugins_LimitedKeysMoveToHunting() {
         d2 := PlTmp()
         c2 := Config.Load(d2)
         AssertEq(c2.Get("Plugins.hunting", 0), 1, "hunting plugin on by default")
-        AssertEq(c2.Get("Plugins.sniper", 1), 0, "sniper off by default")
+        AssertEq(c2.Get("Plugins.sniper", "none"), "none", "no built-in sniper (it is a private file plugin)")
         DirDelete(d2, true)
     } finally DirDelete(d, true)
 }
@@ -362,15 +362,15 @@ Test_Plugins_TabListsPluginsAndErrors() {
         host := PluginHost({cfg: cfg, root: dir, builtins: App.BuiltinPlugins(), validate: (r, es) => PlCheckFake(es), resolve: (n) => PluginHost.Resolve(n)})
         host.Boot(), host.BootExternal()
         d := Dashboard(cfg, Map("plugins", () => host))
-        AssertEq(Dashboard.HubOf("Plugins"), Dashboard.HubOf("Quests"), "Plugins tab in Quests & events")
+        AssertTrue(Dashboard.HubOf("Plugins") != Dashboard.HubOf("Quests"), "Plugins has its own hub")
+        AssertEq(Dashboard.Hubs[Dashboard.HubOf("Plugins")].name, "Plugins", "the Plugins hub")
         AssertTrue(!d.TabShown("Hunting") && d.TabShown("Plugins"), "the Limited tab is gone, Plugins is there")
         AssertEq(Dashboard.TabLabel("Hunting"), "Orb & boss hunting", "the hunting page's name")
         d.SelectPage(Dashboard.PageIndex("Plugins"))
         lv := d.Ctrl("pluginList")
-        AssertEq(lv.GetCount(), 4, "two built-in + two files")
+        AssertEq(lv.GetCount(), 3, "one built-in + two files")
         AssertEq(lv.GetText(1, 1), "Orb & boss hunting", "built-in first")
         AssertEq(lv.GetText(1, 4), "Is on", "hunting on")
-        AssertEq(lv.GetText(2, 4), "Is off", "sniper off")
         row := 0
         Loop lv.GetCount()
             if (lv.GetText(A_Index, 1) = "broken.ahk")
@@ -409,50 +409,72 @@ Test_Plugins_TabListsPluginsAndErrors() {
     }
 }
 
-; ---- the public build: no biome sniper (2026-11-27) ------------------------
-; tools\strip_private.py swaps lib\plugins\sniper for a stand-in whose
-; SniperPlugin.Available is false: no built-in row, no Sniper page.
+; ---- the API for plugins that move the player (2026-11-27) ----------------
 
-Test_Plugins_SniperLeftOutWhenNotAvailable() {
-    AssertEq(App.BuiltinPlugins().Length, 2, "the owner's copy: hunting + sniper")
-    old := SniperPlugin.Available
-    SniperPlugin.Available := false
-    try {
-        b := App.BuiltinPlugins()
-        AssertEq(b.Length, 1, "only one built-in")
-        AssertEq(b[1][1], "HuntingPlugin", "the hunting plugin stays")
-    } finally
-        SniperPlugin.Available := old
+; a plugin that draws its own page (BuildPage): Settings opens it, drawn in
+; the dashboard with its helpers, its bound field saved by the page's Save
+class PlPagePlugin extends MoontidePlugin {
+    loads := 0
+    BuildPage(d, page, hooks) {
+        this.field := d._StrField(220, 222, "Speed", "Plugin.pagey.speed", "5", 80)
+        hooks.load := () => this.loads++
+    }
 }
 
-Test_Plugins_DropPageLeavesNoTrace() {
-    pages := Dashboard.Pages.Clone(), builders := Dashboard.Builders.Clone(), subs := Dashboard.Subtitles.Clone()
-    hubs := [], subPages := Dashboard.SubPages.Clone()
-    for h in Dashboard.Hubs
-        hubs.Push(h.pages.Clone())
+Test_Plugins_ApiCallsIntoTheApp() {
+    t := AppTestMake()
+    host := t.app.plugins                       ; the host whose secrets the app scrubs
+    AssertTrue(IsObject(host) && host.app == t.app, "the app has its plugin host")
+    e := Plugins._Blank("mover")
+    e["id"] := "mover", e["name"] := "Mover", e["builtin"] := false
+    api := PluginApi(host, e)
+    AssertEq(api.App, "", "a file plugin gets no App")
+    AssertEq(api.StopTask(), false, "stopped macro: no task to stop")
+    api.HoldRejoin(60000)
+    t.app._OnJoin(Map("type", "join", "name", "other", "ts", "x", "live", 1))
+    AssertEq(t.app.state.ghost, false, "held: no rejoin of the private server")
+    AssertTrue(api.BackToPrivate(), "in another server: back to the private one")
+    AssertEq(t.app.state.ghost, true, "recovery rejoins now")
+    t.app.state.needRepath := false
+    api.Repath()
+    AssertTrue(t.app.state.needRepath, "walks to the spot again")
+    t.app.state.ghost := false, t.app.state.rareActive := true
+    AssertTrue(api.RareHere(), "a rare biome in the own server")
+    t.app.state.rareActive := false
+    AssertTrue(!api.RareHere(), "none")
+    ; a secret handed in is kept out of the log
+    api.Secret("tiger-SECRET-77")
+    AssertTrue(!InStr(UiLogic.LogLine("x tiger-SECRET-77 y", t.app._Secrets()), "tiger-SECRET-77"), "scrubbed")
+    api.Secret("")
+    AssertEq(host.Secrets().Length, 0, "cleared")
+}
+
+Test_Plugins_PluginDrawsItsOwnPage() {
+    dir := PlTmp()
+    d := ""
     try {
-        ps := 0
-        for i, p in Dashboard.Pages
-            if (p = "Plugin settings")
-                ps := Dashboard.Subtitles[i]
-        Dashboard.DropPage("Sniper")
-        for p in Dashboard.Pages
-            AssertTrue(p != "Sniper", "out of Pages")
-        AssertEq(Dashboard.Builders.Length, Dashboard.Pages.Length, "builders still one per page")
-        AssertEq(Dashboard.Subtitles.Length, Dashboard.Pages.Length, "subtitles still one per page")
-        for i, p in Dashboard.Pages {
-            AssertTrue(Dashboard.Builders[i] != "_PageSniper", "its builder gone")
-            if (p = "Plugin settings")
-                AssertEq(Dashboard.Subtitles[i], ps, "the pages after it keep their subtitles")
-        }
-        for h in Dashboard.Hubs
-            for p in h.pages
-                AssertTrue(p != "Sniper", "out of hub " h.name)
-        AssertTrue(!Dashboard.SubPages.Has("Sniper"), "out of SubPages")
+        cfg := Config.Load(dir)
+        host := PluginHost({cfg: cfg, root: dir, builtins: App.BuiltinPlugins()})
+        host.Boot()
+        e := Plugins._Blank("pagey.ahk")
+        e["id"] := "pagey", e["name"] := "Pagey", e["builtin"] := false, e["ok"] := true
+        host.Entries.Push(e)
+        o := PlPagePlugin()
+        o.api := PluginApi(host, e)
+        host._obj["pagey"] := o
+        d := Dashboard(cfg, Map("plugins", () => host))
+        AssertTrue(d.OpenPluginPage("pagey"), "Settings opens it")
+        AssertEq(d.PageOf(o.field), "Plugin page", "drawn in the dashboard")
+        AssertEq(o.loads, 1, "its load hook ran")
+        AssertEq(o.field.Value, "5", "its bound field loaded")
+        AssertTrue(o.field.Visible, "shown")
+        o.field.Value := "9"
+        d.SavePage("Plugin page")
+        AssertEq(cfg.Get("Plugin.pagey.speed", ""), "9", "saved by the page's Save")
+        AssertEq(Dashboard.HubOf("Plugin page"), Dashboard.HubOf("Plugins"), "under the Plugins tab")
+        AssertTrue(!d.TabShown("Plugin page"), "no tab of its own")
     } finally {
-        Dashboard.Pages := pages, Dashboard.Builders := builders, Dashboard.Subtitles := subs
-        Dashboard.SubPages := subPages
-        for i, h in Dashboard.Hubs
-            h.pages := hubs[i]
+        try IsObject(d) && d.Destroy()
+        try DirDelete(dir, true)
     }
 }

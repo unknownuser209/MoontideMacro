@@ -821,6 +821,8 @@
   "Plugins": "Plugins",
   "Orb & boss hunting": "Caza de orbes y jefes",
   "Plugin settings": "Ajustes del plugin",
+  "A plugin's own page.": "La página propia de un plugin.",
+  "Plugin page": "Página del plugin",
   "Orb & boss hunting (plugin)": "Caza de orbes y jefes (plugin)",
   "A built-in plugin: switched off on the Plugins tab, none of this page runs.": "Un plugin incluido: si lo apagas en la pestaña Plugins, nada de esta página funciona.",
   "Orb & boss hunting (Plugins tab) and the obby stay off here: turn them on in the dashboard when you want them.": "La caza de orbes y jefes (pestaña Plugins) y el obby quedan apagados aquí: actívalos en el panel cuando quieras.",

@@ -338,6 +338,24 @@ Test_SilentStop_AwaySwitchDefaultsAndHelp() {
     AssertTrue(App.UserBusy() = true || App.UserBusy() = false, "the real check never throws")
 }
 
+; Windows says "a fullscreen app runs" for Roblox itself and for the screen
+; dim (the macro's own window): only someone else's fullscreen window in
+; front keeps Roblox from being brought back (2026-11-27: paused 44 min
+; behind an iCUE crash dialog, every refocus refused)
+Test_SilentStop_AwayNotBlockedByRobloxOrTheDim() {
+    f := (mine, roblox, full) => {mine: mine, roblox: roblox, full: full}
+    AssertEq(App.BusyFrom(1, ""), true, "locked / screen saver")
+    AssertEq(App.BusyFrom(4, ""), true, "presentation mode")
+    AssertEq(App.BusyFrom(5, ""), false, "normal")
+    AssertEq(App.BusyFrom(2, f(false, false, false)), false, "a small dialog in front (the iCUE crash window)")
+    AssertEq(App.BusyFrom(2, f(false, true, true)), false, "Roblox fullscreen")
+    AssertEq(App.BusyFrom(3, f(true, false, true)), false, "the macro's own fullscreen window (the screen dim)")
+    AssertEq(App.BusyFrom(2, f(false, false, true)), true, "someone else's fullscreen app (a film, another game)")
+    AssertEq(App.BusyFrom(3, ""), true, "fullscreen, front unknown: leave it")
+    fi := App.FrontInfo()
+    AssertTrue(fi.HasOwnProp("mine") && fi.HasOwnProp("roblox") && fi.HasOwnProp("full"), "the real front never throws")
+}
+
 ; Settings > Recovery: the switch is bound, inside its card, overlaps
 ; nothing, saves, and the search finds it
 Test_SilentStop_AwaySwitchOnTheDashboard() {

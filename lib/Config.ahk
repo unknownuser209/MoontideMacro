@@ -230,7 +230,6 @@ class Config {
         ; a plugin dropped into plugins\ is off until switched on.
         pl := Config._CIMap()
         pl["hunting"] := "1"
-        pl["sniper"] := "0"
         d["Plugins"] := pl
         ; Rare aura alert (2026-11-16): a new aura the player rolled, as rare
         ; as minRarity or rarer, goes to the Rare webhooks with a screenshot
