@@ -58,7 +58,9 @@ class LogBundle {
 
     ; One piece of text: UiLogic.Scrub, the extra secrets, then the user name.
     static ScrubText(text, secrets := "", userName := "") {
-        s := UiLogic.Scrub(text, secrets, true)
+        ; the name goes to Scrub too (bug hunt 2026-11-27: "C:\Users\Jane Doe"
+        ; became "<user> Doe" there, and the name pass below found no "Jane Doe")
+        s := UiLogic.Scrub(text, secrets, true, userName)
         ; Discord user / channel ids (17-20 digits; Remote logs who wrote)
         s := RegExReplace(s, "(?<!\d)\d{17,20}(?!\d)", "[id]")
         userName := Trim(String(userName))

@@ -9,7 +9,10 @@
 ;   UiLogic.Scrub(text, secrets)   one line; Discord webhook URLs -> [webhook],
 ;                                  roblox.com / ro.blox.com / roblox:// links
 ;                                  and privateServerLinkCode=... -> [link],
-;                                  every non-empty exact secret -> [secret].
+;                                  every non-empty exact secret -> [secret],
+;                                  C:\Users\<name> -> C:\Users\<user> (4th
+;                                  arg userName, default A_UserName: a name
+;                                  with a space is hidden whole).
 ;   UiLogic.LogLine(text, secrets, now := A_Now)  "HH:mm:ss  " Scrub(text)
 ;   UiLogic.UnlockTitle(p) / UnlockText(p)   confirm dialog strings for a
 ;                                  potion Map {name, perBiome, perDay, perRun}.
@@ -75,14 +78,19 @@ class UiLogic {
         return (typed = "") ? old : typed
     }
 
-    static Scrub(text, secrets := "", keepLines := false) {
+    static Scrub(text, secrets := "", keepLines := false, userName := "") {
         s := keepLines ? String(text) : RegExReplace(String(text), "[\r\n]+", " ")   ; keepLines: Discord embeds keep line breaks
         s := RegExReplace(s, "i)(?:https?://)?(?:[\w-]+\.)*discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\S*", "[webhook]")
         s := RegExReplace(s, "i)(?:https?://)?(?:[\w-]+\.)*roblox\.com/\S*", "[link]")
         s := RegExReplace(s, "i)(?:https?://)?ro\.blox\.com/\S*", "[link]")
         s := RegExReplace(s, "i)\broblox(?:-player)?:(?://|(?=\S))\S*", "[link]")
         s := RegExReplace(s, "i)(privateServerLinkCode|linkCode|share\?code)=\S*", "$1=[hidden]")
-        ; the Windows user name in paths ("screen saved to C:\Users\<name>\...")
+        ; the Windows user name in paths ("screen saved to C:\Users\<name>\...").
+        ; bug hunt 2026-11-27: a local account "Jane Doe" came out as
+        ; "C:\Users\<user> Doe\..." (the rule below stops at a space), so this
+        ; PC's own names with a space go first, whole
+        for nm in UiLogic._SpacedNames(userName)
+            s := RegExReplace(s, "i)\b([A-Z]:[\\/]Users[\\/])" UiLogic._ReEsc(nm) "(?!\w)", "$1<user>")
         s := RegExReplace(s, "i)\b([A-Z]:[\\/]Users[\\/])[^\\/\s]+", "$1<user>")
         if IsObject(secrets) {
             for sec in secrets {
@@ -93,6 +101,24 @@ class UiLogic {
         }
         return s
     }
+
+    ; userName (default A_UserName) and this PC's profile folder name (it keeps
+    ; the old name after an account rename), only those with a space in them:
+    ; the generic C:\Users\<name> rule already hides the rest
+    static _SpacedNames(userName := "") {
+        out := []
+        nm := Trim(String(userName))
+        prof := ""
+        try prof := RegExReplace(RTrim(EnvGet("USERPROFILE"), "\/"), "^.*[\\/]")
+        for v in [nm != "" ? nm : A_UserName, A_UserName, prof] {
+            v := Trim(String(v))
+            if RegExMatch(v, "\S\s+\S")
+                out.Push(v)
+        }
+        return out
+    }
+
+    static _ReEsc(s) => RegExReplace(s, "[\\.*?+\[\](){}|^$]", "\$0")
 
     static LogLine(text, secrets := "", now := "") {
         if (now = "")

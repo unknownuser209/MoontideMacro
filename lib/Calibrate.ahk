@@ -329,8 +329,10 @@ class Calibrate {
     ; The Screen mode each step's window maps in (lib\Screen.ahk): the
     ; inventory, the Aura Storage and the Fisher's purchase window scale
     ; evenly ("C"), the quest panel hugs the right edge ("RH"; its Exit and
-    ; > stretch); the rest stretches ("S"). As the tasks use them.
-    static ModeC := ["inv_", "aura_", "fisher_qty", "fisher_confirm", "fisher_purchase_close"]
+    ; > stretch); the rest stretches ("S"). As the tasks use them. The Biome
+    ; Selector is worked in "C" (BiomeItemsTask._Use; bug hunt 2026-11-27:
+    ; recorded in "S", a 1920x1200 list came out 10 % short and its X missed).
+    static ModeC := ["inv_", "aura_", "fisher_qty", "fisher_confirm", "fisher_purchase_close", "selector_"]
     static ModeRH := ["quest_board_rect", "quest_accept", "quest_dismiss"]
     static ModeOf(id) {
         id := String(id)
@@ -387,11 +389,12 @@ class Calibrate {
         csv := Calibrate.DefaultPotions
         known := ""
         if IsObject(Calibrate._cfg) {
+            ; the default only when the key is missing (an older settings.ini);
+            ; an empty list is nothing ticked (bug hunt 2026-11-27: every row
+            ; unticked still bought Lucky Potion)
             csv := Calibrate._cfg.Get("Craft.potions", csv)
             known := true
         }
-        if (Trim(csv) = "")
-            csv := Calibrate.DefaultPotions
         out := []
         skipped := []
         seen := Map()
@@ -688,7 +691,10 @@ class Calibrate {
             this._err := ""
             try {
                 if (s["kind"] = "point") {
-                    color := Pixel.Get(x, y)
+                    ; sampled in the mode the point was mapped back in, so at
+                    ; the hovered pixel (bug hunt 2026-11-27: "S" took
+                    ; fisher_confirm's colour ~8 px lower at 16:10)
+                    color := Screen.WithMode(Calibrate.ModeOf(s["id"]), () => Pixel.Get(x, y))
                     this._Advance()
                     Calibrate.SetPoint(s["id"], x, y, color)
                 } else if !IsObject(this._corner) {

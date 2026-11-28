@@ -103,6 +103,10 @@ class LogWatch {
     _pending := false                ; a join waits for its GameJoinLoadTime line (_JoinLine)
     _pendingAt := 0                  ; TickFn when that join was seen
     _pendingTs := ""
+    _pendingJob := ""                ; the job (server) id of that join
+    _samePriv := false               ; that join reconnects to _privJob's server
+    _privJob := ""                   ; job id of the last private join in this log (memory only, never logged)
+    _dropped := false                ; a Client:Disconnect line since the last join
     _joinTs := ""                    ; ts of the last join seen during backfill / the prefix scan
     _skipFirst := false
     _backfilling := true             ; true until the first read completes
@@ -298,13 +302,15 @@ class LogWatch {
             ; made): on from where it was left, its old lines are no news
             ; (live 2026-11-24 13:27:47: three old biomes came again, cards too)
             if (this.Path != "" && this.Offset >= 0)
-                this._seen[this.Path] := {offset: this.Offset, skip: this._skipFirst, join: this.CurrentJoin, joinTs: this._joinTs}
+                this._seen[this.Path] := {offset: this.Offset, skip: this._skipFirst, join: this.CurrentJoin, joinTs: this._joinTs, privJob: this._privJob}
             this.Path := path
             this.Offset := -1
             this.CurrentJoin := "", this._lastReq := "", this._joinTs := "", this._tele := ""
+            this._privJob := "", this._dropped := false
             if this._seen.Has(path) {
                 s := this._seen.Delete(path)
                 this.Offset := s.offset, this._skipFirst := s.skip, this.CurrentJoin := s.join, this._joinTs := s.joinTs
+                this._privJob := s.privJob
             }
             if (this._seen.Count > 16)
                 this._seen.Clear()
@@ -447,7 +453,17 @@ class LogWatch {
     ; teleport has "referral_page:" empty). So a join without a private
     ; request waits for that line; _FlushJoin ends the wait as "other".
     ; Before this every such rejoin read as a ghost server.
+    ; A join to the server (job id) of the last private join, after a
+    ; Client:Disconnect, is that private server again (live 2026-11-27
+    ; 19:08: Roblox's own reconnect, "referral_page:" empty, read as a ghost
+    ; server; Start closed a client that was in the private server all along,
+    ; and the macro's rejoin joined the very same job). So were the game's
+    ; teleports into the same job (05:26 .. 06:46, ticket 1 / 6).
     _JoinLine(line) {
+        if InStr(line, "[DFLog::NetworkClient] Client:Disconnect") {
+            this._dropped := true
+            return ""
+        }
         if InStr(line, "doTeleport: joinScriptUrl") {
             this._tele := LogWatch.TeleportKind(line)
             this._tele.at := (LogWatch.TickFn)()
@@ -460,13 +476,17 @@ class LogWatch {
             return ""
         }
         if InStr(line, "! Joining game ") {
+            job := RegExMatch(line, "! Joining game '([^']+)'", &jm) ? jm[1] : ""
+            same := (job != "" && job == this._privJob && this._dropped)
+            this._dropped := false
             if (this._lastReq == LogWatch.PRIVATE_REQUEST) {
                 this._lastReq := "", this._pending := false, this._tele := ""
-                this.CurrentJoin := "private"
+                this.CurrentJoin := "private", this._privJob := job
                 return "private"
             }
             this._lastReq := ""
             this._pending := true, this._pendingTs := LogWatch._Ts(line), this._pendingAt := (LogWatch.TickFn)()
+            this._pendingJob := job, this._samePriv := same
             ; a ticket from a teleport that never joined (> 10 s ago) is not this join's
             if (IsObject(this._tele) && this._tele.HasOwnProp("at") && this._pendingAt - this._tele.at > 10000)
                 this._tele := ""
@@ -474,11 +494,19 @@ class LogWatch {
         }
         if (this._pending && InStr(line, "[FLog::GameJoinLoadTime]")) {
             this._pending := false
-            this.CurrentJoin := (InStr(line, "referral_page:" LogWatch.PRIVATE_REQUEST) || this._PrivateTeleport()) ? "private" : "other"
-            this._tele := ""
-            return this.CurrentJoin
+            this.CurrentJoin := (InStr(line, "referral_page:" LogWatch.PRIVATE_REQUEST) || this._PrivateTeleport() || this._samePriv) ? "private" : "other"
+            return this._Resolved()
         }
         return ""
+    }
+
+    ; the pending join got its kind (CurrentJoin): a private one's server is
+    ; remembered (a reconnect to it stays private) -> CurrentJoin
+    _Resolved() {
+        if (this.CurrentJoin = "private")
+            this._privJob := this._pendingJob
+        this._tele := "", this._pendingJob := "", this._samePriv := false
+        return this.CurrentJoin
     }
 
     ; The teleport ticket on a doTeleport joinScriptUrl line (URL-encoded
@@ -498,9 +526,8 @@ class LogWatch {
         if !this._pending
             return ""
         this._pending := false
-        this.CurrentJoin := this._PrivateTeleport() ? "private" : "other"
-        this._tele := ""
-        return this.CurrentJoin
+        this.CurrentJoin := (this._PrivateTeleport() || this._samePriv) ? "private" : "other"
+        return this._Resolved()
     }
 
     _Process(text, events, backfill) {

@@ -141,6 +141,9 @@ class QuestsTask {
         ; the button's colour (ButtonColour): read from the screen in the
         ; real task, from deps "rect" in tests; a faked ocr without one: none
         this._colourOn := !(IsObject(deps) && deps.HasOwnProp("ocr")) || (IsObject(deps) && deps.HasOwnProp("rect"))
+        ; the board pass of this run got done (App._RunTask: a preempt after
+        ; it does not make the run due again; bug hunt 2026-11-27)
+        this.finished := false
     }
 
     CanRun(state) {
@@ -233,6 +236,7 @@ class QuestsTask {
                     return 0
                 }
                 done := this._Pass(ctx, area)
+                this.finished := !ctx.ShouldStop()
                 if !CleanupCtx.Halted(ctx)
                     this._CloseBoard(cc, this._CloseRH(), area)
             } finally

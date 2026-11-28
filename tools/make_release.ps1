@@ -1,14 +1,23 @@
 # Builds dist\MoontideMacro-v<version>.zip from the tracked program files.
 # Run from anywhere:  powershell -NoProfile -File tools\make_release.ps1
 # It only writes under dist\ : it does NOT push, tag or publish anything.
-# The version is Brand.Version in lib\Brand.ahk (bump it before building).
+# The version is Brand.Version in the COMMITTED lib\Brand.ahk (bump and commit it before building).
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$brand = Get-Content -Raw (Join-Path $root 'lib\Brand.ahk')
-if ($brand -notmatch 'static Version := "([^"]+)"') { throw 'Brand.Version not found in lib\Brand.ahk' }
+# Read from HEAD, the commit the zip packs (git archive below). Bug hunt
+# 2026-11-27: the working copy's version named the zip, so a bump not yet
+# committed (the pre-commit hook runs 30+ min) gave a v<new> zip holding the
+# old Brand.Version, and the updater offered it again after every install.
+$brand = (git show HEAD:lib/Brand.ahk) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw 'git show HEAD:lib/Brand.ahk failed' }
+if ($brand -notmatch 'static Version := "([^"]+)"') { throw 'Brand.Version not found in lib\Brand.ahk (HEAD)' }
 $version = $Matches[1]
+$work = Get-Content -Raw (Join-Path $root 'lib\Brand.ahk')
+if (($work -match 'static Version := "([^"]+)"') -and ($Matches[1] -ne $version)) {
+    throw "lib\Brand.ahk says $($Matches[1]) but HEAD has $($version): commit the version bump first"
+}
 
 # Never shipped: settings, per-user state, logs, dev tooling, tests and docs.
 # The tracked data defaults ARE shipped (routes recorded with VIP, the empty
@@ -18,6 +27,8 @@ $version = $Matches[1]
 $exclude = @(
     '^settings\.ini$', '^logs/', '^exports/', '^imported/', '^backup/', '^dist/', '^update_tmp/',
     '^\.harness/', '^\.claude/', '^\.superpowers/', '^tests/', '^docs/', '^private/',
+    # the owner's Discord bot and dev-only helpers (publish.sh drops them from the public repo too)
+    '^discord_bot/', '^dev/',
     '^\.gitattributes$', '^\.gitignore$',
     # only the plugins readme and example ship: never a player's plugins or plugins/.loaded
     '^plugins/(?!README\.txt$|example_plugin\.ahk\.txt$)',

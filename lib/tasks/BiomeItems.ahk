@@ -438,10 +438,12 @@ class BiomeItemsTask {
     }
 
     ; The App's between-tasks check (Tidy): the Biome Selector list (Esc, the
-    ; way _CloseSelector does; only while a Drive's name reads in it).
+    ; way _CloseSelector does; only while a Drive's name reads in it). In
+    ; mode "C" like the task (bug hunt 2026-11-27: the tidy runs in "S", so
+    ; at 16:10 its X click landed ~40 px above the real X).
     Leftovers() {
-        sel := {up: () => this._SelectorUp() ? "Biome Selector list" : ""
-            , close: (label, ctx) => this._TidySelector(ctx)}
+        sel := {up: () => Screen.WithMode("C", () => this._SelectorUp()) ? "Biome Selector list" : ""
+            , close: (label, ctx) => Screen.WithMode("C", () => this._TidySelector(ctx))}
         return [sel]
     }
 
@@ -596,9 +598,11 @@ class BiomeItemsTask {
         ; start there (2026-10-27 review: a Drive not found started the 20 min
         ; server cooldown although nothing was used). Until then it is held,
         ; so no exit before Confirm brings it back on the next tick.
+        ; Held MissingRetryMin (bug hunt 2026-11-27: the hold an earlier stop
+        ; left, 10 min after a screen stop, carried over).
         sel := (it.key = "biomeSelector")
         if sel
-            this._missing[it.key] := env.Now()
+            this._missing[it.key] := env.Now(), this._holdMs[it.key] := BiomeItemsTask.MissingRetryMin * 60000
         else
             this._Used(it)
         if !env.Wait(BiomeItemsTask.UseMs, ctx)
@@ -1403,19 +1407,29 @@ class BiomeItemsTask {
 
     ; The Drive did not read after Use: nothing confirmed. Closes the
     ; Selector and the inventory instead of leaving them over the screen for
-    ; the next task (2026-10-27 review); the Selector stays held for
-    ; MissingRetryMin. -> 0, or -1 halted (F3 / pause)
+    ; the next task (2026-10-27 review). Held like a refusal (_Fail): for
+    ; MissingRetryMin, doubled per one in a row, the errors webhook for the
+    ; first only, or while the Selector may still be open (bug hunt
+    ; 2026-11-27: every one was reported, and held whatever the last refusal
+    ; left: a webhook and the Selector opened every 10-30 min all night).
+    ; -> 0, or -1 halted (F3 / pause)
     _NoDrive(c, it, drive, ctx) {
         env := this._env
-        env.Log("biome items: " drive " not found in the Biome Selector list; nothing confirmed")
+        n := (this._fails.Has(it.key) ? this._fails[it.key] : 0) + 1
+        this._fails[it.key] := n
+        holdMin := Min(BiomeItemsTask.MissingRetryMin * 2 ** (n - 1), BiomeItemsTask.MissingMaxMin)
+        this._missing[it.key] := env.Now()
+        this._holdMs[it.key] := holdMin * 60000
+        env.Log("biome items: " drive " not found in the Biome Selector list; nothing confirmed (next try in " Round(holdMin) " min)")
         r := this._CloseSelector(c, it, CleanupCtx(ctx))     ; a preempt still closes what Use opened
         if (r < 0)
             return -1
         ; not calibrated and not found on screen: it cannot be seen or closed
         placed := IsObject(this._SelRect())
-        env.Report("errors", "Biome Selector: Drive not found", drive " was not read in the list (selector_list_rect); nothing confirmed"
-            . (!placed ? ". The Selector's list was not found on screen: if it is still open, close it yourself (recording selector_list_rect on the Calibrate page helps)."
-            : r ? "; the Selector and the inventory were closed." : ". The Selector is still open: close it yourself."), 0xE74C3C)
+        if (n = 1 || !placed || !r)
+            env.Report("errors", "Biome Selector: Drive not found", drive " was not read in the list (selector_list_rect); nothing confirmed"
+                . (!placed ? ". The Selector's list was not found on screen: if it is still open, close it yourself (recording selector_list_rect on the Calibrate page helps)."
+                : r ? "; the Selector and the inventory were closed." : ". The Selector is still open: close it yourself."), 0xE74C3C)
         return 0
     }
 

@@ -74,9 +74,11 @@ class Profiles {
                 ["General.fishing", 1], ["Quests.enabled", 1], ["Merchant.enabled", 1], ["Craft.enabled", 1], ["Craft.cauldron", 0],
                 ["BiomeItems.biomeSelector", 0], ["Obby.enabled", 0], ["MemoryMatch.enabled", 0], ["Minions.enabled", 0], ["Limbo.enabled", 0],
                 ["Recovery.enabled", 1], ["Recovery.antiGhost", 1]]
+            ; "crafting off" includes Stella's cauldron (bug hunt 2026-11-27:
+            ; it runs without the Fish shop and kept using the materials)
             case "Memory Match only": return [
                 ["MemoryMatch.enabled", 1], ["General.fishing", 0], ["Quests.enabled", 0], ["Merchant.enabled", 0], ["Craft.enabled", 0],
-                ["BiomeItems.enabled", 0], ["Obby.enabled", 0], ["Minions.enabled", 0], ["Limbo.enabled", 0],
+                ["Craft.cauldron", 0], ["BiomeItems.enabled", 0], ["Obby.enabled", 0], ["Minions.enabled", 0], ["Limbo.enabled", 0],
                 ["Recovery.enabled", 1], ["Recovery.antiGhost", 1]]
         }
         throw ValueError("Profiles: no profile '" name "'")

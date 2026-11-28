@@ -356,7 +356,15 @@ class CalTest {
         if L.aborted
             return
         tab := L.V("inv_items_tab"), openPt := L.V("inv_open")
+        ; open already: its tabs read where recorded, or the window is found
+        ; on screen. bug hunt 2026-11-27: with inv_items_tab off, an open
+        ; inventory was taken for closed, inv_open's click shut it, then
+        ; inv_open got REDO and the tab (the wrong step) NOT TESTED.
         was := L.TabsRead(tab)
+        if !was {
+            pre := AutoCal.Inventory(L.Lines("C"))
+            was := IsObject(pre) && L.TabsRead(pre.tab)
+        }
         clicked := false
         if was
             L.Set("inv_open", "untested", "not tested: the inventory was open already (left as it was)")
@@ -492,7 +500,13 @@ class CalTest {
         op := L.V("aura_open"), srch := L.V("aura_search")
         eq := L.Can("aura_equip") ? L.V("aura_equip") : ""
         clicked := false
-        if L.TitleRead(srch) {
+        ; open already: as _AuraClose's check (its title over aura_search,
+        ; the [Information] header over aura_equip, or the title found on
+        ; screen). bug hunt 2026-11-27: with aura_search off, the open
+        ; storage was shut by aura_open's click, aura_open got REDO and
+        ; aura_search NOT TESTED. The header read on no other of the 397
+        ; tests\screens frames.
+        if (L.TitleRead(srch) || (IsObject(eq) && L.PanelRead(eq)) || IsObject(CalTest.StorageLine(L.Lines("C")))) {
             L.Set("aura_open", "untested", "not tested: the Aura Storage was open already (left as it was)")
             if L.Can("aura_close")
                 L.Set("aura_close", "untested", "not tested: the Aura Storage was open already (left as it was)")

@@ -36,6 +36,18 @@ class TileDigits {
         "9", "01111111101110000111111000011111100001111110000111111000011111100001111110000111011111111100000001110110000111011000011101100001110111111110")
 
     static Read(x, y, w, h) {
+        ; a DESIGN box, mapped like every Ocr read (bug hunt 2026-11-27: it
+        ; was blitted as screen px, so at 1080p or on a second monitor the
+        ; count was read from other pixels and fell back to the garbling OCR)
+        ; the glyphs are 1440p-sized: at any other scale they read as ""
+        ; or worse (resampled x1.5: "87" as "07"), and a wrong count feeds
+        ; the potion plan, so only s = 1 (1440p anywhere on the desktop)
+        if (Screen.s != 1)
+            return ""
+        if !Screen.IsIdentity() {
+            r := Screen.Rect(x, y, w, h)
+            x := r.x, y := r.y, w := r.w, h := r.h
+        }
         if (w < 8 || h < 8)
             return ""
         g := ""

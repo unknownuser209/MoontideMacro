@@ -238,7 +238,9 @@ Settings types: `bool`, `int`, `text`, `secret` (hidden; kept out of exports
 and log zips), at most 8. They are stored in `settings.ini` under
 `[Plugin.<id>]`.
 
-Hooks (all optional): `OnLoad()`, `OnStart()`, `OnStop()`, `OnTick()` (about
+Hooks (all optional): `OnLoad()`, `OnStart()`, `OnStop()`, `OnOff()` (once,
+when the plugin stops running: switched off, stopped for errors or replaced;
+stop your own timers and helpers there), `OnTick()` (about
 every 250 ms, started or not: keep it short, never `Sleep`),
 `OnBiome(biome, prev)`, and `Task()`, which may return a scheduler task
 `{priority, CanRun(state), Run(ctx)}`: it then gets turns like the macro's own

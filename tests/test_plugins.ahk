@@ -116,7 +116,7 @@ Test_Plugins_ScanListsGoodAndBroken() {
         PlPut(dir "\mine.ahk", PlHeader("hunting", "Mine"))
         PlPut(dir "\empty_folder\notes.md", "x")
         PlPut(dir "\.loaded\_enabled.ahk", "; made")
-        es := Plugins.Scan(dir, ["sniper"])
+        es := Plugins.Scan(dir, ["mover"])
         AssertEq(es.Length, 7, "README and .loaded get no row")
         g := PlFind(es, "good.ahk")
         AssertTrue(g["ok"] && g["id"] = "good" && g["stamp"] != "", "good file ok")
@@ -316,7 +316,7 @@ Test_Plugins_LimitedKeysMoveToHunting() {
         d2 := PlTmp()
         c2 := Config.Load(d2)
         AssertEq(c2.Get("Plugins.hunting", 0), 1, "hunting plugin on by default")
-        AssertEq(c2.Get("Plugins.sniper", "none"), "none", "no built-in sniper (it is a private file plugin)")
+        AssertEq(c2.Get("Plugins.mover", "none"), "none", "a file plugin has no default (off until switched on)")
         DirDelete(d2, true)
     } finally DirDelete(d, true)
 }

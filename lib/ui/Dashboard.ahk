@@ -2531,13 +2531,27 @@ class Dashboard {
         }
         p.load := ObjBindMethod(this, "_CraftLoad")
         p.save := ObjBindMethod(this, "_CraftSave")
+        p.validate := ObjBindMethod(this, "_CraftCheck")
         this._SaveBar(p)
+    }
+
+    ; bug hunt 2026-11-27: every Fisher shop row unticked saved an empty list,
+    ; and the buy then fell back to the default potion (Calibrate.Potions:
+    ; blank -> Lucky Potion): Fish shop on needs a potion ticked
+    _CraftCheck() {
+        if !this.Ctrl("Craft.enabled").Value
+            return ""
+        for r in this._craftRows
+            if r.chk.Value
+                return ""
+        return "Fisher shop: tick a potion to buy, or turn Fish shop off"
     }
 
     _CraftLoad() {
         sel := Map()
         sel.CaseSense := "Off"
-        for n in UiLogic.CsvToArray(this.cfg.Get("Craft.potions", ""))
+        ; no list in an older settings.ini: the task buys the default (Calibrate.Potions), so show it ticked
+        for n in UiLogic.CsvToArray(this.cfg.Get("Craft.potions", Calibrate.DefaultPotions))
             sel[n] := true
         for r in this._craftRows {
             r.chk.Value := sel.Has(r.name)
@@ -2597,8 +2611,15 @@ class Dashboard {
         this._BoolField(692, 566, "Use potions for Use quests", "DailyQuests.usePotions", 0)
         p.load := ObjBindMethod(this, "_QuestLoad")
         p.save := ObjBindMethod(this, "_QuestSave")
+        p.validate := () => this._DataBad("quests")
         this._SaveBar(p)
     }
+
+    ; bug hunt 2026-11-27: a data json that does not parse loads as the
+    ; built-in defaults (Config._LoadData); Save wrote those over the
+    ; player's file (merchant lists, biome potions, caps, quest ticks gone).
+    ; Refused before anything is written, as ResetRoute does for routes.json.
+    _DataBad(name) => (this.cfg.DataStatus(name) = "bad") ? "data\" name ".json does not parse; fix or restore it first (nothing changed)" : ""
 
     _QuestLoad() {
         tv := this._tv
@@ -2706,6 +2727,7 @@ class Dashboard {
         Theme.Label(g, "x632 y480 w364 h40", "Buys what is on these lists when Mari or Jester visits.", "muted")
         p.load := ObjBindMethod(this, "_MerchLoad")
         p.save := ObjBindMethod(this, "_MerchSave")
+        p.validate := () => this._DataBad("merchants")
         this._SaveBar(p)
     }
 
@@ -2879,6 +2901,7 @@ class Dashboard {
         this._ids["bpDdl"] := this._bpDdl, this._ids["bpQty"] := this._bpQty
         p.load := ObjBindMethod(this, "_BiomesLoad")
         p.save := ObjBindMethod(this, "_BiomesSave")
+        p.validate := () => this._DataBad("biomes")
         this._SaveBar(p)
     }
 
@@ -2917,6 +2940,7 @@ class Dashboard {
         this._SetHidden(this._btnRelock, true)
         p.load := ObjBindMethod(this, "_PotionsLoad")
         p.save := ObjBindMethod(this, "_PotionsSave")
+        p.validate := () => this._DataBad("potions")
         this._SaveBar(p)
     }
 
@@ -3156,6 +3180,11 @@ class Dashboard {
         if !this._pSel
             return false
         e := this._pot[this._pSel]
+        if ((why := this._DataBad("potions")) != "") {      ; it saves at once: never the defaults over the file
+            this._SetPageStatus(this._PageByName("Potions"), I18n.T("Not saved:") " " why, true)
+            this.Log("Potions: " e["name"] " not unlocked: " why)
+            return false
+        }
         live := this._LivePotion(e)
         if !IsObject(live) {
             this.Log("Potions: " e["name"] " is not in the saved potions.json; not unlocked")
@@ -3183,9 +3212,15 @@ class Dashboard {
         live := this._LivePotion(e)
         if IsObject(live) {
             live["locked"] := 1
-            try this.cfg.SaveData("potions")
-            catch Any as err
-                this.Log("Potions: re-lock of " e["name"] " not saved: " err.Message)
+            ; a potions.json that does not parse: locked for this run, the file left alone
+            if ((why := this._DataBad("potions")) != "") {
+                this._SetPageStatus(this._PageByName("Potions"), I18n.T("Not saved:") " " why, true)
+                this.Log("Potions: re-lock of " e["name"] " not saved: " why)
+            } else {
+                try this.cfg.SaveData("potions")
+                catch Any as err
+                    this.Log("Potions: re-lock of " e["name"] " not saved: " err.Message)
+            }
         }
         this.Log("Potions: re-locked " e["name"])
         this._Fire("potionsChanged")
@@ -6451,7 +6486,10 @@ class Dashboard {
         can := e["ok"] || e["builtin"]
         this._HideParts(this._plOnParts, !can)
         on.Value := (can && Plugins.On(this.cfg, e["id"], e["def"])) ? 1 : 0
-        hasSet := can && ((e["builtin"] && e["page"] != "") || e["settings"].Length > 0)
+        ; bug hunt 2026-11-27: a plugin that draws its own page (BuildPage) with
+        ; no "; setting:" lines had no Settings button: its page could not be opened
+        hasSet := can && ((e["builtin"] && e["page"] != "") || e["settings"].Length > 0
+            || (this.HasOwnProp("_ppGroups") && this._ppGroups.Has(e["id"])))
         this._HideParts(this._plSetParts, !hasSet)
         Theme.SetText(this.Ctrl("pluginStatus"), IsObject(host) ? PluginHost.StatusText(host.Status(e)) : "")
     }
@@ -6832,9 +6870,12 @@ class Dashboard {
             this._Panel(616, 304, 396, 140, "Dim screens (dev)", "Dims every monitor while the macro runs, so your room stays dark. "
                 . "The macro's screen reads and recordings never see the dim.")
             this._ids["devDim"] := this._BoolField(632, 338, "Dim my screens while it runs", "Dev.dim", 0)
-            this._ids["devDimPct"] := this._IntField(632, 376, "How dark", "Dev.dimPct", 95, "%", 170, 5)
+            this._ids["devDimPct"] := this._IntField(632, 376, "How dark", "Dev.dimPct", 95, "%", 170, 5, 98)   ; ScreenDim.Pct: 5..98
         }
         p.onShow := ObjBindMethod(this, "_DevToolsShow")
+        ; bug hunt 2026-11-27: the dim switch and How dark were bound but the
+        ; page had no Save bar: never saved, and the unsaved dot blocked Look > Apply
+        this._SaveBar(p)
     }
 
     ; the Downloads (dev) panel: GitHub's counts for [Update] repo

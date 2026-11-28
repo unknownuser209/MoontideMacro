@@ -5,7 +5,8 @@
 ; Config keys (read live from cfg.Get each tick):
 ;   Schedule.enabled  0
 ;   Schedule.start    "22:00"   (HH:mm local; a bad value = the default)
-;   Schedule.end      "08:00"   start = end means all day; start > end is an
+;   Schedule.end      "08:00"   start = end means all day (each window runs
+;                               24 h from the start time); start > end is an
 ;                               overnight window
 ;   Schedule.maxHours 0         0 = no limit
 ;
@@ -92,13 +93,14 @@ class RunSchedule {
         return [s = "" ? RunSchedule.DefaultStart : s, e = "" ? RunSchedule.DefaultEnd : e]
     }
 
-    ; Identifies the window a stamp is in: the date the window began.
+    ; Identifies the window a stamp is in: the date the window began. All
+    ; day (start = end) is a 24 h window from the start time (bug hunt
+    ; 2026-11-27: its key was "all", kept in the state file, so after the
+    ; first stop it never started again, on any day).
     _WindowKey(stamp) {
         tm := this._Times()
-        if (tm[1] = tm[2])
-            return "all"
         hhmm := SubStr(stamp, 9, 2) ":" SubStr(stamp, 11, 2)
-        if (RunSchedule.Mins(tm[1]) > RunSchedule.Mins(tm[2]) && RunSchedule.Mins(hhmm) < RunSchedule.Mins(tm[2]))
+        if (RunSchedule.Mins(tm[1]) >= RunSchedule.Mins(tm[2]) && RunSchedule.Mins(hhmm) < RunSchedule.Mins(tm[2]))
             return SubStr(DateAdd(SubStr(stamp, 1, 8) "000000", -1, "Days"), 1, 8)
         return SubStr(stamp, 1, 8)
     }

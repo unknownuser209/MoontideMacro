@@ -10,7 +10,8 @@
 ; setting: ping | bool | 0 | Also send it to Discord (Biome webhooks)
 
 ; A Moontide plugin is one class that extends MoontidePlugin. Every hook is
-; optional: OnLoad(), OnStart(), OnStop(), OnTick(), OnBiome(biome, prev) and
+; optional: OnLoad(), OnStart(), OnStop(), OnOff() (it stopped running: stop
+; your own timers there), OnTick(), OnBiome(biome, prev) and
 ; Task() (a scheduler task {priority, CanRun(state), Run(ctx)}).
 ; this.api: Log, Get, Set, Save, Notify, Biome, IsStarted, Dir, Id, Name.
 ; The README (Plugins) has the whole list.

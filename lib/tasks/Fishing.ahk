@@ -47,6 +47,7 @@ class FishingTask {
     name := "fishing"
     priority := 99
     _cardGone := false          ; the last catch card was seen closing (no leftover check before the next cast)
+    _cardSeen := false          ; _Result read the catch card (not a timeout)
     _yieldClean := false        ; YieldedClean: the last run returned before a cast, its last card seen closing
     _cardSettled := false       ; Leftovers(true): no catch card after a task that walked off; none can come
 
@@ -340,6 +341,22 @@ class FishingTask {
     static RaisedRect := [1040, 742, 230, 60]
     static RaisedRe := "i)\bf[il1|][sg]"
     static RaisedClose := [1523, 645]
+    ; Off 2560x1440 (bug hunt 2026-11-27): these went through Screen's x0.75
+    ; like the rest of the UI, so at 1920x1080 the X click landed 22 px left
+    ; of the 7 px X (49 px at 125 %, 47 px at 2560x1440 150 %) and the stall
+    ; came back. The frozen frame is centred like the panel and scales k
+    ; with it (x certain). How far up it sits is not measured off 1440p (no
+    ; frozen frame yet): the raise taken as a share of the client (the
+    ; panel's 0.804 minus 346 / 1440) for the click; the read covers that and
+    ; the raise scaled k (the panel's anchor). At 2560x1440 100 %: unchanged.
+    static RaisedAnchor := [0.5, 0.5637]
+    static RaisedBox() {
+        a := FishingTask.MapRect(FishingTask.RaisedRect, FishingTask.RaisedAnchor)
+        b := FishingTask.MapRect(FishingTask.RaisedRect)
+        x := Min(a[1], b[1]), y := Min(a[2], b[2])
+        return [x, y, Max(a[1] + a[3], b[1] + b[3]) - x, Max(a[2] + a[4], b[2] + b[4]) - y]
+    }
+    static RaisedXy() => FishingTask.MapPt(FishingTask.RaisedClose, FishingTask.RaisedAnchor)
 
     ; General.fishing = 0: never fish (the user runs only the other tasks).
     ; Limbo.enabled = 1: LimboTask is the idle task instead, except while
@@ -547,7 +564,7 @@ class FishingTask {
         res := this._Result(ctx)
         if (res = "stopped")
             return "stopped"
-        if (this._CloseCard(ctx) < 0)
+        if (this._CloseCard(ctx, this._cardSeen) < 0)
             return "stopped"
         if IsObject(this.deps.trace)
             try this.deps.trace.Outcome(res = "failed" ? "got away" : (res = "caught" ? "caught" : "card: " res))
@@ -571,9 +588,11 @@ class FishingTask {
     ; Result card after the reel (io.Ocr): waits for it so the close click
     ; does not land before it shows. "failed" ("Fishing Failed" / "The fish
     ; is gone..." card) | "caught" ("Fish Caught!" card, or no card read in
-    ; time) | "stopped". No io.Ocr: "caught".
+    ; time) | "stopped". No io.Ocr: "caught". Sets _cardSeen (the card read,
+    ; not "no catch card seen"): _CloseCard's seen.
     _Result(ctx) {
         io := this.deps.io
+        this._cardSeen := false
         if !HasMethod(io, "Ocr")
             return "caught"
         rc := this._Fc()["result"]
@@ -581,8 +600,10 @@ class FishingTask {
         Loop {
             txt := this._CardText()
             k := this._CardKind(txt)
-            if (k != "")
+            if (k != "") {
+                this._cardSeen := true
                 return k
+            }
             if (waited >= rc["waitMs"]) {
                 this.deps.log.Call("fishing: no catch card seen in " Round(rc["waitMs"] / 1000, 1) " s (read: '" SubStr(RegExReplace(txt, "\s+", " "), 1, 60) "')")
                 return "caught"
@@ -632,7 +653,7 @@ class FishingTask {
         io := this.deps.io
         if !HasMethod(io, "Ocr")
             return false
-        r := FishingTask.RaisedRect
+        r := FishingTask.RaisedBox()
         return RegExMatch(io.Ocr(r[1], r[2], r[3], r[4], 2), FishingTask.RaisedRe) ? true : false
     }
 
@@ -644,8 +665,9 @@ class FishingTask {
         this.deps.log.Call("fishing: the catch card froze over a raised fishing panel - closing it by its X")
         fc := this._Fc()
         io := this.deps.io
+        xy := FishingTask.RaisedXy()
         Loop FishingTask.CloseTries {
-            if !FishLogic.ClickAt(io, ctx, FishingTask.RaisedClose, A_Index = 1 ? fc["closePreMs"] : fc["afterCloseMs"], fc["afterCloseMs"])
+            if !FishLogic.ClickAt(io, ctx, xy, A_Index = 1 ? fc["closePreMs"] : fc["afterCloseMs"], fc["afterCloseMs"])
                 return -1
             if !io.Wait(FishingTask.CloseGoneMs, ctx)
                 return -1
@@ -688,7 +710,12 @@ class FishingTask {
     ; Clicks the catch card's X until the card is gone (io.Ocr), up to
     ; CloseTries clicks. -> 1 closed | 0 still up (logged) | -1 stopped.
     ; No io.Ocr: one click, 1.
-    _CloseCard(ctx) {
+    ; seen = false: the card was never read before (_Result timed out). It
+    ; counts as seen closing (_cardGone) only once it reads up here (bug
+    ; hunt 2026-11-27, live 04:35 / 04:39: a card later than the 3 s wait
+    ; plus the blind X click made the next return "clean"; the tidy then
+    ; skipped the late Fishing Failed card through memorymatch and a sell).
+    _CloseCard(ctx, seen := true) {
         fc := this._Fc()
         io := this.deps.io
         pollMs := fc["result"]["pollMs"]
@@ -700,9 +727,12 @@ class FishingTask {
             waited := 0
             Loop {
                 if !this._CardUp() {
-                    this._cardGone := true
+                    ; set either way: a card never seen this time does not
+                    ; keep a "seen closing" left from earlier in the catch
+                    this._cardGone := seen
                     return 1
                 }
+                seen := true
                 if (waited >= FishingTask.CloseGoneMs)
                     break
                 if !io.Wait(pollMs, ctx)

@@ -1,4 +1,5 @@
 #Requires AutoHotkey v2.0
+#Include %A_LineFile%\..\ui\UiLogic.ahk      ; CleanError hides user names as UiLogic.Scrub does
 ; ---------------------------------------------------------------------------
 ; Plugins (2026-11-26): extra features dropped into the plugins\ folder next
 ; to MoontideMacro.exe, plus the built-in ones (lib\plugins\). Shown on the
@@ -12,7 +13,8 @@
 ;   generated file, plugins\.loaded\_enabled.ahk, that Vesper.ahk includes
 ;   (#Include *i: missing = no plugins). A newly switched-on plugin is
 ;   loaded by the next start ("Restart to load"). Turning one off needs no
-;   restart: its hooks are simply no longer called.
+;   restart: its hooks are no longer called, and OnOff() tells it once so
+;   its own background work stops too.
 ;   A plugin with a syntax error would stop the whole macro from loading, so
 ;   before a plugin goes into _enabled.ahk it is checked in a SEPARATE
 ;   process: AutoHotkey /Validate (loads, never runs) of the macro plus the
@@ -45,6 +47,11 @@
 ;     OnTick()              every service tick (~250 ms), started or not:
 ;                           keep it short, never Sleep here
 ;     OnBiome(biome, prev)  the biome changed (from the Roblox log)
+;     OnOff()               it stopped running: switched off on the Plugins
+;                           tab, stopped for errors, or its file changed (the
+;                           new one waits for a restart). Stop what runs on
+;                           its own (timers, processes, window messages):
+;                           no other hook is called from then on
 ;     Task()                -> a scheduler task {priority, CanRun(state),
 ;                           Run(ctx)} or "": it gets turns like the macro's
 ;                           own tasks (Run may send input; check
@@ -83,6 +90,8 @@ class MoontidePlugin {
     OnTick() {
     }
     OnBiome(biome, prev) {
+    }
+    OnOff() {
     }
     Task() => ""
 }
@@ -384,6 +393,10 @@ class Plugins {
                 s := StrReplace(s, Plugins.CachePath(root, e), e["file"] (e["folder"] ? "\" Plugins._MainName(e) : ""))
         s := StrReplace(s, Plugins.CacheDir(root) "\", "")
         s := StrReplace(s, r "\", "")
+        ; this PC's names with a space first, whole (bug hunt 2026-11-27:
+        ; "C:\Users\Jane Doe" kept the surname), then any other
+        for nm in UiLogic._SpacedNames()
+            s := RegExReplace(s, "i)\b([A-Z]:[\\/]Users[\\/])" UiLogic._ReEsc(nm) "(?!\w)", "$1<user>")
         s := RegExReplace(s, "i)\b([A-Z]:[\\/]Users[\\/])[^\\/\s]+", "$1<user>")
         s := RegExReplace(s, "\s*[\r\n]+\s*", "  ")
         s := StrReplace(s, "==> ", "")
@@ -645,6 +658,7 @@ class PluginHost {
 
     ; Scan plugins\ again: new files get rows, changed ones are checked.
     Rescan() {
+        was := this._OnIds()
         keep := []
         for e in this.Entries
             if e["builtin"]
@@ -662,6 +676,7 @@ class PluginHost {
         }
         this.Entries := keep
         this._Settle()
+        this._TellOff(was)              ; a changed / removed file: the running copy stops
         return this.Entries
     }
 
@@ -845,6 +860,12 @@ class PluginHost {
 
     ; -> what the switch did, for the page's status line
     SetOn(id, on) {
+        was := this._OnIds()
+        msg := this._SetOn(id, on)
+        this._TellOff(was)
+        return msg
+    }
+    _SetOn(id, on) {
         e := this.Find(id)
         if !IsObject(e)
             return "No plugin " id
@@ -934,7 +955,33 @@ class PluginHost {
         if (n >= Plugins.MaxErrors && !this._dead.Has(id)) {
             this._dead[id] := "too many errors (last: " msg ")"
             this.Log("Plugins: " e["name"] " stopped for this session after " n " errors")
+            this._Off(id)
         }
+    }
+
+    ; bug hunt 2026-11-27: switched off on the Plugins tab, stopped for
+    ; errors or replaced by a changed file, a plugin's hooks stopped but
+    ; what it ran on its own did not (a reader process kept sending window
+    ; messages and acted on them). OnOff() tells it, once, when it stops.
+    _OnIds() {
+        m := Map()
+        for id in this._obj
+            if this.IsOn(id)
+                m[id] := true
+        return m
+    }
+    _TellOff(was) {
+        for id in was
+            if !this.IsOn(id)
+                this._Off(id)
+    }
+    _Off(id) {
+        obj := this.Obj(id)
+        if !(IsObject(obj) && HasMethod(obj, "OnOff"))
+            return
+        try obj.OnOff()
+        catch Any as err
+            this.Log("Plugins: " id " error in OnOff: " this._ErrText(err))
     }
 
     _ErrText(err) {

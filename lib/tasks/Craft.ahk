@@ -28,9 +28,9 @@
 ;                    (never bought twice for one toast). Without notify_rect
 ;                    nothing is ever bought (logged once).
 ;                    THE CAULDRON (Craft.cauldron) keeps its own triggers
-;                    (_cauldronDue): its first visit since Start, each
-;                    crafted notification, a cut-short cauldron run. A
-;                    cauldron-only run never buys.
+;                    (_cauldronDue): its first visit since Start (t.Reset()
+;                    on each Start), each crafted notification, a
+;                    cut-short cauldron run. A cauldron-only run never buys.
 ;                    false when Craft.enabled = 0 and Craft.cauldron = 0
 ;                    (the cauldron runs alone with only it on).
 ;   t.Run(ctx)       -> number of potions whose confirm was clicked with the shop UI seen.
@@ -379,7 +379,23 @@ class CraftTask {
     ; ~14 s for 7+ minutes, logging only "craft: starting".
     static RetryGapMs := 60000
     static RetryGapMaxMs := 600000
-    _RetryGapMs() => Min(CraftTask.RetryGapMs * 2 ** (this._aborts - 1), CraftTask.RetryGapMaxMs)
+    ; bug hunt 2026-11-27: 2 ** (aborts - 1) wrapped Int64 from 49 early
+    ; ends in a row (a negative gap, 0 from 64): craft relaunched every
+    ; tick. The exponent stops at 10 (past the cap anyway).
+    _RetryGapMs() => Min(CraftTask.RetryGapMs * 2 ** Min(Max(this._aborts - 1, 0), 10), CraftTask.RetryGapMaxMs)
+
+    ; A new Start (App.Start): the cauldron's first visit since Start is due
+    ; again and an old retry gap is gone. bug hunt 2026-11-27: the task is
+    ; built once per app launch, so F1 before the cauldron route / recipe
+    ; was set up (the visit skipped and cleared) left no Start visit until
+    ; the app was reopened. A latched toast's buy and the last run's time
+    ; stay (one toast never buys twice).
+    Reset() {
+        this._cauldronDue := true
+        this._aborts := 0
+        this._abortAt := 0
+        this._notifyReadAt := ""
+    }
 
     ; Craft.minIntervalMin (1..1440, else 10) in ms.
     _MinIntervalMs() {

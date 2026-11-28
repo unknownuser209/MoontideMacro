@@ -218,6 +218,8 @@ class ObbyTask {
             this._auraFn := () => {known: false, name: ""}
         this._set := ""              ; {name, at}: the last aura change seen on the button
         this._owed := ""             ; {prev}: the aura still to put back after a halted run
+        this._pickWas := "off"       ; _LogPick: "on" when the aura was worn already
+        this.finished := false       ; blessing seen, aura back (App._RunTask; bug hunt 2026-11-27)
         this._uiFailKind := ""       ; the stuck window behind the last failed swap (_UiFail)
         this._retryRestore := false  ; _Restore: failed on a stuck search, owed until after the rejoin
         this._retriedFor := ""       ; the aura that already had its rejoin retry (once per aura)
@@ -325,6 +327,9 @@ class ObbyTask {
                 this.Owe(sw)
             }
         }
+        ; done for this interval only with the blessing and nothing owed: a
+        ; preempt after that must not walk the obby again at once
+        this.finished := seen && !IsObject(this._owed)
         if stopped
             return seen ? 1 : 0
 
@@ -1578,7 +1583,10 @@ class ObbyTask {
         if (found || picked)
             this._stuckFor := ""                ; listed again: the next stuck search trips at once again
         if picked {
-            done := true, seen := true, was := "off"
+            ; bug hunt 2026-11-27: "off" even when _LogPick found it worn
+            ; already (Unequip read, no click): PutOnSailor took the user's
+            ; own Sailor (Eden for the hunt) for none and PutBack took it off
+            done := true, seen := true, was := this._pickWas
         } else if !found {
             ; a stuck search lists nothing on any try. Results listed but
             ; none confirmed is not one (live 2026-11-24 03:42 / 08:48 /
@@ -1796,9 +1804,11 @@ class ObbyTask {
     ; -> 1 on | 0 not among them (or no log) | -1 stopped
     ; hint: the tile the log found `aura` on last time (> 0): only that tile
     ; is tried (the names were not read yet).
+    ; _pickWas: "on" when it was worn already (no click), else "off"
     _LogPick(c, aura, ctx, hint := 0) {
         env := this._env
         io := env.io
+        this._pickWas := "off"
         if (this._LogAura() == "?" || this._logMute)
             return 0
         reads := (!hint && this.HasOwnProp("_tileReads") && this._tileReads is Map) ? this._tileReads : Map()
@@ -1841,6 +1851,7 @@ class ObbyTask {
                 if ObbyTask.SameAura(this._LogAura(), aura) {
                     this._logHint[StrLower(aura) "|" this._tab] := k
                     this._SaveHints()
+                    this._pickWas := "on"
                     return 1
                 }
                 env.Log("obby: result " k " is worn already (Unequip) but the log names " this._LogAura() ", not " aura)
@@ -2171,6 +2182,12 @@ class ObbyTask {
                 waited += ObbyTask.PollMs
             }
         }
+        ; bug hunt 2026-11-27: F3, a pause (Roblox lost focus) or the window
+        ; gone during the poll still clicked the list shut, on whatever was in
+        ; front by then. A halt sends nothing more; the list left open is no
+        ; click for the next check ("open" above). A plain preempt collapses.
+        if CleanupCtx.Halted(ctx)
+            return seen ? 1 : 0
         if !seen {                                 ; what the open list showed (2026-11-17)
             shot := HasMethod(env.io, "Shot") ? env.io.Shot() : ""
             if (shot != "")

@@ -402,7 +402,12 @@ class Ocr {
                         if IsObject(b) {
                             cx := x + Round((b.x1 + b.x2) / 2 / s), cy := y + Round((b.y1 + b.y2) / 2 / s)
                             bl := x + Round(b.x1 / s), bt := y + Round(b.y1 / s), br := x + Round(b.x2 / s), bb := y + Round(b.y2 / s)
-                            if (k != 1) {                               ; back to design px for the click
+                            ; back to design px for the click; by the mapping,
+                            ; not k (bug hunt 2026-11-27: at s = 1 off 2560x1440,
+                            ; a 3440x1440 / 2560x1600 screen or 1440p on a second
+                            ; monitor, [Exit] came back in SCREEN px, 688,156 /
+                            ; 512,173 / 3072,156, and the Collections close missed)
+                            if !Screen.IsIdentity() {
                                 d := Screen.Inv(cx, cy), cx := d.x, cy := d.y
                                 d := Screen.Inv(bl, bt), bl := d.x, bt := d.y
                                 d := Screen.Inv(br, bb), br := d.x, bb := d.y

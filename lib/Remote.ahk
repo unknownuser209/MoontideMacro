@@ -18,6 +18,8 @@
 ;                "help" is built in and lists the commands that have one.
 ;     log        (text) -> logs; text NEVER holds the token or message text
 ;     now        () -> ms (default A_TickCount)
+;     utcMs      () -> unix time in ms (default the PC's UTC clock; only used
+;                when the first read lists no message, see _Learn)
 ;     http       () -> a WinHttp.WinHttpRequest.5.1-like object (test seam;
 ;                default: the real COM object, 5/5/8/8 s timeouts)
 ;   r.Enabled    true when token, channelId and one allowed id are set (and
@@ -87,6 +89,8 @@ class DiscordRemote {
         , "resume", "resume after a pause", "screenshot", "a picture of the game", "log", "the last log lines")
     static TimeoutMs := 8000
     static PageSize := 10
+    static LearnSlackMs := 60000
+    static DiscordEpochMs := 1420070400000
     static MaxFileBytes := 8 * 1024 * 1024
     static MaxRateLimited := 5
 
@@ -113,6 +117,7 @@ class DiscordRemote {
         this.pollSec := Max(3, ps)
         this._logFn := g("log", "")
         this._clock := g("now", "")
+        this._utcFn := g("utcMs", "")
         this._httpFn := g("http", "")
         this.handlers := Map()
         h := g("handlers", "")
@@ -153,6 +158,7 @@ class DiscordRemote {
         this._forbidLogged := false
         this._learned := false
         this._lastId := ""
+        this._floorId := ""         ; set by an empty learn: older ids are never run
         this._nextPollAt := 0
         this._holdUntil := 0
         this._backoff := 0
@@ -341,6 +347,12 @@ class DiscordRemote {
                 newest := id
         }
         this._lastId := newest != "" ? newest : "0"
+        ; bug hunt 2026-11-27: Discord answers 200 [] (not 403) when the bot
+        ; lacks Read Message History, so "0" was learnt for a channel full of
+        ; messages too; once the permission came, after=0 listed the OLDEST
+        ; ones and every old !start / !stop ran. Ids from before now (minus
+        ; LearnSlackMs for a PC clock that runs ahead) are never run (_Handle).
+        this._floorId := newest != "" ? "" : DiscordRemote.SnowflakeAt(this._UtcMs() - DiscordRemote.LearnSlackMs)
         this._learned := true
         if !this._listeningLogged {
             this._Log("Remote: listening for commands (prefix " this.prefix ")")
@@ -349,6 +361,11 @@ class DiscordRemote {
     }
 
     _Handle(msgs) {
+        ; still nothing readable: the floor moves on to now, so a command
+        ; typed while the bot could not read the channel never runs late
+        ; (bug hunt 2026-11-27 review)
+        if (this._floorId != "" && IsObject(msgs) && msgs.Length = 0)
+            this._floorId := DiscordRemote.SnowflakeAt(this._UtcMs() - DiscordRemote.LearnSlackMs)
         list := []
         for m in msgs {
             if !(m is Map)
@@ -366,6 +383,18 @@ class DiscordRemote {
             id := DiscordRemote._Get(m, "id")
             if !DiscordRemote.IdLess(this._lastId, id)
                 continue
+            if (this._floorId != "") {
+                if !DiscordRemote.IdLess(this._floorId, id) {
+                    ; older than the empty first read: history the bot could
+                    ; not read then. Nothing of it runs; the newest is learnt.
+                    this._floorId := ""
+                    this._learned := false
+                    this._nextPollAt := 0
+                    this._Log("Remote: the bot can read the channel now; older messages skipped")
+                    return
+                }
+                this._floorId := ""
+            }
             this._lastId := id
             this._OnMessage(m)
         }
@@ -509,12 +538,20 @@ class DiscordRemote {
                 return {ok: false, msg: "Connected as " who ", but that channel was not found - check the channel id."}
             if (r.status != 200)
                 return {ok: false, msg: "Connected as " who ", but Discord answered HTTP " r.status " for the channel."}
-            ch := this.Scrub(DiscordRemote._Get(Json.Parse(r.body), "name"))
+            chan := Json.Parse(r.body)
+            ch := this.Scrub(DiscordRemote._Get(chan, "name"))
             r := this._Sync("/channels/" this.channelId "/messages?limit=1")
             if (r.status = 403)
                 return {ok: false, msg: "Connected as " who " and sees #" ch ", but cannot read it - give it Read Message History."}
             if (r.status != 200)
                 return {ok: false, msg: "Connected as " who ", but reading #" ch " gave HTTP " r.status "."}
+            ; bug hunt 2026-11-27: without Read Message History Discord lists
+            ; no message (200 []), not a 403: a channel that has a last message
+            ; but lists none hides its history from the bot
+            lst := ""
+            try lst := Json.Parse(r.body)
+            if (lst is Array && lst.Length = 0 && RegExMatch(DiscordRemote._Get(chan, "last_message_id"), "^\d{1,25}$"))
+                return {ok: false, msg: "Connected as " who " and sees #" ch ", but Discord shows the bot no messages there - give it Read Message History."}
         } catch Any as e {
             return {ok: false, msg: "Could not reach Discord: " this.Scrub(e is Error ? e.Message : "error")}
         }
@@ -568,6 +605,11 @@ class DiscordRemote {
     }
 
     _Now() => HasMethod(this._clock, "Call") ? this._clock.Call() : A_TickCount
+
+    _UtcMs() => HasMethod(this._utcFn, "Call") ? this._utcFn.Call() : DateDiff(A_NowUTC, "19700101000000", "Seconds") * 1000
+
+    ; unix ms -> the smallest Discord snowflake id of that moment (a string)
+    static SnowflakeAt(ms) => String(Max(0, Integer(ms) - DiscordRemote.DiscordEpochMs) << 22)
 
     _NewRequest() {
         if HasMethod(this._httpFn, "Call")

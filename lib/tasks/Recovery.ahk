@@ -15,7 +15,8 @@
 ;     close   callable close() -> bool, close the Roblox client (default:
 ;             WinClose, then ProcessClose RobloxPlayerBeta.exe after 10 s;
 ;             once the window is gone its process gets ExitWaitSec to end,
-;             then it is ended: a relaunch next to it crashed)
+;             then it is ended: a relaunch next to it crashed; then any
+;             tray-only client Roblox started meanwhile is ended too)
 ;   t.name = "recovery", t.priority = 2   (Scheduler task contract)
 ;
 ; CanRun(state) is true when ANY of (checked in this order):
@@ -424,10 +425,40 @@ class RecoveryTask {
         winClose: (_, h) => WinClose("ahk_id " h),
         winWaitClose: (_, h, sec) => WinWaitClose("ahk_id " h, , sec),
         procWait: (_, pid, sec) => ProcessWaitClose(pid, sec),     ; 0 = ended, else the pid
-        procClose: (_, x) => ProcessClose(x)
+        procClose: (_, x) => ProcessClose(x),
+        procExist: (_, n) => ProcessExist(n),                      ; the first pid by that name, else 0
+        sleep: (_, ms) => Sleep(ms)
+    }
+
+    static TrayWaitMs := 5000      ; after the old client ended: look this long at most for a tray client
+    static TrayStepMs := 250
+    static TrayQuietMs := 1000     ; none seen for this long: done
+    static TrayEnded := 0          ; leftover clients the last _CloseRoblox ended (logged by _Rejoin)
+
+    ; live 2026-11-27 14:11 and 04:42: while the old client exited, Roblox
+    ; started a tray-only RobloxPlayerBeta itself; the link's launcher handed
+    ; the join to it ("WebPlay NoReload with Tray only!") and it died 120 s
+    ; after it started ("Roblox window gone", a second rejoin; every rejoin
+    ; made with no client left survived). So every RobloxPlayerBeta still there
+    ; or showing up is ended before the link opens (bounded).
+    static _EndTrayClients(api) {
+        quiet := 0, last := 0
+        Loop RecoveryTask.TrayWaitMs // RecoveryTask.TrayStepMs {
+            p := 0
+            try p := api.procExist(Roblox.Exe)
+            if p {
+                quiet := 0
+                if (p != last)
+                    RecoveryTask.TrayEnded++, last := p
+                try api.procClose(p)
+            } else if ((quiet += RecoveryTask.TrayStepMs) >= RecoveryTask.TrayQuietMs)
+                return
+            try api.sleep(RecoveryTask.TrayStepMs)
+        }
     }
 
     static _CloseRoblox(api := "") {
+        RecoveryTask.TrayEnded := 0
         if !IsObject(api)
             api := RecoveryTask._RealCloseApi()
         h := api.hwnd()
@@ -447,6 +478,7 @@ class RecoveryTask {
                 if left
                     try api.procClose(pid)
             }
+            RecoveryTask._EndTrayClients(api)
             return true
         }
         ; the process that owns the window: Roblox runs two
@@ -555,7 +587,12 @@ class RecoveryTask {
                 return false
             }
         }
+        ; already told to stop (F3 / F2): a healthy client is not closed
+        ; with nothing launched after it (bug hunt 2026-11-27 review)
+        if (IsObject(ctx) && ctx.ShouldStop())
+            return false
         this._attempts.Push(now)
+        RecoveryTask.TrayEnded := 0
         if ((this._discSeen || this._leaving || this._ghosting || this._unlock) && (this._hwndFn)()) {
             env.Log(this._leaving ? "recovery: closing Roblox to leave Limbo"
                 : this._ghosting ? "recovery: closing the ghost server's Roblox client"
@@ -570,9 +607,24 @@ class RecoveryTask {
                     env.Report("errors", "Recovery failed", "the disconnected Roblox window did not close")
                     return false
                 }
-                if !env.Wait(500, ctx)
+                if !env.Wait(500, ctx) {
+                    this._attempts.Pop()           ; nothing launched
                     return false
+                }
             }
+        }
+        ; bug hunt 2026-11-27: a stop while the old client closed (F3 / F2,
+        ; or the App's halt when a Limbo leave's window went) was not seen:
+        ; the link opened anyway, and after the halt recovery opened it a
+        ; second time. Stopped: no launch, the disconnect stays pending. A
+        ; Limbo leave with auto-rejoin off still opens it: the App pauses for
+        ; the missing window then, and nothing else would reopen the game.
+        if RecoveryTask.TrayEnded
+            env.Log("recovery: ended " RecoveryTask.TrayEnded " leftover Roblox process" (RecoveryTask.TrayEnded = 1 ? "" : "es") " before the rejoin")
+        off := IsObject(env.cfg) && !env.cfg.Get("recovery.enabled", 1)
+        if (IsObject(ctx) && ctx.ShouldStop() && !(this._leaving && off)) {
+            this._attempts.Pop()                   ; nothing launched
+            return false
         }
         this._discSeen := false, this._discFake := false
         env.Log("recovery: rejoining private server")

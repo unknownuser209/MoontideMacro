@@ -174,8 +174,8 @@ class InputScreenIO {
     ; chat keep their pixel size at every resolution; ChatGuard) -> Array
     ; of w*h 0xRRGGBB, or "".
     GrabScreen(sx, sy, w, h) => Pixel._ScreenGrab(sx, sy, w, h)
-    ; First text line matching re in a DESIGN rect -> {x, y, text} (SCREEN
-    ; px of its centre) or "" (Ocr.FindText).
+    ; First text line matching re in a DESIGN rect -> {x, y, text} (DESIGN
+    ; px of its centre, as Ocr.FindText gives it) or "" (Ocr.FindText).
     FindText(x, y, w, h, re, scale := 1) => Ocr.FindText(x, y, w, h, re, scale)
     ; ... the matching words' centre (Ocr.FindWord), in DESIGN px
     FindWord(x, y, w, h, re, wordRe, scale := 1) => Ocr.FindWord(x, y, w, h, re, wordRe, scale)

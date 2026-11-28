@@ -141,8 +141,9 @@
 ;   (steps, key, ctx) -> "" ok | reason.
 ; POTIONS: ONE PotionSafety (absolute PotionsTask.DefaultUsagePath()).
 ;   "potionsChanged" rebuilds PotionSafety + PotionsTask unless the potion
-;   task is running (then deferred until it ends). A pending, not yet run
-;   event is re-queued on the new task (it re-checks everything). A failed
+;   task is running (then deferred until it ends). A waiting event (a quest
+;   or a paused one too) goes to the new task as it was, with the inventory
+;   left open by an interrupted run (it re-checks everything). A failed
 ;   build leaves NO potion task (BiomeEvents logs "could not queue").
 ;   Rebuild only when the serialized potions.json + biomes.json changed;
 ;   the new PotionSafety gets TransferRunCountsFrom(old) so per-run counts,
@@ -271,7 +272,9 @@ class App {
         this._restartFn := App._Dep(d, "reload", () => Reload())   ; after "Import everything" (tests: a counter)
         this._testCtx := ""
         this._toolBusy := false      ; a route Record / Test or Calibrate is running (Start refused)
-        this.launchFn := App._Dep(d, "launch", (fn) => SetTimer(fn, -1))
+        ; timers off for the rest of the launching thread (the Tick, which
+        ; ends right after): the task thread never starts on top of it
+        this.launchFn := App._Dep(d, "launch", (fn) => (Thread("NoTimers", true), SetTimer(fn, -1)))
         this.timerFn := App._Dep(d, "timer", (fn, ms) => SetTimer(fn, ms))
         this._creditsFn := App._Dep(d, "creditsVerify", () => Credits.Verify())     ; NO root: the compiled-in values
         this._splashFn := App._Dep(d, "splash", "")
@@ -285,6 +288,8 @@ class App {
         this._tickFn := ObjBindMethod(this, "Tick")
         this._kickFn := ObjBindMethod(this, "Tick")  ; its own one-shot timer (the tick's period stays)
         this._inTick := false        ; a Tick is running (the kick and the period never overlap)
+        this._toLaunch := ""         ; the task thread a Tick picked: started once that Tick is done
+        this._leavingLimbo := false  ; LimboTask is running the recovery rejoin (_ToIsland)
         this._freshAt := Map()       ; _Fresh: what the last tidy found clean ("title", "dq") -> ms
         this._lastTask := ""         ; the task that ran last (not skipped); "" at Start
 
@@ -443,7 +448,11 @@ class App {
             this.Log("Limbo: no recovery task to rejoin with; staying in Limbo")
             return false
         }
-        return r.ReturnToIsland(ctx)
+        ; the rejoin closes the Limbo client: the monitor leaves it alone
+        ; (_Monitor)
+        this._leavingLimbo := true
+        try return r.ReturnToIsland(ctx)
+        finally this._leavingLimbo := false
     }
 
     ; Sell is at the fisher: buy in the same visit when a buy is due.
@@ -531,13 +540,30 @@ class App {
         old := this.potions
         hadPending := false
         try hadPending := IsObject(old) && old.CanRun(this.state)
+        ; the old task's own waiting event, handed over whole (bug hunt
+        ; 2026-11-27: re-queued from _proxy.last, a daily-quest event became
+        ; an hours-old rare biome, and a paused event lost "resumes", so
+        ; BeginEvent refused it and every potion left was event_claimed)
+        ev := "", needClose := false
+        if (IsObject(old) && old.HasOwnProp("_pending")) {
+            ev := old._pending
+            needClose := old.HasOwnProp("_needClose") && old._needClose
+        } else
+            ev := this._proxy.last
         ok := this._BuildPotions(this._safety)
         this._tasks := this._TaskList()
         if ok
             this.Log("Potions: settings reloaded")
-        last := this._proxy.last
-        if (ok && hadPending && IsObject(last)) {
-            try this.potions.Queue(last.biome, last.ts)
+        if !ok
+            return
+        p := this.potions
+        if (needClose && p.HasOwnProp("_needClose"))
+            p._needClose := true                ; the inventory an interrupted run left open
+        if (hadPending && IsObject(ev)) {
+            if p.HasOwnProp("_pending")
+                p._pending := ev                ; keeps quest and resumes
+            else
+                try p.Queue(ev.biome, ev.ts)
         }
     }
 
@@ -622,6 +648,11 @@ class App {
             this._taskMap["merchant"].Reset()   ; a merchant announced before Stop is long gone
         if (this._taskMap.Has("fishing") && HasMethod(this._taskMap["fishing"], "Reset"))
             try this._taskMap["fishing"].Reset()    ; the slow-PC warning counts this session's reels
+        ; the first cauldron visit since Start (bug hunt 2026-11-27: armed
+        ; once per launch, an F1 before the cauldron was set up never
+        ; visited it until the macro was reopened)
+        if (this._taskMap.Has("craft") && HasMethod(this._taskMap["craft"], "Reset"))
+            try this._taskMap["craft"].Reset()
         if (IsObject(this.recovery) && HasMethod(this.recovery, "Reset"))
             try this.recovery.Reset()           ; a disconnect / hold from the last run is not this one's
         this.state.limboMode := this._LimboMode()
@@ -720,10 +751,13 @@ class App {
             this._testCtx.Stop()
         try this.clip.CancelAll()
         try this.input.ReleaseAll()
-        if !this._idle            ; idle mode never touches the mouse or keys
-            this._ShiftOff()      ; a halted hunt can leave it on: other clicks would miss
-        this._IdleOff()
         was := this._started
+        ; a halted hunt can leave it on: other clicks would miss. Only for a
+        ; run (bug hunt 2026-11-27: F3 while stopped, the player playing by
+        ; hand, moved the mouse, tapped Shift and zoomed the camera out)
+        if (!this._idle && (was || IsObject(this._running)))     ; idle mode never touches the mouse or keys
+            this._ShiftOff()
+        this._IdleOff()
         this._started := false
         if (was && this._hiResOn)
             try Input.HiRes(false)
@@ -1035,6 +1069,21 @@ class App {
         } finally {
             this._inTick := false
         }
+        ; the task thread only once the Tick is done (bug hunt 2026-11-27:
+        ; armed inside it, the -1 timer ran the task ON TOP of the Tick, so
+        ; _inTick stayed set until the task returned: one fishing task of 18
+        ; catches with no log poll and no preempt, four biomes logged late in
+        ; the same second, a Mari missed)
+        ; taken and cleared in one line: a Tick interrupting between two
+        ; lines could otherwise launch the same task a second time
+        fn := this._toLaunch, this._toLaunch := ""
+        if IsObject(fn) {
+            try this.launchFn.Call(fn)
+            catch Any as e {
+                this._running := ""
+                this._TickError(e)
+            }
+        }
     }
 
     _TickError(e) {
@@ -1110,6 +1159,12 @@ class App {
     _Monitor(now, win) {
         cur := this._running
         if this.ctx.IsPaused()
+            return
+        ; the Limbo leave IS the recovery rejoin (_ToIsland): no window or
+        ; focus check and no preempt, as for the recovery task (bug hunt
+        ; 2026-11-27: halted or interrupted for Recovery when the Limbo client
+        ; closed, the leave ended as a "Recovery: rejoined" error)
+        if this._leavingLimbo
             return
         ; Input must never land outside Roblox. Recovery is exempt: it
         ; rejoins (no window yet) and focuses Roblox itself.
@@ -1301,7 +1356,11 @@ class App {
             }
             this._running := task
         }
-        this.launchFn.Call(ObjBindMethod(this, "_RunTask", task))
+        fn := ObjBindMethod(this, "_RunTask", task)
+        if this._inTick
+            this._toLaunch := fn                ; Tick starts it when it is done
+        else
+            this.launchFn.Call(fn)
         return true
     }
 
@@ -1371,6 +1430,8 @@ class App {
                 }
             }
             Prof.Start(task.name)
+            if task.HasOwnProp("finished")
+                task.finished := false              ; this run's own (see MarkRun below)
             task.Run(this.ctx)
         } catch Any as e {
             failed := true
@@ -1413,8 +1474,13 @@ class App {
             if !skipped                            ; a skipped task did not run: due again
                 try this.state.Bump("runs." task.name)
             ; an interval task cut short (preempt, pause) did nothing yet: it
-            ; may run again right away instead of in 30 / 10 min (review)
-            if !(skipped || (task.name = "quests" || task.name = "obby") && (this.ctx.IsPreempted() || this.ctx.IsPaused()))
+            ; may run again right away instead of in 30 / 10 min (review).
+            ; Not when it says its work got done first (task.finished; bug
+            ; hunt 2026-11-27: the board closed, a craft notice preempted
+            ; quests in its last moment and it walked to the board again)
+            cut := (task.name = "quests" || task.name = "obby") && (this.ctx.IsPreempted() || this.ctx.IsPaused())
+                && !(task.HasOwnProp("finished") && task.finished)
+            if !(skipped || cut)
                 try Scheduler.MarkRun(this.state, task, this.Now())
             this._running := ""
             this._MaybeRebuild()
@@ -1855,9 +1921,9 @@ class App {
         }
     }
 
-    ; A plugin (PluginApi.HoldRejoin, e.g. a biome sniper) joined someone's
-    ; server: for ms the join is not a ghost server (no auto-rejoin of the
-    ; private one). 0 ends it.
+    ; A plugin (PluginApi.HoldRejoin, e.g. a plugin that moves the player)
+    ; joined someone's server: for ms the join is not a ghost server (no
+    ; auto-rejoin of the private one). 0 ends it.
     HoldGhost(ms) {
         this._ghostHoldUntil := ms > 0 ? this.Now() + ms : 0
         if (ms > 0)
@@ -2281,6 +2347,14 @@ class App {
         if !IsObject(c)
             return
         q := this.fixit.QuietFor(c.rule.key, this.Now())
+        ; its pause still on: "Paused: ..." is logged once per pause, so the
+        ; line is quiet while the problem lasts (bug hunt 2026-11-27: the
+        ; window card closed after 10 min, Roblox still minimized)
+        k := c.rule.key, pr := this._pauseReason
+        if ((k = "notfs" && pr = App.Msg["notfs"][1]) || (k = "focus" && pr = App.Msg["unfocused"][1])) {
+            this._FixCardPlace()
+            return
+        }
         if (App.FixAutoClose.Has(c.rule.key) && q >= App.FixQuietMs) {
             try c.Destroy()
             this._fixCard := ""
@@ -2894,6 +2968,14 @@ class App {
         try r := this.cfg.Data("routes")
         if (r is Map && r.Has("routes") && r["routes"] is Map)
             r := r["routes"]
+        ; without the VIP gamepass the walk the task plays (TaskEnv.Route):
+        ; the shipped non-VIP one over the creator's VIP recording (bug hunt
+        ; 2026-11-27: Test walked the VIP quest_board, which ends short)
+        if !this.cfg.Get("General.vip", 1) {
+            nv := RouteRecorder.NonVipFor(name, (r is Map && r.Has(name)) ? r[name] : "")
+            if IsObject(nv)
+                return Input.RouteList(nv)
+        }
         if !(r is Map && r.Has(name)) {
             b := RouteRecorder.BuiltinWalk(r, name, this.cfg.Get("General.vip", 1) != 0)
             return IsObject(b) ? b.steps : "not recorded yet: press Record first"

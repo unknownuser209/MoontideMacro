@@ -604,7 +604,7 @@ class MemoryMatchTask {
         return true
     }
 
-    ; Waits for Close under the board, clicks it until the title is gone.
+    ; Waits for Close under the board, clicks it until the title and Close are gone.
     ; Close that never reads while every tile is shown is clicked where it
     ; is (below the board: nothing else there). Still open, not stopped:
     ; the stuck-UI escape rejoins (_LeftOpen).
@@ -622,7 +622,10 @@ class MemoryMatchTask {
         Loop MemoryMatchTask.CloseTries {
             env.Click(L.close)
             stopped := !env.Wait(MemoryMatchTask.SettleMs, ctx)
-            if !RegExMatch(this._Read(L.title), MemoryMatchTask.TitleRe) {
+            ; gone: no title AND no Close. bug hunt 2026-11-27: the title's
+            ; OCR misses at 1080p, so a dropped Close click (lag) was taken
+            ; for a closed board and it was left over the next tasks.
+            if (!RegExMatch(this._Read(L.title), MemoryMatchTask.TitleRe) && !this._CloseShows()) {
                 this._board := false
                 UiStuck.Ok("memory match board")    ; closed: no rejoin needed for it
                 return true
@@ -648,8 +651,10 @@ class MemoryMatchTask {
     ; The App's tidy after this task: a board left open is closed by Close
     ; (read, or every tile shown); one that cannot be closed trips the
     ; stuck-UI escape. -> 1 closed | 2 still up
+    ; Up: its title reads, or Close under it does (the title misses at
+    ; 1080p; no red-ink Close on any other tests\screens frame).
     Leftovers() {
-        return [{up: () => RegExMatch(this._Read(MemoryMatchTask.Layout.title), MemoryMatchTask.TitleRe) ? "Memory Match board" : ""
+        return [{up: () => (RegExMatch(this._Read(MemoryMatchTask.Layout.title), MemoryMatchTask.TitleRe) || this._CloseShows()) ? "Memory Match board" : ""
             , close: (label, ctx) => this._Close(ctx) ? 1 : 2}]
     }
 

@@ -4,7 +4,9 @@
 ; Config: settings.ini (user settings, secrets) + data\*.json (game data).
 ;
 ;   cfg := Config.Load(dir)        dir holds settings.ini and a data\ folder.
-;                                  Missing settings.ini is created with defaults.
+;                                  Missing settings.ini is created with defaults
+;                                  (cfg.saveFail: that write failed, the
+;                                  defaults are in memory only).
 ;   cfg.Get("General.sellEvery", 15)   path = "Section.key" (split at the LAST
 ;                                  dot). Section and key are case-insensitive.
 ;                                  Missing -> default. Webhook.N sections are
@@ -54,6 +56,7 @@ class Config {
         this.sections := Config._CIMap()
         this.hooks := []
         this.readFail := false
+        this.saveFail := false      ; the new settings.ini could not be written (the folder)
         this.dcache := Map()
         this.dstat := Map()
         if FileExist(this.iniPath) {
@@ -61,7 +64,15 @@ class Config {
             this._DropRetired()
         } else {
             this._ApplyIniDefaults()
-            this.Save()
+            ; bug hunt 2026-11-27: a first start in a folder Windows will
+            ; not let it write (Program Files, Controlled folder access)
+            ; threw OSError out of Config.Load: an error box, no dashboard,
+            ; so the setup check's "move the macro folder" row never showed.
+            ; The defaults stay in memory.
+            try
+                this.Save()
+            catch
+                this.saveFail := true
         }
     }
 
@@ -382,8 +393,13 @@ class Config {
             if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#")
                 continue
             if (SubStr(line, 1, 1) = "[") {
-                if (SubStr(line, -1) = "]" && StrLen(line) > 2) {
-                    sec := Trim(SubStr(line, 2, StrLen(line) - 2))
+                ; "[General] ; note" too (as Profiles.ImportText and Windows'
+                ; own ini reads). bug hunt 2026-11-27: a commented header
+                ; dropped its section's keys and the next Save deleted them
+                ; (the link, the webhooks). A line that is no header ends
+                ; the section.
+                if RegExMatch(line, "^\[([^\]]*)\]\s*(?:[;#].*)?$", &hm) {
+                    sec := Trim(hm[1])
                     if (sec != "" && !this.sections.Has(sec))
                         this.sections[sec] := Config._CIMap()
                 } else

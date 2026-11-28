@@ -132,3 +132,10 @@ Out(line) {
 #Include test_plugins.ahk
 #Include test_portable.ahk
 #Include test_silentstop.ahk
+#Include test_screen_fixes.ahk
+#Include test_fishobby_fixes.ahk
+#Include test_core_fixes.ahk
+#Include test_recovery_fixes.ahk
+#Include test_privacy_fixes.ahk
+#Include test_plugins_fixes.ahk
+#Include test_craftcfg_fixes.ahk
